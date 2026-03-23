@@ -44,34 +44,27 @@ async function createAdmin() {
 
 createAdmin();
 
-// Test SMS endpoint with detailed logging
-app.get("/api/test-sms-detail", async (req, res) => {
-  console.log("\n🔍 ===== TEST SMS ENDPOINT CALLED =====");
-  console.log("Query params:", req.query);
-
+// Test SMS endpoint - Remove after testing
+app.get("/api/test-sms-now", async (req, res) => {
   const { sendSMS } = require("./services/smsService");
-  const testPhone = req.query.phone || "2348078777467";
-  const testMessage =
-    req.query.message ||
-    `Test SMS from VaultFlow on Render at ${new Date().toLocaleString()}`;
 
-  console.log("Sending to:", testPhone);
-  console.log("Message:", testMessage);
+  console.log("🔍 Testing SMS with Bearer Token...");
+  console.log("Token exists:", !!process.env.BULKSMS_BEARER_TOKEN);
 
-  const result = await sendSMS(testPhone, testMessage);
+  const result = await sendSMS(
+    "2348078777467", // Your phone number
+    `Test SMS from VaultFlow using Bearer Token at ${new Date().toLocaleString()}`,
+  );
 
-  console.log("Result:", result);
   res.json({
     success: result.success,
     message: result.success
-      ? "SMS sent! Check your phone and BulkSMS dashboard."
-      : "SMS failed",
+      ? "✅ SMS sent! Check your phone."
+      : "❌ SMS failed",
     details: result,
     environment: {
-      hasToken: !!process.env.BULKSMS_TOKEN,
-      tokenFirstFour: process.env.BULKSMS_TOKEN?.substring(0, 4),
+      hasBearerToken: !!process.env.BULKSMS_BEARER_TOKEN,
       senderId: process.env.BULKSMS_SENDER_ID,
-      nodeEnv: process.env.NODE_ENV,
     },
   });
 });
