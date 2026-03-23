@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VaultFlow - Deposit Monitoring System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ["Inter", "sans-serif"],
+              mono: ["JetBrains Mono", "monospace"],
+            },
+            colors: {
+              primary: "#0f172a",
+              secondary: "#1e293b",
+              accent: "#3b82f6",
+              success: "#10b981",
+              warning: "#f59e0b",
+              danger: "#ef4444",
+              gold: "#fbbf24",
+            },
+            animation: {
+              "slide-in": "slideIn 0.3s ease-out",
+              "fade-in": "fadeIn 0.4s ease-out",
+              "pulse-slow": "pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+              "bounce-slight": "bounceSlight 2s infinite",
+            },
+            keyframes: {
+              slideIn: {
+                "0%": { transform: "translateX(-20px)", opacity: "0" },
+                "100%": { transform: "translateX(0)", opacity: "1" },
+              },
+              fadeIn: {
+                "0%": { opacity: "0", transform: "translateY(10px)" },
+                "100%": { opacity: "1", transform: "translateY(0)" },
+              },
+              bounceSlight: {
+                "0%, 100%": { transform: "translateY(0)" },
+                "50%": { transform: "translateY(-5px)" },
+              },
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      .glass-panel {
+        background: rgba(30, 41, 59, 0.7);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      .sidebar-item {
+        transition: all 0.3s ease;
+      }
+      .sidebar-item:hover {
+        background: rgba(59, 130, 246, 0.1);
+        border-left: 3px solid #3b82f6;
+      }
+      .sidebar-item.active {
+        background: rgba(59, 130, 246, 0.15);
+        border-left: 3px solid #3b82f6;
+      }
+      .transaction-card {
+        transition: all 0.3s ease;
+      }
+      .transaction-card:hover {
+        transform: translateX(5px);
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+      }
+      .status-badge {
+        animation: fadeIn 0.3s ease-out;
+      }
+      .modal-overlay {
+        background: rgba(0, 0, 0, 0.7);
+        backdrop-filter: blur(4px);
+      }
+      .gradient-text {
+        background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      .chart-bar {
+        transition: height 1s ease-out;
+      }
+      input:focus,
+      select:focus {
+        outline: none;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+      }
+      .notification {
+        animation: slideIn 0.4s ease-out;
+      }
+      .loading-skeleton {
+        background: linear-gradient(
+          90deg,
+          #1e293b 25%,
+          #334155 50%,
+          #1e293b 75%
+        );
+        background-size: 200% 100%;
+        animation: loading 1.5s infinite;
+      }
+      @keyframes loading {
+        0% {
+          background-position: 200% 0;
+        }
+        100% {
+          background-position: -200% 0;
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-primary text-gray-100 font-sans min-h-screen overflow-hidden">
+    <!-- API Configuration -->
+    <script>
+      const API_BASE_URL = "http://localhost:3000/api";
+
+      // Fetch helper with error handling
+      async function apiFetch(endpoint, options = {}) {
+        try {
+          const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+            ...options,
+            headers: {
+              "Content-Type": "application/json",
+              ...options.headers,
+            },
+          });
+
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          return await response.json();
+        } catch (error) {
+          console.error("API Error:", error);
+          showNotification(
+            "Failed to connect to server. Please ensure the backend is running.",
+            "error",
+          );
+          throw error;
+        }
+      }
+    </script>
+
+    <!-- Login Screen -->
+    <div
+      id="loginScreen"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-primary via-secondary to-primary"
+    >
+      <div
+        class="w-full max-w-md p-8 glass-panel rounded-2xl shadow-2xl border border-gray-700 animate-fade-in"
+      >
+        <div class="text-center mb-8">
+          <div
+            class="w-20 h-20 mx-auto bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mb-4 shadow-lg animate-bounce-slight"
+          >
+            <i class="fas fa-vault text-3xl text-white"></i>
+          </div>
+          <h1 class="text-3xl font-bold gradient-text mb-2">VaultFlow</h1>
+          <p class="text-gray-400 text-sm">Secure Deposit Monitoring System</p>
+        </div>
+
+        <div class="space-y-6">
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2"
+              >Select Role</label
+            >
+            <div class="grid grid-cols-2 gap-4">
+              <button
+                onclick="selectRole('admin')"
+                id="adminBtn"
+                class="role-btn p-4 rounded-xl border-2 border-gray-600 hover:border-blue-500 transition-all duration-300 flex flex-col items-center gap-2 group"
+              >
+                <i
+                  class="fas fa-shield-alt text-2xl text-gray-400 group-hover:text-blue-400"
+                ></i>
+                <span class="text-sm font-medium">Admin</span>
+              </button>
+              <button
+                onclick="selectRole('staff')"
+                id="staffBtn"
+                class="role-btn p-4 rounded-xl border-2 border-gray-600 hover:border-blue-500 transition-all duration-300 flex flex-col items-center gap-2 group"
+              >
+                <i
+                  class="fas fa-user-tie text-2xl text-gray-400 group-hover:text-blue-400"
+                ></i>
+                <span class="text-sm font-medium">Staff</span>
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2"
+              >Email</label
+            >
+            <input
+              type="email"
+              id="emailInput"
+              placeholder="admin@vaultflow.com"
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors mb-3"
+            />
+
+            <label class="block text-sm font-medium text-gray-300 mb-2"
+              >Password</label
+            >
+            <div class="relative">
+              <input
+                type="password"
+                id="passwordInput"
+                placeholder="Enter password"
+                class="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors"
+              />
+              <i class="fas fa-lock absolute right-4 top-3.5 text-gray-500"></i>
+            </div>
+          </div>
+
+          <button
+            onclick="login()"
+            class="w-full py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-xl font-semibold shadow-lg transform hover:scale-[1.02] transition-all duration-200"
+          >
+            Access Dashboard
+          </button>
+
+          <button
+            onclick="seedDatabase()"
+            class="w-full py-2 text-sm text-gray-400 hover:text-white transition-colors"
+          >
+            <i class="fas fa-database mr-2"></i>Seed Demo Data
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Application -->
+    <div id="app" class="hidden flex h-screen">
+      <!-- Sidebar -->
+      <aside
+        class="w-64 bg-secondary border-r border-gray-700 flex flex-col shadow-xl"
+      >
+        <div class="p-6 border-b border-gray-700">
+          <div class="flex items-center gap-3">
+            <div
+              class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center"
+            >
+              <i class="fas fa-vault text-white"></i>
+            </div>
+            <div>
+              <h2 class="font-bold text-lg">VaultFlow</h2>
+              <p class="text-xs text-gray-400" id="userRoleDisplay">
+                Admin Portal
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <nav
+          class="flex-1 overflow-y-auto py-4 px-3 space-y-1"
+          id="sidebarMenu"
+        >
+          <!-- Dynamic menu items -->
+        </nav>
+
+        <div class="p-4 border-t border-gray-700">
+          <button
+            onclick="logout()"
+            class="w-full flex items-center gap-3 px-4 py-3 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
+          >
+            <i class="fas fa-sign-out-alt"></i>
+            <span>Logout</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- Main Content -->
+      <main class="flex-1 flex flex-col overflow-hidden bg-primary relative">
+        <!-- Top Header -->
+        <header
+          class="h-16 bg-secondary/50 backdrop-blur-md border-b border-gray-700 flex items-center justify-between px-8"
+        >
+          <div class="flex items-center gap-4">
+            <h2 id="pageTitle" class="text-xl font-semibold">Dashboard</h2>
+            <span id="liveTime" class="text-sm text-gray-400 font-mono"></span>
+          </div>
+          <div class="flex items-center gap-4">
+            <button
+              onclick="refreshData()"
+              class="p-2 text-gray-400 hover:text-white transition-colors"
+              title="Refresh Data"
+            >
+              <i class="fas fa-sync-alt" id="refreshIcon"></i>
+            </button>
+            <button
+              onclick="toggleNotifications()"
+              class="relative p-2 text-gray-400 hover:text-white transition-colors"
+            >
+              <i class="fas fa-bell text-xl"></i>
+              <span
+                id="notifBadge"
+                class="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full hidden animate-pulse"
+              ></span>
+            </button>
+            <div class="flex items-center gap-3 pl-4 border-l border-gray-700">
+              <div
+                class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-sm font-bold"
+                id="userAvatar"
+              >
+                A
+              </div>
+              <div class="hidden md:block">
+                <p class="text-sm font-medium" id="userName">Admin User</p>
+                <p class="text-xs text-gray-400" id="userEmail">
+                  admin@vaultflow.com
+                </p>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <!-- Content Area -->
+        <div id="contentArea" class="flex-1 overflow-y-auto p-8">
+          <!-- Dynamic content loaded here -->
+        </div>
+
+        <!-- Notification Panel -->
+        <div
+          id="notificationPanel"
+          class="absolute top-16 right-0 w-80 bg-secondary border-l border-b border-gray-700 shadow-2xl transform translate-x-full transition-transform duration-300 z-40 max-h-96 overflow-y-auto"
+        >
+          <div
+            class="p-4 border-b border-gray-700 flex justify-between items-center"
+          >
+            <h3 class="font-semibold">Notifications</h3>
+            <button
+              onclick="clearNotifications()"
+              class="text-xs text-blue-400 hover:text-blue-300"
+            >
+              Clear all
+            </button>
+          </div>
+          <div id="notificationList" class="divide-y divide-gray-700">
+            <!-- Notifications inserted here -->
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Modal Container -->
+    <div id="modalContainer" class="fixed inset-0 z-50 hidden">
+      <div class="modal-overlay absolute inset-0" onclick="closeModal()"></div>
+      <div
+        class="absolute inset-0 flex items-center justify-center p-4 pointer-events-none"
+      >
+        <div
+          id="modalContent"
+          class="bg-secondary border border-gray-700 rounded-2xl shadow-2xl max-w-lg w-full pointer-events-auto transform scale-95 opacity-0 transition-all duration-300"
+        >
+          <!-- Modal content -->
+        </div>
+      </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="script.js"></script>
+  </body>
+</html>
