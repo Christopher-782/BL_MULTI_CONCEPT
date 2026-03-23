@@ -1,22 +1,10 @@
-// services/smsService.js - Add this debug code
+// services/smsService.js - BulkSMS Nigeria Version
 const axios = require("axios");
 require("dotenv").config();
 
 const BULKSMS_TOKEN = process.env.BULKSMS_TOKEN;
-
-// ✅ ADD THIS DEBUG CODE
-console.log("🔧 SMS Service Debug:");
-console.log("  - BULKSMS_TOKEN exists:", !!BULKSMS_TOKEN);
-console.log("  - BULKSMS_TOKEN length:", BULKSMS_TOKEN?.length || 0);
-console.log(
-  "  - BULKSMS_TOKEN first 10 chars:",
-  BULKSMS_TOKEN ? BULKSMS_TOKEN.substring(0, 10) + "..." : "NOT SET",
-);
-console.log("  - TEST_MODE:", process.env.TEST_MODE);
-// End debug code
-
 const TEST_MODE = false;
-// ... rest of your code
+
 // Format Nigerian phone numbers
 const formatPhoneNumber = (phone) => {
   if (!phone) return null;
