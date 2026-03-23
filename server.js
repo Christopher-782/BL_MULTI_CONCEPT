@@ -44,6 +44,37 @@ async function createAdmin() {
 
 createAdmin();
 
+// Test SMS endpoint with detailed logging
+app.get("/api/test-sms-detail", async (req, res) => {
+  console.log("\n🔍 ===== TEST SMS ENDPOINT CALLED =====");
+  console.log("Query params:", req.query);
+
+  const { sendSMS } = require("./services/smsService");
+  const testPhone = req.query.phone || "2348078777467";
+  const testMessage =
+    req.query.message ||
+    `Test SMS from VaultFlow on Render at ${new Date().toLocaleString()}`;
+
+  console.log("Sending to:", testPhone);
+  console.log("Message:", testMessage);
+
+  const result = await sendSMS(testPhone, testMessage);
+
+  console.log("Result:", result);
+  res.json({
+    success: result.success,
+    message: result.success
+      ? "SMS sent! Check your phone and BulkSMS dashboard."
+      : "SMS failed",
+    details: result,
+    environment: {
+      hasToken: !!process.env.BULKSMS_TOKEN,
+      tokenFirstFour: process.env.BULKSMS_TOKEN?.substring(0, 4),
+      senderId: process.env.BULKSMS_SENDER_ID,
+      nodeEnv: process.env.NODE_ENV,
+    },
+  });
+});
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port`);
 });
