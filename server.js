@@ -43,7 +43,44 @@ async function createAdmin() {
 }
 
 createAdmin();
+// Add this test endpoint BEFORE app.listen()
+app.get("/api/test-sms-now", async (req, res) => {
+  console.log("🔍 Test SMS endpoint called");
 
+  try {
+    // Import your SMS service
+    const { sendSMS } = require("./services/smsService");
+
+    const phone = "2348078777467"; // Your phone number
+    const message = `Test SMS from VaultFlow on Render at ${new Date().toLocaleString()}`;
+
+    console.log("Sending to:", phone);
+    console.log("Message:", message);
+
+    const result = await sendSMS(phone, message);
+
+    console.log("Result:", result);
+
+    res.json({
+      success: result.success,
+      message: result.success
+        ? "✅ SMS sent! Check your phone."
+        : "❌ SMS failed",
+      details: result,
+      environment: {
+        tokenExists: !!process.env.BULKSMS_TOKEN,
+        tokenLength: process.env.BULKSMS_TOKEN?.length,
+        testMode: process.env.TEST_MODE,
+      },
+    });
+  } catch (error) {
+    console.error("Test endpoint error:", error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port`);
 });
