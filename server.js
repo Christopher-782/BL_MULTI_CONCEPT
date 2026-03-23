@@ -44,30 +44,6 @@ async function createAdmin() {
 
 createAdmin();
 
-// Test SMS endpoint - Remove after testing
-app.get("/api/test-sms-now", async (req, res) => {
-  const { sendSMS } = require("./services/smsService");
-
-  console.log("🔍 Testing SMS with Bearer Token...");
-  console.log("Token exists:", !!process.env.BULKSMS_BEARER_TOKEN);
-
-  const result = await sendSMS(
-    "2348078777467", // Your phone number
-    `Test SMS from VaultFlow using Bearer Token at ${new Date().toLocaleString()}`,
-  );
-
-  res.json({
-    success: result.success,
-    message: result.success
-      ? "✅ SMS sent! Check your phone."
-      : "❌ SMS failed",
-    details: result,
-    environment: {
-      hasBearerToken: !!process.env.BULKSMS_BEARER_TOKEN,
-      senderId: process.env.BULKSMS_SENDER_ID,
-    },
-  });
-});
 app.listen(process.env.PORT, () => {
   console.log(`Server running on port`);
 });

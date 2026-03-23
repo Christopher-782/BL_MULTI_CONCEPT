@@ -1,9 +1,9 @@
-// services/smsService.js - Using Bearer Token
+// services/smsService.js - BulkSMS Nigeria Version
 const axios = require("axios");
+require("dotenv").config();
 
-// Get environment variables
-const BEARER_TOKEN = process.env.BULKSMS_BEARER_TOKEN;
-const SENDER_ID = process.env.BULKSMS_SENDER_ID || "BL MULTI CONCEPT";
+const BULKSMS_TOKEN = process.env.BULKSMS_TOKEN;
+const TEST_MODE = false;
 
 // Format Nigerian phone numbers
 const formatPhoneNumber = (phone) => {
@@ -12,13 +12,13 @@ const formatPhoneNumber = (phone) => {
   // Remove all non-numeric characters
   let cleaned = phone.toString().replace(/\D/g, "");
 
-  // Format for Nigeria (234XXXXXXXXXX)
+  // Format for Nigeria (BulkSMS expects 234XXXXXXXXXX)
   if (cleaned.startsWith("0")) {
     cleaned = "234" + cleaned.substring(1);
+  } else if (cleaned.startsWith("234")) {
+    cleaned = cleaned;
   } else if (cleaned.length === 10) {
     cleaned = "234" + cleaned;
-  } else if (cleaned.startsWith("234") && cleaned.length === 12) {
-    cleaned = cleaned;
   } else if (cleaned.startsWith("+")) {
     cleaned = cleaned.substring(1);
   }
@@ -32,71 +32,51 @@ const sendSMS = async (phone, message) => {
     const formattedPhone = formatPhoneNumber(phone);
 
     if (!formattedPhone) {
-      console.error("❌ Invalid phone number:", phone);
+      console.error("Invalid phone number");
       return { success: false, error: "Invalid phone number" };
     }
 
-    if (!BEARER_TOKEN) {
-      console.error(
-        "❌ BULKSMS_BEARER_TOKEN not found in environment variables",
-      );
-      return { success: false, error: "SMS service not configured" };
+    if (TEST_MODE) {
+      console.log("📱 SMS TEST MODE (BulkSMS Nigeria)");
+      console.log("================================================");
+      console.log("To:", formattedPhone);
+      console.log("From: VAULTFLOW");
+      console.log("Message:", message);
+      console.log("================================================");
+      console.log("✅ SMS would be sent in production mode");
+      return { success: true, testMode: true };
     }
 
-    console.log("📤 Sending SMS via BulkSMS Nigeria (Bearer Token)...");
+    console.log("📤 Sending real SMS via BulkSMS Nigeria...");
     console.log("To:", formattedPhone);
-    console.log("From:", SENDER_ID);
-    console.log("Message:", message.substring(0, 50) + "...");
+    console.log("Message length:", message.length);
 
-    // Send using Bearer Token
+    // BulkSMS Nigeria API endpoint
     const response = await axios.post(
-      "https://www.bulksmsnigeria.com/api/v2/sms/create",
+      "https://www.bulksmsnigeria.com/api/v1/sms/create",
       {
-        from: SENDER_ID,
+        api_token: BULKSMS_TOKEN,
+        from: "BL MULTI CONCEPT", // Your sender name
         to: formattedPhone,
         body: message,
-        gateway: "direct",
-        dnd: 2,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${BEARER_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        timeout: 30000,
+        dnd: 2, // 2 = Don't send to DND numbers
       },
     );
 
-    console.log("📊 API Response:", JSON.stringify(response.data, null, 2));
-
-    // Check if successful
-    if (
-      response.data.status === "success" ||
-      response.data.code === "BSNG-0000"
-    ) {
+    // Check response
+    if (response.data && response.data.status === "success") {
       console.log("✅ SMS sent successfully!");
-      console.log("📱 Message ID:", response.data.data?.message_id);
-      return {
-        success: true,
-        messageId: response.data.data?.message_id,
-        data: response.data,
-      };
+      console.log("📱 Message ID:", response.data.message_id);
+      return { success: true, data: response.data };
     } else {
       console.log("❌ SMS failed:", response.data);
       return {
         success: false,
-        error: response.data.message || "Unknown error",
-        data: response.data,
+        error: response.data?.message || "Unknown error",
       };
     }
   } catch (error) {
-    console.error("❌ SMS Error:");
-    if (error.response) {
-      console.error("Status:", error.response.status);
-      console.error("Data:", error.response.data);
-    } else {
-      console.error("Message:", error.message);
-    }
+    console.error("❌ SMS error:", error.response?.data || error.message);
     return { success: false, error: error.message };
   }
 };
@@ -112,7 +92,7 @@ const sendCreditAlert = async (
   const formattedBalance = balance.toLocaleString();
   const date = new Date().toLocaleString();
 
-  const message = `VAULTFLOW
+  const message = `BL MULTI CONCEPT
 
 ✓ CREDIT ALERT
 Amount: ₦${formattedAmount}
@@ -131,7 +111,7 @@ const sendDebitAlert = async (phone, amount, balance, transactionId = null) => {
   const formattedBalance = balance.toLocaleString();
   const date = new Date().toLocaleString();
 
-  const message = `VAULTFLOW
+  const message = `BL MULTI CONCEPT
 
 ✗ DEBIT ALERT
 Amount: ₦${formattedAmount}
@@ -144,10 +124,32 @@ Thank you for banking with us!`;
   return await sendSMS(phone, message);
 };
 
-// Export functions
+// Send transaction status alert
+const sendTransactionAlert = async (phone, transaction, status) => {
+  const charges = transaction.charges || 0;
+  const netAmount =
+    transaction.type === "deposit"
+      ? transaction.amount - charges
+      : transaction.amount + charges;
+
+  const message = `BL MULTI CONCEPT
+
+${status === "approved" ? "✓" : "✗"} TRANSACTION ${status.toUpperCase()}
+Type: ${transaction.type.toUpperCase()}
+Gross: ₦${transaction.amount.toLocaleString()}
+${charges > 0 ? `Charges: ₦${charges.toLocaleString()}\nNet: ₦${netAmount.toLocaleString()}` : ""}
+Ref: ${transaction.id}
+Date: ${new Date().toLocaleString()}
+
+Thank you for banking with us!`;
+
+  return await sendSMS(phone, message);
+};
+
 module.exports = {
   sendCreditAlert,
   sendDebitAlert,
+  sendTransactionAlert,
   sendSMS,
   formatPhoneNumber,
 };
