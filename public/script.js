@@ -12,7 +12,7 @@ const state = {
 
 // Axios Configuration
 const api = axios.create({
-  baseURL: "http://localhost:3000",
+  baseURL: "https://bl-multi-concept.onrender.com/",
   timeout: 10000,
   headers: {
     "Content-Type": "application/json",
