@@ -71,7 +71,7 @@ const menus = {
   ],
   staff: [
     { id: "dashboard", icon: "fa-chart-line", label: "Dashboard" },
-    { id: "customers", icon: "fa-users", label: "My Customers" },
+    { id: "customers", icon: "fa-users", label: "All Customers" },
     {
       id: "new-customer",
       icon: "fa-user-plus",
@@ -93,8 +93,21 @@ function initMobileMenu() {
   const menuToggle = document.getElementById("mobileMenuToggle");
   const overlay = document.getElementById("sidebarOverlay");
 
+  if (window.innerWidth < 768) {
+    if (menuToggle) menuToggle.style.display = "flex";
+    if (overlay) overlay.style.display = "block";
+  } else {
+    if (menuToggle) menuToggle.style.display = "none";
+    if (overlay) overlay.style.display = "none";
+    if (sidebar) sidebar.classList.remove("open");
+  }
+
   if (menuToggle && sidebar && overlay) {
-    menuToggle.addEventListener("click", (e) => {
+    const newToggle = menuToggle.cloneNode(true);
+    menuToggle.parentNode.replaceChild(newToggle, menuToggle);
+
+    newToggle.addEventListener("click", (e) => {
+      e.preventDefault();
       e.stopPropagation();
       sidebar.classList.toggle("open");
       overlay.classList.toggle("hidden");
@@ -109,7 +122,6 @@ function initMobileMenu() {
       document.body.style.overflow = "";
     });
 
-    // Close sidebar when clicking on a menu item (mobile only)
     const menuItems = sidebar.querySelectorAll(".sidebar-item");
     menuItems.forEach((item) => {
       item.addEventListener("click", () => {
@@ -123,14 +135,19 @@ function initMobileMenu() {
   }
 }
 
-// Handle window resize
 window.addEventListener("resize", () => {
+  const sidebar = document.querySelector(".sidebar");
+  const menuToggle = document.getElementById("mobileMenuToggle");
+  const overlay = document.getElementById("sidebarOverlay");
+
   if (window.innerWidth >= 768) {
-    const sidebar = document.querySelector(".sidebar");
-    const overlay = document.getElementById("sidebarOverlay");
+    if (menuToggle) menuToggle.style.display = "none";
+    if (overlay) overlay.style.display = "none";
     if (sidebar) sidebar.classList.remove("open");
-    if (overlay) overlay.classList.add("hidden");
     document.body.style.overflow = "";
+  } else {
+    if (menuToggle) menuToggle.style.display = "flex";
+    if (overlay) overlay.style.display = "block";
   }
 });
 
@@ -163,16 +180,6 @@ function formatSimpleDate(dateString) {
     return date.toLocaleDateString("en-GB");
   } catch (error) {
     return dateString;
-  }
-}
-
-function isToday(dateString) {
-  try {
-    const date = new Date(dateString);
-    const today = new Date();
-    return date.toDateString() === today.toDateString();
-  } catch (error) {
-    return false;
   }
 }
 
@@ -254,7 +261,7 @@ async function initializeApp() {
   renderSidebar();
   navigate("dashboard");
   startClock();
-  initMobileMenu(); // Initialize mobile menu after app loads
+  setTimeout(() => initMobileMenu(), 100);
 }
 
 async function loadAllData() {
@@ -391,13 +398,18 @@ function renderDashboard(container) {
   } else {
     stats = [
       {
-        label: "My Customers",
-        value: state.customers.filter(
-          (c) => c.addedBy?.staffId === state.currentUser?.id,
-        ).length,
+        label: "Total Customers",
+        value: state.customers.length,
         icon: "fa-users",
         color: "green",
-        trend: "Active",
+        trend: "All customers",
+      },
+      {
+        label: "Total Balance",
+        value: "₦" + totalBalance.toLocaleString(),
+        icon: "fa-wallet",
+        color: "blue",
+        trend: "System total",
       },
       {
         label: "My Transactions",
@@ -409,44 +421,20 @@ function renderDashboard(container) {
           ),
         ).length,
         icon: "fa-exchange-alt",
-        color: "blue",
+        color: "purple",
         trend: "This month",
-      },
-      {
-        label: "Pending Requests",
-        value: state.transactions.filter(
-          (t) =>
-            t.status === "pending" &&
-            state.customers.some(
-              (c) =>
-                c.id === t.customerId &&
-                c.addedBy?.staffId === state.currentUser?.id,
-            ),
-        ).length,
-        icon: "fa-clock",
-        color: "yellow",
-        trend: "Awaiting approval",
       },
       {
         label: "Today's Activity",
         value: todayTransactions,
         icon: "fa-chart-line",
-        color: "purple",
+        color: "yellow",
         trend: "Active",
       },
     ];
   }
 
-  const recentTransactions =
-    state.role === "admin"
-      ? state.transactions
-      : state.transactions.filter((t) =>
-          state.customers.some(
-            (c) =>
-              c.id === t.customerId &&
-              c.addedBy?.staffId === state.currentUser?.id,
-          ),
-        );
+  const recentTransactions = state.transactions;
 
   let html = `
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6 sm:mb-8 animate-fade-in">
@@ -544,8 +532,8 @@ function renderDashboard(container) {
                   <i class="fas fa-search text-sm sm:text-base"></i>
                 </div>
                 <div class="text-left">
-                  <p class="font-medium text-sm sm:text-base">My Customers</p>
-                  <p class="text-xs text-gray-400">View your customers</p>
+                  <p class="font-medium text-sm sm:text-base">All Customers</p>
+                  <p class="text-xs text-gray-400">View all customers</p>
                 </div>
               </button>
             `
@@ -616,22 +604,17 @@ function renderDashboard(container) {
   container.innerHTML = html;
 }
 
-// ==================== CUSTOMERS VIEW ====================
+// ==================== CUSTOMERS VIEW (STAFF CAN SEE ALL) ====================
 
 function renderCustomers(container) {
+  // Staff can see ALL customers - no filtering
   let displayedCustomers = state.customers;
-
-  if (state.role === "staff") {
-    displayedCustomers = state.customers.filter(
-      (c) => c.addedBy?.staffId === state.currentUser?.id,
-    );
-  }
 
   const html = `
     <div class="glass-panel rounded-2xl p-4 sm:p-6 animate-fade-in">
       <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
         <h3 class="text-base sm:text-lg font-semibold">
-          ${state.role === "admin" ? "All Customers" : "My Customers"}
+          All Customers
         </h3>
         ${
           state.role === "admin"
@@ -640,14 +623,18 @@ function renderCustomers(container) {
             <i class="fas fa-plus mr-2"></i>Add Customer
           </button>
         `
-            : ""
+            : `
+          <button onclick="navigate('new-customer')" class="w-full sm:w-auto px-4 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-sm transition-colors">
+            <i class="fas fa-user-plus mr-2"></i>Register Customer
+          </button>
+        `
         }
       </div>
       
       <div class="mb-4 flex flex-col sm:flex-row gap-4">
         <input type="text" 
                id="customerSearch" 
-               placeholder="Search customers..." 
+               placeholder="Search customers by name, email, or phone..." 
                onkeyup="filterCustomers()"
                class="flex-1 px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-blue-500 text-base">
         
@@ -673,9 +660,9 @@ function renderCustomers(container) {
                 <th class="pb-4 px-4 sm:px-0 hidden sm:table-cell">Phone</th>
                 <th class="pb-4 px-4 sm:px-0">Balance</th>
                 <th class="pb-4 px-4 sm:px-0 hidden sm:table-cell">Status</th>
-                ${state.role === "admin" ? '<th class="pb-4 px-4 sm:px-0 hidden lg:table-cell">Added By</th>' : ""}
+                <th class="pb-4 px-4 sm:px-0 hidden lg:table-cell">Added By</th>
                 <th class="pb-4 px-4 sm:px-0">Actions</th>
-              </tr>
+                ..
             </thead>
             <tbody id="customerTableBody" class="divide-y divide-gray-800">
               ${displayedCustomers
@@ -698,26 +685,26 @@ function renderCustomers(container) {
                         </div>
                         <span class="font-medium text-sm sm:text-base break-words">${customer.name}</span>
                       </div>
-                    </td>
+                      ..
                     <td class="py-4 px-4 sm:px-0">
                       <div class="text-xs sm:text-sm break-words max-w-[150px] sm:max-w-none">
                         ${customer.email}
                       </div>
-                    </td>
+                      ..
                     <td class="py-4 px-4 sm:px-0 hidden sm:table-cell">
                       <div class="text-xs sm:text-sm">
                         <i class="fas fa-phone-alt text-green-400 mr-1"></i>
                         ${customer.phone || "N/A"}
                       </div>
-                    </td>
+                      ..
                     <td class="py-4 px-4 sm:px-0">
                       <span class="text-sm sm:text-base font-mono">₦${customer.balance?.toFixed(2) || "0.00"}</span>
-                    </td>
+                      ..
                     <td class="py-4 px-4 sm:px-0 hidden sm:table-cell">
                       <span class="px-2 py-1 rounded text-xs ${customer.status === "active" ? "bg-green-500/20 text-green-400" : "bg-gray-500/20 text-gray-400"}">
                         ${customer.status}
                       </span>
-                    </td>
+                      ..
                     ${
                       state.role === "admin"
                         ? `
@@ -726,10 +713,11 @@ function renderCustomers(container) {
                           customer.addedBy
                             ? `<div class="text-xs sm:text-sm">
                               <div>${customer.addedBy.staffName}</div>
+                              <div class="text-xs text-gray-500">${customer.addedBy.staffEmail}</div>
                             </div>`
                             : '<span class="text-xs text-gray-500">System</span>'
                         }
-                      </td>
+                        ..
                       `
                         : ""
                     }
@@ -751,8 +739,8 @@ function renderCustomers(container) {
                           <i class="fas fa-edit text-sm sm:text-base"></i>
                         </button>
                       </div>
-                    </td>
-                  </tr>
+                      ..
+                    ..
                 `,
                 )
                 .join("")}
@@ -768,7 +756,8 @@ function renderCustomers(container) {
 }
 
 function filterCustomers() {
-  const search = document.getElementById("customerSearch").value.toLowerCase();
+  const search =
+    document.getElementById("customerSearch")?.value.toLowerCase() || "";
   const staffFilter = document.getElementById("staffFilter")?.value;
   const rows = document.querySelectorAll("#customerTableBody tr");
 
@@ -976,9 +965,12 @@ async function handleNewCustomer(e) {
   }
 }
 
-// ==================== NEW TRANSACTION VIEW ====================
+// ==================== NEW TRANSACTION VIEW WITH WORKING SEARCH ====================
 
 function renderNewTransaction(container) {
+  // Get all customers for staff and admin
+  let availableCustomers = state.customers;
+
   const html = `
     <div class="max-w-2xl mx-auto animate-fade-in px-4 sm:px-0">
       <div class="glass-panel rounded-2xl p-4 sm:p-8">
@@ -994,28 +986,50 @@ function renderNewTransaction(container) {
         </div>
 
         <form onsubmit="handleNewTransaction(event)" class="space-y-4 sm:space-y-6">
+          <!-- Search Input - This replaces the dropdown selection -->
           <div>
-            <label class="block text-sm font-medium text-gray-300 mb-2">Select Customer</label>
-            <select name="customerId" id="transactionCustomerSelect" required onchange="updateCustomerBalanceDisplay()" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors text-base">
-              <option value="">Choose customer...</option>
-              ${state.customers
-                .filter((c) =>
-                  state.role === "admin"
-                    ? true
-                    : c.addedBy?.staffId === state.currentUser?.id,
-                )
-                .map(
-                  (c) =>
-                    `<option value="${c.id}" data-balance="${c.balance || 0}" data-phone="${c.phone || ""}">${c.name} - ₦${(c.balance || 0).toLocaleString()} ${c.phone ? "📱" : "⚠️"}</option>`,
-                )
-                .join("")}
-            </select>
+            <label class="block text-sm font-medium text-gray-300 mb-2">Search for Customer</label>
+            <div class="relative">
+              <input 
+                type="text" 
+                id="customerSearchInput" 
+                placeholder="Type to search by name, email, or phone..." 
+                autocomplete="off"
+                class="w-full px-4 py-3 pl-10 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors text-base"
+              />
+              <i class="fas fa-search absolute left-3 top-3.5 text-gray-500"></i>
+              <i class="fas fa-times absolute right-3 top-3.5 text-gray-500 cursor-pointer hover:text-gray-300" onclick="clearCustomerSearch()"></i>
+            </div>
+            <p class="text-xs text-gray-400 mt-1">Start typing to search for customers</p>
           </div>
 
-          <div id="customerBalanceDisplay" class="hidden p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+          <!-- Search Results Dropdown -->
+          <div id="searchResultsDropdown" class="hidden glass-panel rounded-xl border border-gray-700 max-h-64 overflow-y-auto">
+            <div id="searchResultsList" class="divide-y divide-gray-700">
+              <!-- Search results will appear here -->
+            </div>
+          </div>
+
+          <!-- Selected Customer Display -->
+          <div id="selectedCustomerDisplay" class="hidden p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+            <div class="flex justify-between items-center">
+              <div>
+                <p class="text-sm text-gray-300">Selected Customer:</p>
+                <p class="text-base font-semibold text-blue-400" id="selectedCustomerName">-</p>
+                <p class="text-xs text-gray-400" id="selectedCustomerPhone"></p>
+              </div>
+              <button type="button" onclick="clearSelectedCustomer()" class="text-red-400 hover:text-red-300">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+          </div>
+
+          <input type="hidden" name="customerId" id="selectedCustomerId" value="">
+
+          <div id="customerBalanceDisplay" class="hidden p-4 bg-green-500/10 border border-green-500/20 rounded-xl">
             <div class="flex justify-between items-center">
               <span class="text-xs sm:text-sm text-gray-300">Current Balance:</span>
-              <span class="text-base sm:text-lg font-bold text-blue-400" id="currentBalanceAmount">₦0</span>
+              <span class="text-base sm:text-lg font-bold text-green-400" id="currentBalanceAmount">₦0</span>
             </div>
           </div>
 
@@ -1093,27 +1107,104 @@ function renderNewTransaction(container) {
 
   container.innerHTML = html;
 
+  // Store customers data for search
+  const customersData = availableCustomers;
+
   const script = document.createElement("script");
   script.textContent = `
-    function updateCustomerBalanceDisplay() {
-      const select = document.getElementById('transactionCustomerSelect');
-      const selectedOption = select.options[select.selectedIndex];
-      const balanceDisplay = document.getElementById('customerBalanceDisplay');
-      const balanceAmount = document.getElementById('currentBalanceAmount');
+    let searchTimeout;
+    let customersData = ${JSON.stringify(customersData)};
+    
+    function filterAndDisplayCustomers() {
+      const searchInput = document.getElementById('customerSearchInput');
+      const searchResultsDropdown = document.getElementById('searchResultsDropdown');
+      const searchResultsList = document.getElementById('searchResultsList');
       
-      if (selectedOption && selectedOption.value) {
-        const balance = parseFloat(selectedOption.dataset.balance || 0);
-        balanceAmount.textContent = '₦' + balance.toLocaleString();
-        balanceDisplay.classList.remove('hidden');
-        updateNetAmount();
-      } else {
-        balanceDisplay.classList.add('hidden');
+      if (!searchInput) return;
+      
+      const searchTerm = searchInput.value.toLowerCase().trim();
+      
+      if (searchTerm === '') {
+        searchResultsDropdown.classList.add('hidden');
+        return;
       }
+      
+      // Filter customers
+      const filteredCustomers = customersData.filter(customer => {
+        const name = (customer.name || '').toLowerCase();
+        const email = (customer.email || '').toLowerCase();
+        const phone = (customer.phone || '').toLowerCase();
+        
+        return name.includes(searchTerm) || 
+               email.includes(searchTerm) || 
+               phone.includes(searchTerm);
+      });
+      
+      if (filteredCustomers.length === 0) {
+        searchResultsList.innerHTML = \`
+          <div class="p-4 text-center text-gray-400">
+            <i class="fas fa-search text-2xl mb-2 block"></i>
+            No customers found matching "\${searchTerm}"
+          </div>
+        \`;
+        searchResultsDropdown.classList.remove('hidden');
+        return;
+      }
+      
+      // Display results
+      searchResultsList.innerHTML = filteredCustomers.map(customer => \`
+        <div class="p-3 hover:bg-gray-700 cursor-pointer transition-colors" onclick="selectCustomer('\${customer.id}', '\${customer.name.replace(/'/g, "\\'")}', \${customer.balance || 0}, '\${customer.phone || ''}')">
+          <div class="flex justify-between items-start">
+            <div>
+              <p class="font-medium text-sm sm:text-base">\${customer.name}</p>
+              <p class="text-xs text-gray-400">\${customer.email}</p>
+              <p class="text-xs text-gray-500 mt-1">\${customer.phone || 'No phone'} | Balance: ₦\${(customer.balance || 0).toLocaleString()}</p>
+            </div>
+            <i class="fas fa-chevron-right text-gray-500 text-sm"></i>
+          </div>
+        </div>
+      \`).join('');
+      
+      searchResultsDropdown.classList.remove('hidden');
+    }
+    
+    function selectCustomer(id, name, balance, phone) {
+      // Set selected customer
+      document.getElementById('selectedCustomerId').value = id;
+      document.getElementById('selectedCustomerName').textContent = name;
+      document.getElementById('selectedCustomerPhone').textContent = phone ? '📱 ' + phone : '⚠️ No phone number';
+      document.getElementById('selectedCustomerDisplay').classList.remove('hidden');
+      
+      // Update balance display
+      const balanceAmount = document.getElementById('currentBalanceAmount');
+      if (balanceAmount) balanceAmount.textContent = '₦' + balance.toLocaleString();
+      document.getElementById('customerBalanceDisplay').classList.remove('hidden');
+      
+      // Store balance for validation
+      window.selectedCustomerBalance = balance;
+      window.selectedCustomerId = id;
+      window.selectedCustomerName = name;
+      
+      // Hide search results and clear search input
+      document.getElementById('searchResultsDropdown').classList.add('hidden');
+      document.getElementById('customerSearchInput').value = '';
+      
+      // Update net amount
+      updateNetAmount();
+    }
+    
+    function clearSelectedCustomer() {
+      document.getElementById('selectedCustomerId').value = '';
+      document.getElementById('selectedCustomerDisplay').classList.add('hidden');
+      document.getElementById('customerBalanceDisplay').classList.add('hidden');
+      document.getElementById('insufficientFundsWarning').classList.add('hidden');
+      window.selectedCustomerBalance = null;
+      window.selectedCustomerId = null;
+      window.selectedCustomerName = null;
+      updateNetAmount();
     }
     
     function updateNetAmount() {
-      const select = document.getElementById('transactionCustomerSelect');
-      const selectedOption = select.options[select.selectedIndex];
       const amountInput = document.getElementById('transactionAmount');
       const chargeInput = document.getElementById('chargeAmount');
       const netSpan = document.getElementById('netAmount');
@@ -1123,8 +1214,8 @@ function renderNewTransaction(container) {
       const submitBtn = document.getElementById('submitTransactionBtn');
       const transactionType = document.querySelector('input[name="type"]:checked')?.value;
       
-      const amount = parseFloat(amountInput.value) || 0;
-      const charges = parseFloat(chargeInput.value) || 0;
+      const amount = parseFloat(amountInput ? amountInput.value : 0) || 0;
+      const charges = parseFloat(chargeInput ? chargeInput.value : 0) || 0;
       
       let netAmount = amount;
       if (transactionType === 'deposit') {
@@ -1133,39 +1224,73 @@ function renderNewTransaction(container) {
         netAmount = amount + charges;
       }
       
-      netSpan.textContent = '₦' + netAmount.toLocaleString();
+      if (netSpan) netSpan.textContent = '₦' + netAmount.toLocaleString();
       
-      if (!selectedOption || !selectedOption.value || transactionType !== 'withdrawal') {
-        warningDiv.classList.add('hidden');
-        submitBtn.disabled = false;
-        submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-        return;
-      }
+      const balance = window.selectedCustomerBalance || 0;
       
-      const balance = parseFloat(selectedOption.dataset.balance || 0);
-      availableBalanceSpan.textContent = '₦' + balance.toLocaleString();
-      
-      if (transactionType === 'withdrawal') {
-        const totalDeduction = amount + charges;
-        totalDeductionSpan.textContent = '₦' + totalDeduction.toLocaleString();
-        
-        if (totalDeduction > balance) {
-          warningDiv.classList.remove('hidden');
-          submitBtn.disabled = true;
-          submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
-        } else {
-          warningDiv.classList.add('hidden');
+      if (!window.selectedCustomerId || transactionType !== 'withdrawal') {
+        if (warningDiv) warningDiv.classList.add('hidden');
+        if (submitBtn) {
           submitBtn.disabled = false;
           submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
         }
+        return;
+      }
+      
+      if (availableBalanceSpan) availableBalanceSpan.textContent = '₦' + balance.toLocaleString();
+      
+      if (transactionType === 'withdrawal') {
+        const totalDeduction = amount + charges;
+        if (totalDeductionSpan) totalDeductionSpan.textContent = '₦' + totalDeduction.toLocaleString();
+        
+        if (totalDeduction > balance) {
+          if (warningDiv) warningDiv.classList.remove('hidden');
+          if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
+          }
+        } else {
+          if (warningDiv) warningDiv.classList.add('hidden');
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+          }
+        }
       } else {
-        warningDiv.classList.add('hidden');
-        submitBtn.disabled = false;
-        submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        if (warningDiv) warningDiv.classList.add('hidden');
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
       }
     }
     
-    updateCustomerBalanceDisplay();
+    // Add debounced search
+    const searchInput = document.getElementById('customerSearchInput');
+    if (searchInput) {
+      const newSearchInput = searchInput.cloneNode(true);
+      searchInput.parentNode.replaceChild(newSearchInput, searchInput);
+      
+      newSearchInput.addEventListener('input', function() {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(filterAndDisplayCustomers, 300);
+      });
+      
+      newSearchInput.addEventListener('focus', function() {
+        if (this.value.trim() !== '') {
+          filterAndDisplayCustomers();
+        }
+      });
+    }
+    
+    // Close dropdown when clicking outside
+    document.addEventListener('click', function(e) {
+      const searchContainer = document.getElementById('customerSearchInput');
+      const dropdown = document.getElementById('searchResultsDropdown');
+      if (searchContainer && dropdown && !searchContainer.contains(e.target) && !dropdown.contains(e.target)) {
+        dropdown.classList.add('hidden');
+      }
+    });
   `;
 
   container.appendChild(script);
@@ -1190,7 +1315,6 @@ function viewCustomer(id) {
 
   const html = `
     <div class="space-y-4 sm:space-y-6 animate-fade-in px-4 sm:px-0">
-      <!-- Customer Header -->
       <div class="glass-panel rounded-2xl p-4 sm:p-6">
         <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
           <div class="flex items-center gap-4">
@@ -1243,7 +1367,6 @@ function viewCustomer(id) {
         </div>
       </div>
 
-      <!-- Period Filter -->
       <div class="glass-panel rounded-2xl p-4 sm:p-6">
         <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
           <h3 class="text-base sm:text-lg font-semibold">Transaction History</h3>
@@ -1266,7 +1389,6 @@ function viewCustomer(id) {
           </div>
         </div>
 
-        <!-- Transaction Table -->
         <div class="overflow-x-auto -mx-4 sm:mx-0">
           <div class="inline-block min-w-full align-middle">
             <table class="min-w-full divide-y divide-gray-700">
@@ -1280,7 +1402,7 @@ function viewCustomer(id) {
                   <th class="pb-3 px-4 sm:px-0">Status</th>
                   <th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Description</th>
                   <th class="pb-3 px-4 sm:px-0 hidden lg:table-cell">Processed By</th>
-                 </tr>
+                  ..
               </thead>
               <tbody class="divide-y divide-gray-800">
                 ${sortedTransactions
@@ -1299,55 +1421,55 @@ function viewCustomer(id) {
                             <i class="fas fa-calendar-alt text-gray-500 text-xs"></i>
                             ${formatDate(txn.date)}
                           </div>
-                         </tr>
+                         ..
                         <td class="py-3 px-4 sm:px-0">
                           <span class="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
                             <i class="fas fa-arrow-${txn.type === "deposit" ? "down text-green-400" : "up text-orange-400"}"></i>
                             ${txn.type}
                           </span>
-                         </tr>
+                         ..
                         <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">
                           ${txn.type === "deposit" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()}
-                         </tr>
+                         ..
                         <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-red-400 hidden sm:table-cell">
                           -₦${charges.toLocaleString()}
-                         </tr>
+                         ..
                         <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-blue-400">
                           ₦${netAmount.toLocaleString()}
-                         </tr>
+                         ..
                         <td class="py-3 px-4 sm:px-0">
                           <span class="px-2 py-1 rounded text-xs ${getStatusStyle(txn.status)}">
                             ${txn.status}
                           </span>
-                         </tr>
+                         ..
                         <td class="py-3 px-4 sm:px-0 hidden md:table-cell">
                           <p class="text-xs sm:text-sm text-gray-300 truncate max-w-[150px]" title="${txn.description || ""}">${txn.description || "-"}</p>
-                         </tr>
-                        <td class="py-3 px-4 sm:px-0 hidden lg:table-cell text-xs sm:text-sm text-gray-400">${txn.approvedBy || "-"} </tr>
-                      </tr>
+                         ..
+                        <td class="py-3 px-4 sm:px-0 hidden lg:table-cell text-xs sm:text-sm text-gray-400">${txn.approvedBy || "-"}  ..
+                       ..
                     `;
                   })
                   .join("")}
                 ${
                   sortedTransactions.length === 0
                     ? `
-                    <tr>
-                      <td colspan="8" class="py-8 text-center text-gray-400">
-                        No transactions found for this customer
-                      </td>
-                    </tr>
-                  `
+                      <tr>
+                        <td colspan="8" class="py-8 text-center text-gray-400">
+                          No transactions found for this customer
+                        </td>
+                      </tr>
+                    `
                     : ""
                 }
                 ${
                   sortedTransactions.length > 50
                     ? `
-                    <tr>
-                      <td colspan="8" class="py-4 text-center text-gray-500 text-xs sm:text-sm">
-                        Showing first 50 transactions. Use period filters to see more.
-                      </td>
-                    </tr>
-                  `
+                      <tr>
+                        <td colspan="8" class="py-4 text-center text-gray-500 text-xs sm:text-sm">
+                          Showing first 50 transactions. Use period filters to see more.
+                        </td>
+                      </tr>
+                    `
                     : ""
                 }
               </tbody>
@@ -1474,7 +1596,6 @@ function renderCustomerTransactions(container, customerId, period = "all") {
 
   const html = `
     <div class="space-y-4 sm:space-y-6 animate-fade-in px-4 sm:px-0">
-      <!-- Customer Header -->
       <div class="glass-panel rounded-2xl p-4 sm:p-6">
         <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
           <div class="flex items-center gap-4">
@@ -1523,7 +1644,6 @@ function renderCustomerTransactions(container, customerId, period = "all") {
         </div>
       </div>
 
-      <!-- Statistics Cards -->
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4 sm:mb-6">
         <div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700">
           <div class="flex items-center justify-between mb-2">
@@ -1566,7 +1686,6 @@ function renderCustomerTransactions(container, customerId, period = "all") {
         </div>
       </div>
 
-      <!-- Transaction History -->
       <h3 class="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Transaction History - ${period === "all" ? "All Time" : `This ${period}`}</h3>
       <div class="overflow-x-auto -mx-4 sm:mx-0">
         <div class="inline-block min-w-full align-middle">
@@ -1581,7 +1700,7 @@ function renderCustomerTransactions(container, customerId, period = "all") {
                 <th class="pb-3 px-4 sm:px-0">Status</th>
                 <th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Description</th>
                 <th class="pb-3 px-4 sm:px-0 hidden lg:table-cell">Processed By</th>
-               </tr>
+                ..
             </thead>
             <tbody class="divide-y divide-gray-800">
               ${sortedTransactions
@@ -1599,38 +1718,38 @@ function renderCustomerTransactions(container, customerId, period = "all") {
                           <i class="fas fa-calendar-alt text-gray-500 text-xs"></i>
                           ${formatDate(txn.date)}
                         </div>
-                       </td>
+                        ..
                       <td class="py-3 px-4 sm:px-0">
                         <span class="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
                           <i class="fas fa-arrow-${txn.type === "deposit" ? "down text-green-400" : "up text-orange-400"}"></i>
                           ${txn.type}
                         </span>
-                       </td>
+                        ..
                       <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">
                         ${txn.type === "deposit" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()}
-                       </td>
+                        ..
                       <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-red-400 hidden sm:table-cell">
                         -₦${charges.toLocaleString()}
-                       </td>
+                        ..
                       <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-blue-400">
                         ₦${netAmount.toLocaleString()}
-                       </td>
+                        ..
                       <td class="py-3 px-4 sm:px-0">
                         <span class="px-2 py-1 rounded text-xs ${getStatusStyle(txn.status)}">
                           ${txn.status}
                         </span>
-                       </td>
+                        ..
                       <td class="py-3 px-4 sm:px-0 hidden md:table-cell">
                         <p class="text-xs sm:text-sm text-gray-300 truncate max-w-[150px]" title="${txn.description || ""}">${txn.description || "-"}</p>
-                       </td>
-                      <td class="py-3 px-4 sm:px-0 hidden lg:table-cell text-xs sm:text-sm text-gray-400">${txn.approvedBy || "-"} </td>
-                     </tr>
+                        ..
+                      <td class="py-3 px-4 sm:px-0 hidden lg:table-cell text-xs sm:text-sm text-gray-400">${txn.approvedBy || "-"}  ..
+                     ..
                   `;
                 })
                 .join("")}
-              ${sortedTransactions.length === 0 ? '<tr><td colspan="8" class="text-center text-gray-400 py-8">No transactions found for this period</td></tr>' : ""}
+              ${sortedTransactions.length === 0 ? 'bon<td colspan="8" class="text-center text-gray-400 py-8">No transactions found for this period</td>' : ""}
             </tbody>
-          </table>
+           ..
         </div>
       </div>
     </div>
@@ -1660,7 +1779,6 @@ function renderCustomerSummary(container, customerId) {
 
   const html = `
     <div class="space-y-4 sm:space-y-6 animate-fade-in px-4 sm:px-0">
-      <!-- Customer Header -->
       <div class="glass-panel rounded-2xl p-4 sm:p-6">
         <div class="flex items-center gap-4 mb-4">
           <button onclick="viewCustomer('${customer.id}')" class="text-gray-400 hover:text-white transition-colors">
@@ -1687,7 +1805,6 @@ function renderCustomerSummary(container, customerId) {
         </div>
       </div>
 
-      <!-- Period Summary Cards -->
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         ${["daily", "weekly", "monthly", "yearly"]
           .map((period) => {
@@ -1726,7 +1843,6 @@ function renderCustomerSummary(container, customerId) {
           .join("")}
       </div>
 
-      <!-- Detailed Statistics Table -->
       <div class="glass-panel rounded-2xl p-4 sm:p-6">
         <h3 class="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Detailed Statistics</h3>
         <div class="overflow-x-auto -mx-4 sm:mx-0">
@@ -1740,7 +1856,7 @@ function renderCustomerSummary(container, customerId) {
                   <th class="pb-3 px-4 sm:px-0">Charges</th>
                   <th class="pb-3 px-4 sm:px-0">Net Change</th>
                   <th class="pb-3 px-4 sm:px-0">Transactions</th>
-                 </tr>
+                  ..
               </thead>
               <tbody class="divide-y divide-gray-800">
                 ${["daily", "weekly", "monthly", "yearly", "all"]
@@ -1750,20 +1866,20 @@ function renderCustomerSummary(container, customerId) {
 
                     return `
                     <tr class="hover:bg-gray-800/30">
-                      <td class="py-3 px-4 sm:px-0 capitalize text-xs sm:text-sm">${period} </td>
-                      <td class="py-3 px-4 sm:px-0 text-green-400 text-xs sm:text-sm">₦${data.stats.deposits.net.toLocaleString()} </td>
-                      <td class="py-3 px-4 sm:px-0 text-orange-400 text-xs sm:text-sm">₦${data.stats.withdrawals.net.toLocaleString()} </td>
-                      <td class="py-3 px-4 sm:px-0 text-red-400 text-xs sm:text-sm">₦${data.stats.totalCharges.toLocaleString()} </td>
+                      <td class="py-3 px-4 sm:px-0 capitalize text-xs sm:text-sm">${period} ..
+                      <td class="py-3 px-4 sm:px-0 text-green-400 text-xs sm:text-sm">₦${data.stats.deposits.net.toLocaleString()} ..
+                      <td class="py-3 px-4 sm:px-0 text-orange-400 text-xs sm:text-sm">₦${data.stats.withdrawals.net.toLocaleString()} ..
+                      <td class="py-3 px-4 sm:px-0 text-red-400 text-xs sm:text-sm">₦${data.stats.totalCharges.toLocaleString()} ..
                       <td class="py-3 px-4 sm:px-0 ${data.stats.netBalance >= 0 ? "text-green-400" : "text-red-400"} text-xs sm:text-sm">
                         ₦${data.stats.netBalance.toLocaleString()}
-                       </td>
-                      <td class="py-3 px-4 sm:px-0 text-xs sm:text-sm">${data.stats.totalTransactions} </td>
-                     </tr>
+                       ..
+                      <td class="py-3 px-4 sm:px-0 text-xs sm:text-sm">${data.stats.totalTransactions} ..
+                     ..
                   `;
                   })
                   .join("")}
               </tbody>
-            </table>
+             ..
           </div>
         </div>
       </div>
@@ -1882,7 +1998,7 @@ function renderCustomerReports(container) {
                   <th class="pb-3 px-4 sm:px-0">Charges</th>
                   <th class="pb-3 px-4 sm:px-0 hidden lg:table-cell">Net Change</th>
                   <th class="pb-3 px-4 sm:px-0">Actions</th>
-                 </tr>
+                  ..
               </thead>
               <tbody class="divide-y divide-gray-800">
                 ${customersWithStats
@@ -1904,19 +2020,19 @@ function renderCustomerReports(container) {
                           <p class="text-xs text-gray-400 hidden sm:block">${c.email}</p>
                         </div>
                       </div>
-                     </td>
+                      ..
                     <td class="py-3 px-4 sm:px-0 hidden sm:table-cell">
                       <span class="text-xs ${c.phone ? "text-green-400" : "text-gray-500"}">
                         ${c.phone || "No SMS"}
                       </span>
-                     </td>
-                    <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm">₦${(c.balance || 0).toLocaleString()} </td>
-                    <td class="py-3 px-4 sm:px-0 text-green-400 text-xs sm:text-sm hidden md:table-cell">₦${(c.stats?.deposits.net || 0).toLocaleString()} </td>
-                    <td class="py-3 px-4 sm:px-0 text-orange-400 text-xs sm:text-sm hidden md:table-cell">₦${(c.stats?.withdrawals.net || 0).toLocaleString()} </td>
-                    <td class="py-3 px-4 sm:px-0 text-red-400 text-xs sm:text-sm">₦${(c.stats?.totalCharges || 0).toLocaleString()} </td>
+                      ..
+                    <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm">₦${(c.balance || 0).toLocaleString()} ..
+                    <td class="py-3 px-4 sm:px-0 text-green-400 text-xs sm:text-sm hidden md:table-cell">₦${(c.stats?.deposits.net || 0).toLocaleString()} ..
+                    <td class="py-3 px-4 sm:px-0 text-orange-400 text-xs sm:text-sm hidden md:table-cell">₦${(c.stats?.withdrawals.net || 0).toLocaleString()} ..
+                    <td class="py-3 px-4 sm:px-0 text-red-400 text-xs sm:text-sm">₦${(c.stats?.totalCharges || 0).toLocaleString()} ..
                     <td class="py-3 px-4 sm:px-0 ${(c.stats?.netBalance || 0) >= 0 ? "text-green-400" : "text-red-400"} text-xs sm:text-sm hidden lg:table-cell">
                       ₦${(c.stats?.netBalance || 0).toLocaleString()}
-                     </td>
+                      ..
                     <td class="py-3 px-4 sm:px-0">
                       <div class="flex gap-2">
                         <button onclick="viewCustomer('${c.id}')" class="text-blue-400 hover:text-blue-300 p-1" title="View Details">
@@ -1926,13 +2042,13 @@ function renderCustomerReports(container) {
                           <i class="fas fa-chart-bar text-xs sm:text-sm"></i>
                         </button>
                       </div>
-                     </td>
-                   </tr>
+                      ..
+                    ..
                 `,
                   )
                   .join("")}
               </tbody>
-            </table>
+             ..
           </div>
         </div>
       </div>
@@ -2001,7 +2117,6 @@ function renderDormantCustomers(container) {
 
   const html = `
     <div class="space-y-4 sm:space-y-6 animate-fade-in px-4 sm:px-0">
-      <!-- Header and Stats -->
       <div class="glass-panel rounded-2xl p-4 sm:p-6">
         <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4 sm:mb-6">
           <div>
@@ -2024,7 +2139,6 @@ function renderDormantCustomers(container) {
           </div>
         </div>
         
-        <!-- Statistics Cards -->
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4 sm:mb-6">
           <div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700">
             <div class="flex items-center justify-between mb-2">
@@ -2062,7 +2176,6 @@ function renderDormantCustomers(container) {
           </div>
         </div>
         
-        <!-- Dormant Customers Table -->
         ${
           dormantCount > 0
             ? `
@@ -2079,7 +2192,7 @@ function renderDormantCustomers(container) {
                     <th class="pb-3 px-4 sm:px-0">Days</th>
                     <th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Total Txns</th>
                     <th class="pb-3 px-4 sm:px-0">Actions</th>
-                   </tr>
+                    ..
                 </thead>
                 <tbody class="divide-y divide-gray-800">
                   ${dormantCustomers
@@ -2101,7 +2214,7 @@ function renderDormantCustomers(container) {
                             <p class="text-xs text-gray-400 hidden sm:block">${customer.email}</p>
                           </div>
                         </div>
-                       </td>
+                        ..
                       <td class="py-3 px-4 sm:px-0 hidden sm:table-cell">
                         <div class="text-xs">
                           <div class="flex items-center gap-1">
@@ -2109,7 +2222,7 @@ function renderDormantCustomers(container) {
                             <span class="break-words">${customer.email}</span>
                           </div>
                         </div>
-                       </td>
+                        ..
                       <td class="py-3 px-4 sm:px-0 hidden md:table-cell">
                         <div class="text-xs">
                           <div class="flex items-center gap-1">
@@ -2117,8 +2230,8 @@ function renderDormantCustomers(container) {
                             <span>${customer.phone || "N/A"}</span>
                           </div>
                         </div>
-                        </td>
-                      <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm">₦${(customer.balance || 0).toLocaleString()} </td>
+                        ..
+                      <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm">₦${(customer.balance || 0).toLocaleString()} ..
                       <td class="py-3 px-4 sm:px-0 hidden lg:table-cell">
                         ${
                           customer.lastTransactionDate
@@ -2130,13 +2243,13 @@ function renderDormantCustomers(container) {
                         `
                             : '<span class="text-xs text-gray-500">Never</span>'
                         }
-                        </td>
+                        ..
                       <td class="py-3 px-4 sm:px-0">
                         <span class="px-2 py-1 rounded text-xs ${customer.daysSinceLastTransaction > 90 ? "bg-red-500/20 text-red-400" : customer.daysSinceLastTransaction > 60 ? "bg-orange-500/20 text-orange-400" : "bg-yellow-500/20 text-yellow-400"}">
                           ${customer.daysSinceLastTransaction ? `${customer.daysSinceLastTransaction}d` : "Never"}
                         </span>
-                        </td>
-                      <td class="py-3 px-4 sm:px-0 hidden md:table-cell text-xs">${customer.totalTransactions} </td>
+                        ..
+                      <td class="py-3 px-4 sm:px-0 hidden md:table-cell text-xs">${customer.totalTransactions} ..
                       <td class="py-3 px-4 sm:px-0">
                         <div class="flex gap-2">
                           <button onclick="viewCustomer('${customer.id}')" class="text-blue-400 hover:text-blue-300 p-1" title="View Details">
@@ -2155,13 +2268,13 @@ function renderDormantCustomers(container) {
                             <i class="fas fa-user-check text-xs sm:text-sm"></i>
                           </button>
                         </div>
-                        </td>
-                      </tr>
+                        ..
+                       ..
                   `,
                     )
                     .join("")}
                 </tbody>
-              </table>
+               ..
             </div>
           </div>
         `
@@ -2227,38 +2340,7 @@ async function sendSMSReminder(customerId) {
   }
 
   try {
-    const customerTransactions = state.transactions.filter(
-      (t) => t.customerId === customer.id,
-    );
-    let daysDormant = "never";
-    if (customerTransactions.length > 0) {
-      const sortedTransactions = [...customerTransactions].sort(
-        (a, b) => new Date(b.date) - new Date(a.date),
-      );
-      const lastDate = new Date(sortedTransactions[0].date);
-      const today = new Date();
-      const diffTime = Math.abs(today - lastDate);
-      daysDormant = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + " days";
-    }
-
-    const message = `VAULTFLOW BANKING
-
-REACTIVATION OFFER
-
-Dear ${customer.name},
-
-We miss you! It's been ${daysDormant} since your last transaction.
-
-Special offer: Make a deposit today and get 50% off charges!
-
-Log in to your account to get started.
-
-Thank you for banking with us!`;
-
-    // Simulate SMS sending
-    setTimeout(() => {
-      showNotification(`SMS reminder sent to ${customer.name}`, "success");
-    }, 500);
+    showNotification(`SMS reminder sent to ${customer.name}`, "success");
   } catch (error) {
     console.error("SMS error:", error);
     showNotification("Failed to send SMS reminder", "error");
@@ -2307,19 +2389,8 @@ async function sendBulkSMSToDormantCustomers() {
 
   for (const customer of dormantCustomers) {
     try {
-      const message = `VAULTFLOW BANKING
-
-REACTIVATION OFFER
-
-Dear ${customer.name},
-
-We miss you! Log in today and get special offers.
-
-Thank you for banking with us!`;
-
-      // Simulate SMS sending
-      await new Promise((resolve) => setTimeout(resolve, 100));
       sent++;
+      await new Promise((resolve) => setTimeout(resolve, 100));
     } catch (error) {
       console.error(`Failed to send SMS to ${customer.name}:`, error);
       failed++;
@@ -3450,6 +3521,11 @@ async function handleNewTransaction(e) {
   const amount = parseFloat(formData.get("amount"));
   const charges = parseFloat(formData.get("charges")) || 0;
 
+  if (!customer) {
+    showNotification("Please select a customer", "error");
+    return;
+  }
+
   const netAmount = type === "deposit" ? amount - charges : amount + charges;
 
   if (type === "withdrawal") {
@@ -3560,7 +3636,6 @@ function navigate(view) {
   state.currentView = view;
   renderSidebar();
 
-  // Close mobile sidebar when navigating
   if (window.innerWidth < 768) {
     const sidebar = document.querySelector(".sidebar");
     const overlay = document.getElementById("sidebarOverlay");
