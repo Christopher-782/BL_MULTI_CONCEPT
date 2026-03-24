@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes"
+    />
     <title>VaultFlow - Deposit Monitoring System</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link
@@ -62,6 +65,7 @@
       }
       .sidebar-item {
         transition: all 0.3s ease;
+        min-height: 44px;
       }
       .sidebar-item:hover {
         background: rgba(59, 130, 246, 0.1);
@@ -94,7 +98,8 @@
         transition: height 1s ease-out;
       }
       input:focus,
-      select:focus {
+      select:focus,
+      textarea:focus {
         outline: none;
         box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
       }
@@ -119,9 +124,76 @@
           background-position: -200% 0;
         }
       }
+
+      /* Mobile Responsive Styles */
+      @media (max-width: 768px) {
+        .glass-panel {
+          padding: 1rem !important;
+        }
+
+        .overflow-x-auto {
+          -webkit-overflow-scrolling: touch;
+        }
+
+        button,
+        .sidebar-item,
+        [onclick] {
+          min-height: 44px;
+          min-width: 44px;
+        }
+
+        input,
+        select,
+        textarea {
+          font-size: 16px !important;
+        }
+
+        .fixed.inset-0 > div {
+          margin: 1rem !important;
+          max-height: calc(100vh - 2rem) !important;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .px-8 {
+          padding-left: 1rem !important;
+          padding-right: 1rem !important;
+        }
+
+        .p-8 {
+          padding: 1rem !important;
+        }
+
+        .text-xl {
+          font-size: 1.125rem !important;
+        }
+      }
+
+      /* Touch-friendly improvements */
+      button,
+      .sidebar-item,
+      .modal-close,
+      .notification-item {
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      /* Smooth scrolling */
+      html {
+        scroll-behavior: smooth;
+      }
+
+      /* Better table scrolling on mobile */
+      @media (max-width: 768px) {
+        .overflow-x-auto {
+          -webkit-overflow-scrolling: touch;
+          margin: 0 -1rem;
+          padding: 0 1rem;
+        }
+      }
     </style>
   </head>
-  <body class="bg-primary text-gray-100 font-sans min-h-screen overflow-hidden">
+  <body class="bg-primary text-gray-100 font-sans min-h-screen">
     <!-- API Configuration -->
     <script>
       const API_BASE_URL = "http://localhost:3000/api";
@@ -156,46 +228,50 @@
     <!-- Login Screen -->
     <div
       id="loginScreen"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-primary via-secondary to-primary"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-primary via-secondary to-primary p-4"
     >
       <div
-        class="w-full max-w-md p-8 glass-panel rounded-2xl shadow-2xl border border-gray-700 animate-fade-in"
+        class="w-full max-w-md p-6 sm:p-8 glass-panel rounded-2xl shadow-2xl border border-gray-700 animate-fade-in"
       >
-        <div class="text-center mb-8">
+        <div class="text-center mb-6 sm:mb-8">
           <div
-            class="w-20 h-20 mx-auto bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mb-4 shadow-lg animate-bounce-slight"
+            class="w-16 h-16 sm:w-20 sm:h-20 mx-auto bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mb-4 shadow-lg animate-bounce-slight"
           >
-            <i class="fas fa-vault text-3xl text-white"></i>
+            <i class="fas fa-vault text-2xl sm:text-3xl text-white"></i>
           </div>
-          <h1 class="text-3xl font-bold gradient-text mb-2">VaultFlow</h1>
-          <p class="text-gray-400 text-sm">Secure Deposit Monitoring System</p>
+          <h1 class="text-2xl sm:text-3xl font-bold gradient-text mb-2">
+            VaultFlow
+          </h1>
+          <p class="text-gray-400 text-xs sm:text-sm">
+            Secure Deposit Monitoring System
+          </p>
         </div>
 
-        <div class="space-y-6">
+        <div class="space-y-4 sm:space-y-6">
           <div>
             <label class="block text-sm font-medium text-gray-300 mb-2"
               >Select Role</label
             >
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-2 gap-3 sm:gap-4">
               <button
                 onclick="selectRole('admin')"
                 id="adminBtn"
-                class="role-btn p-4 rounded-xl border-2 border-gray-600 hover:border-blue-500 transition-all duration-300 flex flex-col items-center gap-2 group"
+                class="role-btn p-3 sm:p-4 rounded-xl border-2 border-gray-600 hover:border-blue-500 transition-all duration-300 flex flex-col items-center gap-2 group"
               >
                 <i
-                  class="fas fa-shield-alt text-2xl text-gray-400 group-hover:text-blue-400"
+                  class="fas fa-shield-alt text-xl sm:text-2xl text-gray-400 group-hover:text-blue-400"
                 ></i>
-                <span class="text-sm font-medium">Admin</span>
+                <span class="text-xs sm:text-sm font-medium">Admin</span>
               </button>
               <button
                 onclick="selectRole('staff')"
                 id="staffBtn"
-                class="role-btn p-4 rounded-xl border-2 border-gray-600 hover:border-blue-500 transition-all duration-300 flex flex-col items-center gap-2 group"
+                class="role-btn p-3 sm:p-4 rounded-xl border-2 border-gray-600 hover:border-blue-500 transition-all duration-300 flex flex-col items-center gap-2 group"
               >
                 <i
-                  class="fas fa-user-tie text-2xl text-gray-400 group-hover:text-blue-400"
+                  class="fas fa-user-tie text-xl sm:text-2xl text-gray-400 group-hover:text-blue-400"
                 ></i>
-                <span class="text-sm font-medium">Staff</span>
+                <span class="text-xs sm:text-sm font-medium">Staff</span>
               </button>
             </div>
           </div>
@@ -208,10 +284,10 @@
               type="email"
               id="emailInput"
               placeholder="admin@vaultflow.com"
-              class="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors mb-3"
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors text-base"
             />
 
-            <label class="block text-sm font-medium text-gray-300 mb-2"
+            <label class="block text-sm font-medium text-gray-300 mb-2 mt-4"
               >Password</label
             >
             <div class="relative">
@@ -219,7 +295,7 @@
                 type="password"
                 id="passwordInput"
                 placeholder="Enter password"
-                class="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors"
+                class="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors text-base"
               />
               <i class="fas fa-lock absolute right-4 top-3.5 text-gray-500"></i>
             </div>
@@ -227,14 +303,14 @@
 
           <button
             onclick="login()"
-            class="w-full py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-xl font-semibold shadow-lg transform hover:scale-[1.02] transition-all duration-200"
+            class="w-full py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-xl font-semibold shadow-lg transform hover:scale-[1.02] transition-all duration-200 text-base"
           >
             Access Dashboard
           </button>
 
           <button
             onclick="seedDatabase()"
-            class="w-full py-2 text-sm text-gray-400 hover:text-white transition-colors"
+            class="w-full py-2 text-xs sm:text-sm text-gray-400 hover:text-white transition-colors"
           >
             <i class="fas fa-database mr-2"></i>Seed Demo Data
           </button>
@@ -244,19 +320,33 @@
 
     <!-- Main Application -->
     <div id="app" class="hidden flex h-screen">
+      <!-- Mobile Menu Toggle Button -->
+      <button
+        id="mobileMenuToggle"
+        class="md:hidden fixed top-4 left-4 z-50 bg-gray-800 p-2 rounded-lg shadow-lg"
+      >
+        <i class="fas fa-bars text-white text-xl"></i>
+      </button>
+
+      <!-- Sidebar Overlay for Mobile -->
+      <div
+        id="sidebarOverlay"
+        class="fixed inset-0 bg-black/50 z-40 hidden md:hidden"
+      ></div>
+
       <!-- Sidebar -->
       <aside
-        class="w-64 bg-secondary border-r border-gray-700 flex flex-col shadow-xl"
+        class="sidebar fixed md:relative left-0 top-0 h-full w-64 bg-secondary border-r border-gray-700 flex flex-col shadow-xl transform transition-transform duration-300 -translate-x-full md:translate-x-0 z-40"
       >
-        <div class="p-6 border-b border-gray-700">
+        <div class="p-4 sm:p-6 border-b border-gray-700">
           <div class="flex items-center gap-3">
             <div
-              class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center"
+              class="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center"
             >
-              <i class="fas fa-vault text-white"></i>
+              <i class="fas fa-vault text-white text-sm sm:text-base"></i>
             </div>
             <div>
-              <h2 class="font-bold text-lg">VaultFlow</h2>
+              <h2 class="font-bold text-base sm:text-lg">VaultFlow</h2>
               <p class="text-xs text-gray-400" id="userRoleDisplay">
                 Admin Portal
               </p>
@@ -286,39 +376,51 @@
       <main class="flex-1 flex flex-col overflow-hidden bg-primary relative">
         <!-- Top Header -->
         <header
-          class="h-16 bg-secondary/50 backdrop-blur-md border-b border-gray-700 flex items-center justify-between px-8"
+          class="h-16 bg-secondary/50 backdrop-blur-md border-b border-gray-700 flex items-center justify-between px-4 sm:px-8"
         >
-          <div class="flex items-center gap-4">
-            <h2 id="pageTitle" class="text-xl font-semibold">Dashboard</h2>
-            <span id="liveTime" class="text-sm text-gray-400 font-mono"></span>
+          <div class="flex items-center gap-2 sm:gap-4">
+            <h2 id="pageTitle" class="text-base sm:text-xl font-semibold">
+              Dashboard
+            </h2>
+            <span
+              id="liveTime"
+              class="text-xs text-gray-400 font-mono hidden sm:inline"
+            ></span>
           </div>
-          <div class="flex items-center gap-4">
+          <div class="flex items-center gap-2 sm:gap-4">
             <button
               onclick="refreshData()"
               class="p-2 text-gray-400 hover:text-white transition-colors"
               title="Refresh Data"
             >
-              <i class="fas fa-sync-alt" id="refreshIcon"></i>
+              <i
+                class="fas fa-sync-alt text-sm sm:text-base"
+                id="refreshIcon"
+              ></i>
             </button>
             <button
               onclick="toggleNotifications()"
               class="relative p-2 text-gray-400 hover:text-white transition-colors"
             >
-              <i class="fas fa-bell text-xl"></i>
+              <i class="fas fa-bell text-base sm:text-xl"></i>
               <span
                 id="notifBadge"
-                class="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full hidden animate-pulse"
+                class="absolute top-1 right-1 w-1.5 h-1.5 sm:w-2 sm:h-2 bg-red-500 rounded-full hidden animate-pulse"
               ></span>
             </button>
-            <div class="flex items-center gap-3 pl-4 border-l border-gray-700">
+            <div
+              class="flex items-center gap-2 sm:gap-3 pl-2 sm:pl-4 border-l border-gray-700"
+            >
               <div
-                class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-sm font-bold"
+                class="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-xs sm:text-sm font-bold"
                 id="userAvatar"
               >
                 A
               </div>
-              <div class="hidden md:block">
-                <p class="text-sm font-medium" id="userName">Admin User</p>
+              <div class="hidden sm:block">
+                <p class="text-xs sm:text-sm font-medium" id="userName">
+                  Admin User
+                </p>
                 <p class="text-xs text-gray-400" id="userEmail">
                   admin@vaultflow.com
                 </p>
@@ -328,19 +430,19 @@
         </header>
 
         <!-- Content Area -->
-        <div id="contentArea" class="flex-1 overflow-y-auto p-8">
+        <div id="contentArea" class="flex-1 overflow-y-auto p-4 sm:p-8">
           <!-- Dynamic content loaded here -->
         </div>
 
         <!-- Notification Panel -->
         <div
           id="notificationPanel"
-          class="absolute top-16 right-0 w-80 bg-secondary border-l border-b border-gray-700 shadow-2xl transform translate-x-full transition-transform duration-300 z-40 max-h-96 overflow-y-auto"
+          class="absolute top-16 right-0 w-full sm:w-80 bg-secondary border-l border-b border-gray-700 shadow-2xl transform translate-x-full transition-transform duration-300 z-40 max-h-96 overflow-y-auto"
         >
           <div
             class="p-4 border-b border-gray-700 flex justify-between items-center"
           >
-            <h3 class="font-semibold">Notifications</h3>
+            <h3 class="font-semibold text-sm sm:text-base">Notifications</h3>
             <button
               onclick="clearNotifications()"
               class="text-xs text-blue-400 hover:text-blue-300"
@@ -363,7 +465,7 @@
       >
         <div
           id="modalContent"
-          class="bg-secondary border border-gray-700 rounded-2xl shadow-2xl max-w-lg w-full pointer-events-auto transform scale-95 opacity-0 transition-all duration-300"
+          class="bg-secondary border border-gray-700 rounded-2xl shadow-2xl max-w-lg w-full pointer-events-auto transform scale-95 opacity-0 transition-all duration-300 max-h-[90vh] overflow-y-auto"
         >
           <!-- Modal content -->
         </div>
