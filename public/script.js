@@ -13,7 +13,7 @@ const state = {
 // Axios Configuration
 const api = axios.create({
   baseURL: "https://bl-multi-concept.onrender.com/",
-  timeout: 10000,
+  timeout: 60000, // Increased to 60 seconds for cold starts
   headers: {
     "Content-Type": "application/json",
   },
@@ -36,7 +36,19 @@ api.interceptors.request.use(
 // Response interceptor for error handling
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const originalRequest = error.config;
+
+    // If timeout and not already retried
+    if (error.code === "ECONNABORTED" && !originalRequest._retry) {
+      originalRequest._retry = true;
+      showNotification("Server is waking up... Please wait", "info");
+
+      // Wait 5 seconds and retry
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      return api(originalRequest);
+    }
+
     if (error.response?.status === 401) {
       localStorage.removeItem("token");
       state.currentUser = null;
@@ -92,64 +104,171 @@ function initMobileMenu() {
   const sidebar = document.querySelector(".sidebar");
   const menuToggle = document.getElementById("mobileMenuToggle");
   const overlay = document.getElementById("sidebarOverlay");
+  const body = document.body;
 
-  if (window.innerWidth < 768) {
-    if (menuToggle) menuToggle.style.display = "flex";
-    if (overlay) overlay.style.display = "block";
-  } else {
-    if (menuToggle) menuToggle.style.display = "none";
-    if (overlay) overlay.style.display = "none";
-    if (sidebar) sidebar.classList.remove("open");
+  function updateMobileMenuVisibility() {
+    const isMobile = window.innerWidth <= 820;
+
+    if (menuToggle) {
+      menuToggle.style.display = isMobile ? "flex" : "none";
+
+      if (isMobile) {
+        menuToggle.style.position = "fixed";
+        menuToggle.style.top = "12px";
+        menuToggle.style.left = "12px";
+        menuToggle.style.zIndex = "1001";
+        menuToggle.style.background = "rgba(30, 41, 59, 0.95)";
+        menuToggle.style.backdropFilter = "blur(8px)";
+        menuToggle.style.border = "1px solid rgba(255, 255, 255, 0.1)";
+        menuToggle.style.borderRadius = "10px";
+        menuToggle.style.padding = "10px";
+        menuToggle.style.alignItems = "center";
+        menuToggle.style.justifyContent = "center";
+        menuToggle.style.pointerEvents = "auto";
+      }
+    }
+
+    if (overlay) {
+      if (!isMobile || !sidebar?.classList.contains("open")) {
+        overlay.classList.add("hidden");
+      }
+    }
+
+    if (sidebar) {
+      if (!isMobile) {
+        sidebar.classList.remove("open");
+        sidebar.style.transform = "translateX(0)";
+        sidebar.style.position = "relative";
+        sidebar.style.zIndex = "";
+        body.style.overflow = "";
+        body.classList.remove("sidebar-open");
+      } else {
+        sidebar.style.position = "fixed";
+        sidebar.style.width = "280px";
+        sidebar.style.maxWidth = "85%";
+        sidebar.style.zIndex = "1002";
+        sidebar.style.pointerEvents = "auto";
+        if (!sidebar.classList.contains("open")) {
+          sidebar.style.transform = "translateX(-100%)";
+        } else {
+          sidebar.style.transform = "translateX(0)";
+        }
+      }
+    }
   }
 
-  if (menuToggle && sidebar && overlay) {
-    const newToggle = menuToggle.cloneNode(true);
-    menuToggle.parentNode.replaceChild(newToggle, menuToggle);
+  // Run immediately
+  updateMobileMenuVisibility();
 
-    newToggle.addEventListener("click", (e) => {
+  // Setup event listeners
+  if (menuToggle && sidebar && overlay) {
+    // Remove any existing listeners by cloning
+    const newToggle = menuToggle.cloneNode(true);
+    if (menuToggle.parentNode) {
+      menuToggle.parentNode.replaceChild(newToggle, menuToggle);
+    }
+
+    // Use the NEW toggle reference
+    newToggle.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      sidebar.classList.toggle("open");
-      overlay.classList.toggle("hidden");
-      document.body.style.overflow = sidebar.classList.contains("open")
-        ? "hidden"
-        : "";
-    });
 
-    overlay.addEventListener("click", () => {
+      const isOpen = sidebar.classList.toggle("open");
+
+      if (isOpen) {
+        sidebar.style.transform = "translateX(0)";
+        sidebar.style.zIndex = "1002";
+        sidebar.style.pointerEvents = "auto";
+        overlay.classList.remove("hidden");
+        overlay.style.zIndex = "999";
+        body.style.overflow = "hidden";
+        body.classList.add("sidebar-open");
+
+        // Ensure sidebar items are clickable
+        const sidebarItems = sidebar.querySelectorAll(".sidebar-item");
+        sidebarItems.forEach((item) => {
+          item.style.pointerEvents = "auto";
+          item.style.cursor = "pointer";
+          item.style.position = "relative";
+          item.style.zIndex = "1003";
+        });
+      } else {
+        sidebar.style.transform = "translateX(-100%)";
+        overlay.classList.add("hidden");
+        body.style.overflow = "";
+        body.classList.remove("sidebar-open");
+      }
+    };
+
+    overlay.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       sidebar.classList.remove("open");
+      sidebar.style.transform = "translateX(-100%)";
       overlay.classList.add("hidden");
-      document.body.style.overflow = "";
-    });
-
-    const menuItems = sidebar.querySelectorAll(".sidebar-item");
-    menuItems.forEach((item) => {
-      item.addEventListener("click", () => {
-        if (window.innerWidth < 768) {
-          sidebar.classList.remove("open");
-          overlay.classList.add("hidden");
-          document.body.style.overflow = "";
-        }
-      });
-    });
+      body.style.overflow = "";
+      body.classList.remove("sidebar-open");
+    };
   }
+
+  // Clean resize handler
+  window.removeEventListener("resize", handleResize);
+  window.addEventListener("resize", handleResize);
 }
 
-window.addEventListener("resize", () => {
+function handleResize() {
   const sidebar = document.querySelector(".sidebar");
   const menuToggle = document.getElementById("mobileMenuToggle");
   const overlay = document.getElementById("sidebarOverlay");
+  const isMobile = window.innerWidth <= 820;
 
-  if (window.innerWidth >= 768) {
+  if (!isMobile) {
     if (menuToggle) menuToggle.style.display = "none";
-    if (overlay) overlay.style.display = "none";
-    if (sidebar) sidebar.classList.remove("open");
+    if (overlay) {
+      overlay.classList.add("hidden");
+    }
+    if (sidebar) {
+      sidebar.classList.remove("open");
+      sidebar.style.transform = "translateX(0)";
+      sidebar.style.position = "relative";
+      sidebar.style.zIndex = "";
+    }
     document.body.style.overflow = "";
+    document.body.classList.remove("sidebar-open");
   } else {
-    if (menuToggle) menuToggle.style.display = "flex";
-    if (overlay) overlay.style.display = "block";
+    if (menuToggle) {
+      menuToggle.style.display = "flex";
+      menuToggle.style.position = "fixed";
+      menuToggle.style.top = "12px";
+      menuToggle.style.left = "12px";
+    }
+    if (sidebar) {
+      sidebar.style.position = "fixed";
+      sidebar.style.zIndex = "1002";
+      if (!sidebar.classList.contains("open")) {
+        sidebar.style.transform = "translateX(-100%)";
+      }
+    }
   }
-});
+}
+
+function closeMobileMenu() {
+  const sidebar = document.querySelector(".sidebar");
+  const overlay = document.getElementById("sidebarOverlay");
+  const body = document.body;
+
+  if (window.innerWidth <= 820) {
+    if (sidebar) {
+      sidebar.classList.remove("open");
+      sidebar.style.transform = "translateX(-100%)";
+    }
+    if (overlay) {
+      overlay.classList.add("hidden");
+    }
+    body.style.overflow = "";
+    body.classList.remove("sidebar-open");
+  }
+}
 
 // ==================== UTILITY FUNCTIONS ====================
 
@@ -200,9 +319,9 @@ function showNotification(message, type = "info") {
     warning: "bg-yellow-500",
   };
 
-  const isMobile = window.innerWidth < 768;
+  const isMobile = window.innerWidth <= 820;
   const notif = document.createElement("div");
-  notif.className = `fixed ${isMobile ? "top-16 left-4 right-4" : "top-4 right-4"} ${colors[type]} text-white px-4 sm:px-6 py-2 sm:py-3 rounded-xl shadow-2xl z-50 notification flex items-center gap-2 sm:gap-3 animate-slideIn text-sm sm:text-base`;
+  notif.className = `fixed ${isMobile ? "top-14 left-4 right-4" : "top-4 right-4"} ${colors[type]} text-white px-4 sm:px-6 py-2 sm:py-3 rounded-xl shadow-2xl z-50 notification flex items-center gap-2 sm:gap-3 animate-slideIn text-sm sm:text-base`;
   notif.innerHTML = `
     <i class="fas fa-${type === "success" ? "check-circle" : type === "error" ? "exclamation-circle" : "info-circle"}"></i>
     <span class="flex-1">${message}</span>
@@ -236,6 +355,13 @@ async function login() {
   const email = document.getElementById("emailInput").value;
   const password = document.getElementById("passwordInput").value;
 
+  // Show loading state
+  const loginBtn = document.querySelector('button[onclick="login()"]');
+  const originalText = loginBtn.innerHTML;
+  loginBtn.innerHTML =
+    '<i class="fas fa-spinner fa-spin mr-2"></i>Connecting...';
+  loginBtn.disabled = true;
+
   try {
     const response = await api.post("/login", {
       email,
@@ -245,13 +371,30 @@ async function login() {
 
     state.currentUser = response.data;
 
+    if (response.data.token) {
+      localStorage.setItem("token", response.data.token);
+    }
+
     document.getElementById("loginScreen").classList.add("hidden");
     document.getElementById("app").classList.remove("hidden");
 
     await initializeApp();
   } catch (error) {
     console.error("Login error:", error);
-    showNotification(error.response?.data?.error || "Login failed", "error");
+
+    // Specific message for timeout
+    if (error.code === "ECONNABORTED") {
+      showNotification(
+        "Server is starting up. Please try again in 30 seconds.",
+        "warning",
+      );
+    } else {
+      showNotification(error.response?.data?.error || "Login failed", "error");
+    }
+  } finally {
+    // Restore button
+    loginBtn.innerHTML = originalText;
+    loginBtn.disabled = false;
   }
 }
 
@@ -261,7 +404,7 @@ async function initializeApp() {
   renderSidebar();
   navigate("dashboard");
   startClock();
-  setTimeout(() => initMobileMenu(), 100);
+  initMobileMenu();
 }
 
 async function loadAllData() {
@@ -284,7 +427,6 @@ async function loadAllData() {
       } catch (staffError) {
         console.warn("Could not load staff data:", staffError);
         state.staff = [];
-        showNotification("Staff data could not be loaded", "warning");
       }
     }
 
@@ -307,6 +449,7 @@ async function refreshData() {
 }
 
 function updateUserInfo() {
+  if (!state.currentUser) return;
   document.getElementById("userRoleDisplay").textContent =
     state.currentUser.role === "admin" ? "Admin Portal" : "Staff Portal";
   document.getElementById("userName").textContent = state.currentUser.name;
@@ -321,7 +464,21 @@ function renderSidebar() {
   menus[state.role].forEach((item) => {
     const btn = document.createElement("button");
     btn.className = `sidebar-item w-full flex items-center gap-3 px-3 sm:px-4 py-2 sm:py-3 rounded-lg text-left mb-1 transition-colors ${state.currentView === item.id ? "active text-blue-400 bg-blue-500/10" : "text-gray-400 hover:text-white hover:bg-gray-800/50"}`;
-    btn.onclick = () => navigate(item.id);
+
+    // CRITICAL FIX: Use direct onclick with explicit navigation
+    btn.onclick = function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      console.log("Navigating to:", item.id); // Debug log
+      navigate(item.id);
+      return false; // Prevent default
+    };
+
+    // Ensure pointer events work
+    btn.style.pointerEvents = "auto";
+    btn.style.cursor = "pointer";
+    btn.style.position = "relative";
+    btn.style.zIndex = "1003";
 
     let badge = "";
     if (item.badge === "pending") {
@@ -334,12 +491,75 @@ function renderSidebar() {
     }
 
     btn.innerHTML = `
-      <i class="fas ${item.icon} w-5 text-base sm:text-lg"></i>
-      <span class="flex-1 text-sm sm:text-base">${item.label}</span>
+      <i class="fas ${item.icon} w-5 text-base sm:text-lg pointer-events-none"></i>
+      <span class="flex-1 text-sm sm:text-base pointer-events-none">${item.label}</span>
       ${badge}
     `;
     menuContainer.appendChild(btn);
   });
+}
+
+// ==================== NAVIGATION ====================
+
+function navigate(view) {
+  // Close mobile menu first
+  closeMobileMenu();
+
+  // Small delay to allow menu close animation before rendering
+  setTimeout(() => {
+    state.currentView = view;
+    renderSidebar();
+
+    const titles = {
+      dashboard: "Dashboard Overview",
+      customers: "Customer Management",
+      "dormant-customers": "Dormant Customers",
+      transactions:
+        state.role === "admin" ? "Transaction Approvals" : "New Transaction",
+      staff: "Staff Management",
+      reports: "System Reports",
+      "customer-reports": "Customer Reports",
+      settings: "System Settings",
+      "new-customer": "Register New Customer",
+      history: "Transaction History",
+    };
+
+    document.getElementById("pageTitle").textContent = titles[view] || view;
+
+    const contentArea = document.getElementById("contentArea");
+    contentArea.innerHTML = "";
+
+    switch (view) {
+      case "dashboard":
+        renderDashboard(contentArea);
+        break;
+      case "customers":
+        renderCustomers(contentArea);
+        break;
+      case "dormant-customers":
+        renderDormantCustomers(contentArea);
+        break;
+      case "transactions":
+        state.role === "admin"
+          ? renderAdminTransactions(contentArea)
+          : renderNewTransaction(contentArea);
+        break;
+      case "new-customer":
+        renderNewCustomer(contentArea);
+        break;
+      case "staff":
+        renderStaffManagement(contentArea);
+        break;
+      case "history":
+        renderHistory(contentArea);
+        break;
+      case "customer-reports":
+        renderCustomerReports(contentArea);
+        break;
+      default:
+        renderDashboard(contentArea);
+    }
+  }, 300); // Increased delay for smooth transition
 }
 
 // ==================== DASHBOARD VIEW ====================
@@ -396,40 +616,49 @@ function renderDashboard(container) {
       },
     ];
   } else {
+    const myCustomers = state.customers.filter(
+      (c) => c.addedBy?.staffId === state.currentUser?.id,
+    );
+    const myTransactions = state.transactions.filter((t) =>
+      myCustomers.some((c) => c.id === t.customerId),
+    );
+    const myPendingRequests = myTransactions.filter(
+      (t) => t.status === "pending",
+    ).length;
+    const myTodayTransactions = myTransactions.filter((t) => {
+      const txnDate = new Date(t.date);
+      const today = new Date();
+      return txnDate.toDateString() === today.toDateString();
+    }).length;
+
     stats = [
       {
-        label: "Total Customers",
-        value: state.customers.length,
+        label: "My Customers",
+        value: myCustomers.length,
         icon: "fa-users",
         color: "green",
-        trend: "All customers",
-      },
-      {
-        label: "Total Balance",
-        value: "₦" + totalBalance.toLocaleString(),
-        icon: "fa-wallet",
-        color: "blue",
-        trend: "System total",
+        trend: "Your customers",
       },
       {
         label: "My Transactions",
-        value: state.transactions.filter((t) =>
-          state.customers.some(
-            (c) =>
-              c.id === t.customerId &&
-              c.addedBy?.staffId === state.currentUser?.id,
-          ),
-        ).length,
+        value: myTransactions.length,
         icon: "fa-exchange-alt",
-        color: "purple",
-        trend: "This month",
+        color: "blue",
+        trend: "Total processed",
+      },
+      {
+        label: "Pending Requests",
+        value: myPendingRequests,
+        icon: "fa-clock",
+        color: "yellow",
+        trend: "Awaiting approval",
       },
       {
         label: "Today's Activity",
-        value: todayTransactions,
+        value: myTodayTransactions,
         icon: "fa-chart-line",
-        color: "yellow",
-        trend: "Active",
+        color: "purple",
+        trend: "Active today",
       },
     ];
   }
@@ -467,10 +696,7 @@ function renderDashboard(container) {
             .slice(0, 5)
             .map((txn, idx) => {
               const charges = txn.charges || 0;
-              const netAmount =
-                txn.type === "deposit"
-                  ? txn.amount - charges
-                  : txn.amount + charges;
+              const netAmount = txn.amount - charges;
               return `
                 <div class="transaction-card flex flex-col sm:flex-row sm:items-center justify-between p-3 sm:p-4 bg-gray-800/50 rounded-xl border border-gray-700/50" style="animation-delay: ${idx * 0.1}s">
                   <div class="flex items-center gap-3 sm:gap-4 mb-2 sm:mb-0">
@@ -514,8 +740,8 @@ function renderDashboard(container) {
                   <i class="fas fa-user-plus text-sm sm:text-base"></i>
                 </div>
                 <div class="text-left">
-                  <p class="font-medium text-sm sm:text-base">New Customer</p>
-                  <p class="text-xs text-gray-400">Register account</p>
+                  <p class="font-medium text-sm sm:text-base">Register Customer</p>
+                  <p class="text-xs text-gray-400">Create new account</p>
                 </div>
               </button>
               <button onclick="navigate('transactions')" class="w-full p-3 sm:p-4 bg-gray-800 hover:bg-gray-700 rounded-xl flex items-center gap-3 transition-colors group">
@@ -604,10 +830,9 @@ function renderDashboard(container) {
   container.innerHTML = html;
 }
 
-// ==================== CUSTOMERS VIEW (STAFF CAN SEE ALL) ====================
+// ==================== CUSTOMERS VIEW ====================
 
 function renderCustomers(container) {
-  // Staff can see ALL customers - no filtering
   let displayedCustomers = state.customers;
 
   const html = `
@@ -660,9 +885,9 @@ function renderCustomers(container) {
                 <th class="pb-4 px-4 sm:px-0 hidden sm:table-cell">Phone</th>
                 <th class="pb-4 px-4 sm:px-0">Balance</th>
                 <th class="pb-4 px-4 sm:px-0 hidden sm:table-cell">Status</th>
-                <th class="pb-4 px-4 sm:px-0 hidden lg:table-cell">Added By</th>
+                ${state.role === "admin" ? '<th class="pb-4 px-4 sm:px-0 hidden lg:table-cell">Added By</th>' : ""}
                 <th class="pb-4 px-4 sm:px-0">Actions</th>
-                ..
+              </tr>
             </thead>
             <tbody id="customerTableBody" class="divide-y divide-gray-800">
               ${displayedCustomers
@@ -685,26 +910,26 @@ function renderCustomers(container) {
                         </div>
                         <span class="font-medium text-sm sm:text-base break-words">${customer.name}</span>
                       </div>
-                      ..
+                    </td>
                     <td class="py-4 px-4 sm:px-0">
                       <div class="text-xs sm:text-sm break-words max-w-[150px] sm:max-w-none">
                         ${customer.email}
                       </div>
-                      ..
+                    </td>
                     <td class="py-4 px-4 sm:px-0 hidden sm:table-cell">
                       <div class="text-xs sm:text-sm">
                         <i class="fas fa-phone-alt text-green-400 mr-1"></i>
                         ${customer.phone || "N/A"}
                       </div>
-                      ..
+                    </td>
                     <td class="py-4 px-4 sm:px-0">
                       <span class="text-sm sm:text-base font-mono">₦${customer.balance?.toFixed(2) || "0.00"}</span>
-                      ..
+                    </td>
                     <td class="py-4 px-4 sm:px-0 hidden sm:table-cell">
                       <span class="px-2 py-1 rounded text-xs ${customer.status === "active" ? "bg-green-500/20 text-green-400" : "bg-gray-500/20 text-gray-400"}">
                         ${customer.status}
                       </span>
-                      ..
+                    </td>
                     ${
                       state.role === "admin"
                         ? `
@@ -717,8 +942,8 @@ function renderCustomers(container) {
                             </div>`
                             : '<span class="text-xs text-gray-500">System</span>'
                         }
-                        ..
-                      `
+                      </td>
+                    `
                         : ""
                     }
                     <td class="py-4 px-4 sm:px-0">
@@ -739,8 +964,8 @@ function renderCustomers(container) {
                           <i class="fas fa-edit text-sm sm:text-base"></i>
                         </button>
                       </div>
-                      ..
-                    ..
+                    </td>
+                  </tr>
                 `,
                 )
                 .join("")}
@@ -965,10 +1190,9 @@ async function handleNewCustomer(e) {
   }
 }
 
-// ==================== NEW TRANSACTION VIEW WITH WORKING SEARCH ====================
+// ==================== NEW TRANSACTION VIEW WITH SEARCH ====================
 
 function renderNewTransaction(container) {
-  // Get all customers for staff and admin
   let availableCustomers = state.customers;
 
   const html = `
@@ -986,7 +1210,6 @@ function renderNewTransaction(container) {
         </div>
 
         <form onsubmit="handleNewTransaction(event)" class="space-y-4 sm:space-y-6">
-          <!-- Search Input - This replaces the dropdown selection -->
           <div>
             <label class="block text-sm font-medium text-gray-300 mb-2">Search for Customer</label>
             <div class="relative">
@@ -1003,14 +1226,10 @@ function renderNewTransaction(container) {
             <p class="text-xs text-gray-400 mt-1">Start typing to search for customers</p>
           </div>
 
-          <!-- Search Results Dropdown -->
           <div id="searchResultsDropdown" class="hidden glass-panel rounded-xl border border-gray-700 max-h-64 overflow-y-auto">
-            <div id="searchResultsList" class="divide-y divide-gray-700">
-              <!-- Search results will appear here -->
-            </div>
+            <div id="searchResultsList" class="divide-y divide-gray-700"></div>
           </div>
 
-          <!-- Selected Customer Display -->
           <div id="selectedCustomerDisplay" class="hidden p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
             <div class="flex justify-between items-center">
               <div>
@@ -1047,7 +1266,7 @@ function renderNewTransaction(container) {
               <div class="p-3 sm:p-4 rounded-xl border-2 border-gray-700 peer-checked:border-orange-500 peer-checked:bg-orange-500/10 transition-all text-center">
                 <i class="fas fa-arrow-up text-orange-400 text-xl sm:text-2xl mb-1 sm:mb-2"></i>
                 <p class="font-medium text-sm sm:text-base">Withdrawal</p>
-                <p class="text-xs text-gray-400 mt-1 hidden sm:block">Customer pays amount plus charges</p>
+                <p class="text-xs text-gray-400 mt-1 hidden sm:block">Customer pays amount minus charges</p>
               </div>
             </label>
           </div>
@@ -1060,7 +1279,7 @@ function renderNewTransaction(container) {
           <div>
             <label class="block text-sm font-medium text-gray-300 mb-2">Charge Amount (₦) <span class="text-xs text-yellow-400">- Enter manually</span></label>
             <input type="number" name="charges" id="chargeAmount" value="0" min="0" step="0.01" oninput="updateNetAmount()" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white text-xl sm:text-2xl font-mono focus:border-blue-500 transition-colors" placeholder="0.00">
-            <p class="text-xs text-gray-400 mt-1">This charge will be deducted from deposits or added to withdrawals</p>
+            <p class="text-xs text-gray-400 mt-1">This charge will be deducted from the transaction amount</p>
           </div>
 
           <div id="netAmountDisplay" class="p-4 bg-gradient-to-r from-gray-800 to-gray-800/50 border border-blue-500/30 rounded-xl">
@@ -1070,14 +1289,14 @@ function renderNewTransaction(container) {
             </div>
             <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mt-2 text-xs text-gray-400 gap-1">
               <span>For deposits: Amount - Charges</span>
-              <span>For withdrawals: Amount + Charges</span>
+              <span>For withdrawals: Amount - Charges</span>
             </div>
           </div>
 
           <div id="insufficientFundsWarning" class="hidden p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
             <div class="flex flex-col sm:flex-row items-start sm:items-center gap-3">
               <i class="fas fa-exclamation-circle text-red-500"></i>
-              <p class="text-xs sm:text-sm text-red-200">Insufficient funds! Total deduction including charges: <span id="totalDeduction">₦0</span></p>
+              <p class="text-xs sm:text-sm text-red-200">Insufficient funds! Amount after charges: <span id="totalDeduction">₦0</span></p>
               <p class="text-xs text-red-200 sm:ml-auto">Available balance: <span id="availableBalance">₦0</span></p>
             </div>
           </div>
@@ -1107,7 +1326,6 @@ function renderNewTransaction(container) {
 
   container.innerHTML = html;
 
-  // Store customers data for search
   const customersData = availableCustomers;
 
   const script = document.createElement("script");
@@ -1129,15 +1347,12 @@ function renderNewTransaction(container) {
         return;
       }
       
-      // Filter customers
       const filteredCustomers = customersData.filter(customer => {
         const name = (customer.name || '').toLowerCase();
         const email = (customer.email || '').toLowerCase();
         const phone = (customer.phone || '').toLowerCase();
         
-        return name.includes(searchTerm) || 
-               email.includes(searchTerm) || 
-               phone.includes(searchTerm);
+        return name.includes(searchTerm) || email.includes(searchTerm) || phone.includes(searchTerm);
       });
       
       if (filteredCustomers.length === 0) {
@@ -1151,9 +1366,8 @@ function renderNewTransaction(container) {
         return;
       }
       
-      // Display results
       searchResultsList.innerHTML = filteredCustomers.map(customer => \`
-        <div class="p-3 hover:bg-gray-700 cursor-pointer transition-colors" onclick="selectCustomer('\${customer.id}', '\${customer.name.replace(/'/g, "\\'")}', \${customer.balance || 0}, '\${customer.phone || ''}')">
+        <div class="p-3 hover:bg-gray-700 cursor-pointer transition-colors" onclick="selectCustomer('\${customer.id}', '\${customer.name.replace(/'/g, "\\\\'")}', \${customer.balance || 0}, '\${customer.phone || ''}')">
           <div class="flex justify-between items-start">
             <div>
               <p class="font-medium text-sm sm:text-base">\${customer.name}</p>
@@ -1169,27 +1383,22 @@ function renderNewTransaction(container) {
     }
     
     function selectCustomer(id, name, balance, phone) {
-      // Set selected customer
       document.getElementById('selectedCustomerId').value = id;
       document.getElementById('selectedCustomerName').textContent = name;
       document.getElementById('selectedCustomerPhone').textContent = phone ? '📱 ' + phone : '⚠️ No phone number';
       document.getElementById('selectedCustomerDisplay').classList.remove('hidden');
       
-      // Update balance display
       const balanceAmount = document.getElementById('currentBalanceAmount');
       if (balanceAmount) balanceAmount.textContent = '₦' + balance.toLocaleString();
       document.getElementById('customerBalanceDisplay').classList.remove('hidden');
       
-      // Store balance for validation
       window.selectedCustomerBalance = balance;
       window.selectedCustomerId = id;
       window.selectedCustomerName = name;
       
-      // Hide search results and clear search input
       document.getElementById('searchResultsDropdown').classList.add('hidden');
       document.getElementById('customerSearchInput').value = '';
       
-      // Update net amount
       updateNetAmount();
     }
     
@@ -1217,18 +1426,13 @@ function renderNewTransaction(container) {
       const amount = parseFloat(amountInput ? amountInput.value : 0) || 0;
       const charges = parseFloat(chargeInput ? chargeInput.value : 0) || 0;
       
-      let netAmount = amount;
-      if (transactionType === 'deposit') {
-        netAmount = amount - charges;
-      } else if (transactionType === 'withdrawal') {
-        netAmount = amount + charges;
-      }
+      const netAmount = amount - charges;
       
       if (netSpan) netSpan.textContent = '₦' + netAmount.toLocaleString();
       
       const balance = window.selectedCustomerBalance || 0;
       
-      if (!window.selectedCustomerId || transactionType !== 'withdrawal') {
+      if (!window.selectedCustomerId) {
         if (warningDiv) warningDiv.classList.add('hidden');
         if (submitBtn) {
           submitBtn.disabled = false;
@@ -1240,10 +1444,9 @@ function renderNewTransaction(container) {
       if (availableBalanceSpan) availableBalanceSpan.textContent = '₦' + balance.toLocaleString();
       
       if (transactionType === 'withdrawal') {
-        const totalDeduction = amount + charges;
-        if (totalDeductionSpan) totalDeductionSpan.textContent = '₦' + totalDeduction.toLocaleString();
+        if (totalDeductionSpan) totalDeductionSpan.textContent = '₦' + netAmount.toLocaleString();
         
-        if (totalDeduction > balance) {
+        if (netAmount > balance) {
           if (warningDiv) warningDiv.classList.remove('hidden');
           if (submitBtn) {
             submitBtn.disabled = true;
@@ -1257,15 +1460,22 @@ function renderNewTransaction(container) {
           }
         }
       } else {
-        if (warningDiv) warningDiv.classList.add('hidden');
-        if (submitBtn) {
-          submitBtn.disabled = false;
-          submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        if (netAmount < 0) {
+          if (warningDiv) warningDiv.classList.remove('hidden');
+          if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
+          }
+        } else {
+          if (warningDiv) warningDiv.classList.add('hidden');
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+          }
         }
       }
     }
     
-    // Add debounced search
     const searchInput = document.getElementById('customerSearchInput');
     if (searchInput) {
       const newSearchInput = searchInput.cloneNode(true);
@@ -1277,13 +1487,10 @@ function renderNewTransaction(container) {
       });
       
       newSearchInput.addEventListener('focus', function() {
-        if (this.value.trim() !== '') {
-          filterAndDisplayCustomers();
-        }
+        if (this.value.trim() !== '') filterAndDisplayCustomers();
       });
     }
     
-    // Close dropdown when clicking outside
     document.addEventListener('click', function(e) {
       const searchContainer = document.getElementById('customerSearchInput');
       const dropdown = document.getElementById('searchResultsDropdown');
@@ -1294,6 +1501,260 @@ function renderNewTransaction(container) {
   `;
 
   container.appendChild(script);
+}
+
+// ==================== TRANSACTION HANDLER ====================
+
+async function handleNewTransaction(e) {
+  e.preventDefault();
+
+  const formData = new FormData(e.target);
+  const customerId = formData.get("customerId");
+  const customer = state.customers.find((c) => c.id === customerId);
+  const type = formData.get("type");
+  const amount = parseFloat(formData.get("amount"));
+  const charges = parseFloat(formData.get("charges")) || 0;
+
+  if (!customer) {
+    showNotification("Please select a customer", "error");
+    return;
+  }
+
+  const netAmount = amount - charges;
+
+  if (netAmount < 0) {
+    showNotification("Charges cannot be greater than the amount!", "error");
+    return;
+  }
+
+  if (type === "withdrawal") {
+    if (netAmount > customer.balance) {
+      showNotification(
+        `Insufficient funds! Customer balance: ₦${customer.balance.toLocaleString()}. Required amount after charges: ₦${netAmount.toLocaleString()}`,
+        "error",
+      );
+      return;
+    }
+  }
+
+  const txnData = {
+    customerId: customerId,
+    customerName: customer.name,
+    type: type,
+    amount: amount,
+    charges: charges,
+    netAmount: netAmount,
+    description: formData.get("description"),
+    status: "pending",
+    requestedBy: state.currentUser.name,
+    requestedAt: new Date().toISOString(),
+  };
+
+  try {
+    const response = await api.post("/transactions", txnData);
+
+    await loadAllData();
+
+    showNotification(
+      `✅ Transaction request submitted! ${type === "deposit" ? "Deposit" : "Withdrawal"} of ₦${amount.toLocaleString()} with ₦${charges.toLocaleString()} charges. Net amount: ₦${netAmount.toLocaleString()}\n📱 SMS alert will be sent to customer upon approval.`,
+      "success",
+    );
+    navigate("history");
+  } catch (error) {
+    console.error("Transaction submission error:", error);
+    const errorMessage =
+      error.response?.data?.message || "Failed to submit transaction";
+    showNotification(errorMessage, "error");
+  }
+}
+
+async function processTransaction(
+  txnId,
+  action,
+  refreshView = true,
+  staffId = null,
+) {
+  try {
+    const transaction = state.transactions.find((t) => t.id === txnId);
+    if (!transaction) {
+      showNotification("Transaction not found", "error");
+      return;
+    }
+
+    const response = await api.patch(`/transactions/${txnId}`, {
+      status: action,
+      approvedBy: state.currentUser.name,
+    });
+
+    await loadAllData();
+
+    if (action === "approved") {
+      const charges = transaction.charges || 0;
+      const netAmount = transaction.amount - charges;
+
+      showNotification(
+        `✅ Transaction ${action}! ${transaction.type === "deposit" ? "Deposit" : "Withdrawal"} of ₦${transaction.amount.toLocaleString()} ${action}. ${charges > 0 ? `Charges: ₦${charges.toLocaleString()}. ` : ""}Net: ₦${netAmount.toLocaleString()}\n📱 SMS alert sent to customer.`,
+        "success",
+      );
+    } else {
+      showNotification(`❌ Transaction ${action}`, "error");
+    }
+
+    closeStaffPendingModal();
+    closeTransactionModal();
+
+    if (refreshView) {
+      if (staffId) {
+        navigate("staff");
+      } else {
+        navigate("transactions");
+      }
+    }
+  } catch (error) {
+    console.error("Transaction processing error:", error);
+    const errorMessage =
+      error.response?.data?.message || "Failed to process transaction";
+    showNotification(errorMessage, "error");
+  }
+}
+
+// ==================== LOGOUT FUNCTION ====================
+
+function logout() {
+  localStorage.removeItem("token");
+  state.currentUser = null;
+  state.role = null;
+  state.customers = [];
+  state.transactions = [];
+  state.staff = [];
+  state.notifications = [];
+  state.currentView = "dashboard";
+  document.getElementById("app").classList.add("hidden");
+  document.getElementById("loginScreen").classList.remove("hidden");
+  document.getElementById("passwordInput").value = "";
+  document.getElementById("emailInput").value = "";
+  document.querySelectorAll(".role-btn").forEach((btn) => {
+    btn.classList.remove("border-blue-500", "bg-blue-500/10");
+    btn.classList.add("border-gray-600");
+  });
+  selectRole("admin");
+  showNotification("Logged out successfully", "info");
+}
+
+// ==================== NAVIGATION ====================
+
+function navigate(view) {
+  state.currentView = view;
+  renderSidebar();
+  closeMobileMenu();
+
+  const titles = {
+    dashboard: "Dashboard Overview",
+    customers: "Customer Management",
+    "dormant-customers": "Dormant Customers",
+    transactions:
+      state.role === "admin" ? "Transaction Approvals" : "New Transaction",
+    staff: "Staff Management",
+    reports: "System Reports",
+    "customer-reports": "Customer Reports",
+    settings: "System Settings",
+    "new-customer": "Register New Customer",
+    history: "Transaction History",
+  };
+
+  document.getElementById("pageTitle").textContent = titles[view] || view;
+
+  const contentArea = document.getElementById("contentArea");
+  contentArea.innerHTML = "";
+
+  switch (view) {
+    case "dashboard":
+      renderDashboard(contentArea);
+      break;
+    case "customers":
+      renderCustomers(contentArea);
+      break;
+    case "dormant-customers":
+      renderDormantCustomers(contentArea);
+      break;
+    case "transactions":
+      state.role === "admin"
+        ? renderAdminTransactions(contentArea)
+        : renderNewTransaction(contentArea);
+      break;
+    case "new-customer":
+      renderNewCustomer(contentArea);
+      break;
+    case "staff":
+      renderStaffManagement(contentArea);
+      break;
+    case "history":
+      renderHistory(contentArea);
+      break;
+    case "customer-reports":
+      renderCustomerReports(contentArea);
+      break;
+    default:
+      renderDashboard(contentArea);
+  }
+}
+
+// ==================== NOTIFICATIONS ====================
+
+function toggleNotifications() {
+  const panel = document.getElementById("notificationPanel");
+  panel.classList.toggle("translate-x-full");
+}
+
+function checkPendingNotifications() {
+  const pendingCount = state.transactions.filter(
+    (t) => t.status === "pending",
+  ).length;
+  const badge = document.getElementById("notifBadge");
+  if (pendingCount > 0 && state.role === "admin") {
+    badge.classList.remove("hidden");
+    state.notifications.push({
+      id: Date.now(),
+      message: `${pendingCount} transactions pending approval`,
+      time: "Just now",
+      unread: true,
+    });
+    updateNotificationList();
+  }
+}
+
+function updateNotificationList() {
+  const list = document.getElementById("notificationList");
+  if (state.notifications.length === 0) {
+    list.innerHTML =
+      '<div class="p-4 text-center text-gray-500 text-sm">No notifications</div>';
+    return;
+  }
+
+  list.innerHTML = state.notifications
+    .map(
+      (n) => `
+      <div class="p-4 hover:bg-gray-800/50 transition-colors ${n.unread ? "border-l-2 border-blue-500" : ""}">
+        <p class="text-sm mb-1">${n.message}</p>
+        <p class="text-xs text-gray-500">${n.time}</p>
+      </div>
+    `,
+    )
+    .join("");
+}
+
+function clearNotifications() {
+  state.notifications = [];
+  document.getElementById("notifBadge").classList.add("hidden");
+  updateNotificationList();
+}
+
+function startClock() {
+  setInterval(() => {
+    const now = new Date();
+    document.getElementById("liveTime").textContent =
+      now.toLocaleTimeString("en-GB");
+  }, 1000);
 }
 
 // ==================== CUSTOMER TRANSACTION HISTORY FUNCTIONS ====================
@@ -1409,10 +1870,7 @@ function viewCustomer(id) {
                   .slice(0, 50)
                   .map((txn) => {
                     const charges = txn.charges || 0;
-                    const netAmount =
-                      txn.type === "deposit"
-                        ? txn.amount - charges
-                        : txn.amount + charges;
+                    const netAmount = txn.amount - charges;
 
                     return `
                       <tr class="hover:bg-gray-800/30 transition-colors">
@@ -1453,27 +1911,27 @@ function viewCustomer(id) {
                 ${
                   sortedTransactions.length === 0
                     ? `
-                      <tr>
+                       <tr>
                         <td colspan="8" class="py-8 text-center text-gray-400">
                           No transactions found for this customer
-                        </td>
-                      </tr>
+                         </td>
+                       </tr>
                     `
                     : ""
                 }
                 ${
                   sortedTransactions.length > 50
                     ? `
-                      <tr>
+                       <tr>
                         <td colspan="8" class="py-4 text-center text-gray-500 text-xs sm:text-sm">
                           Showing first 50 transactions. Use period filters to see more.
-                        </td>
-                      </tr>
+                         </td>
+                       </tr>
                     `
                     : ""
                 }
               </tbody>
-            </table>
+             </table>
           </div>
         </div>
       </div>
@@ -1549,7 +2007,7 @@ function getCustomerStats(customerId, period = "all") {
     0,
   );
   const netWithdrawals = withdrawals.reduce(
-    (sum, t) => sum + (t.amount + (t.charges || 0)),
+    (sum, t) => sum + (t.amount - (t.charges || 0)),
     0,
   );
 
@@ -1706,10 +2164,7 @@ function renderCustomerTransactions(container, customerId, period = "all") {
               ${sortedTransactions
                 .map((txn) => {
                   const charges = txn.charges || 0;
-                  const netAmount =
-                    txn.type === "deposit"
-                      ? txn.amount - charges
-                      : txn.amount + charges;
+                  const netAmount = txn.amount - charges;
 
                   return `
                     <tr class="hover:bg-gray-800/30 transition-colors">
@@ -1747,7 +2202,7 @@ function renderCustomerTransactions(container, customerId, period = "all") {
                   `;
                 })
                 .join("")}
-              ${sortedTransactions.length === 0 ? 'bon<td colspan="8" class="text-center text-gray-400 py-8">No transactions found for this period</td>' : ""}
+              ${sortedTransactions.length === 0 ? 'bon<td colspan="8" class="text-center text-gray-400 py-8">No transactions found for this period bon' : ""}
             </tbody>
            ..
         </div>
@@ -1902,8 +2357,7 @@ function exportCustomerData(customerId) {
 
   transactions.forEach((txn) => {
     const charges = txn.charges || 0;
-    const netAmount =
-      txn.type === "deposit" ? txn.amount - charges : txn.amount + charges;
+    const netAmount = txn.amount - charges;
 
     csv += `"${formatDate(txn.date)}",${txn.type},${txn.amount},${charges},${netAmount},${txn.status},"${txn.description || ""}","${txn.approvedBy || ""}"\n`;
   });
@@ -2672,10 +3126,7 @@ function renderHistory(container) {
           .slice(0, 20)
           .map((txn) => {
             const charges = txn.charges || 0;
-            const netAmount =
-              txn.type === "deposit"
-                ? txn.amount - charges
-                : txn.amount + charges;
+            const netAmount = txn.amount - charges;
             const customer = state.customers.find(
               (c) => c.id === txn.customerId,
             );
@@ -2846,10 +3297,7 @@ function renderAdminTransactions(container) {
                 const staffName =
                   customer?.addedBy?.staffName || "Unknown Staff";
                 const charges = txn.charges || 0;
-                const netAmount =
-                  txn.type === "deposit"
-                    ? txn.amount - charges
-                    : txn.amount + charges;
+                const netAmount = txn.amount - charges;
                 const hasSMS = customer?.phone ? "📱" : "⚠️";
 
                 return `
@@ -3001,10 +3449,7 @@ function renderAdminTransactions(container) {
                     const staffName = customer?.addedBy?.staffName || "System";
                     const staffId = customer?.addedBy?.staffId || "system";
                     const charges = txn.charges || 0;
-                    const netAmount =
-                      txn.type === "deposit"
-                        ? txn.amount - charges
-                        : txn.amount + charges;
+                    const netAmount = txn.amount - charges;
 
                     return `
                     <tr class="hover:bg-gray-800/30 transition-colors transaction-row" data-staff="${staffId}">
@@ -3122,10 +3567,7 @@ function viewStaffPendingTransactions(staffId) {
           ${pendingTransactions
             .map((txn) => {
               const charges = txn.charges || 0;
-              const netAmount =
-                txn.type === "deposit"
-                  ? txn.amount - charges
-                  : txn.amount + charges;
+              const netAmount = txn.amount - charges;
               const customer = state.customers.find(
                 (c) => c.id === txn.customerId,
               );
@@ -3351,10 +3793,7 @@ function viewTransactionDetails(txnId) {
   const customer = state.customers.find((c) => c.id === transaction.customerId);
   const staffName = customer?.addedBy?.staffName || "System";
   const charges = transaction.charges || 0;
-  const netAmount =
-    transaction.type === "deposit"
-      ? transaction.amount - charges
-      : transaction.amount + charges;
+  const netAmount = transaction.amount - charges;
   const hasSMS = customer?.phone ? "Yes" : "No";
 
   const modalHtml = `
@@ -3509,267 +3948,6 @@ function sortTransactions() {
   navigate(state.currentView);
 }
 
-// ==================== TRANSACTION HANDLERS ====================
-
-async function handleNewTransaction(e) {
-  e.preventDefault();
-
-  const formData = new FormData(e.target);
-  const customerId = formData.get("customerId");
-  const customer = state.customers.find((c) => c.id === customerId);
-  const type = formData.get("type");
-  const amount = parseFloat(formData.get("amount"));
-  const charges = parseFloat(formData.get("charges")) || 0;
-
-  if (!customer) {
-    showNotification("Please select a customer", "error");
-    return;
-  }
-
-  const netAmount = type === "deposit" ? amount - charges : amount + charges;
-
-  if (type === "withdrawal") {
-    const totalDeduction = amount + charges;
-    if (totalDeduction > customer.balance) {
-      showNotification(
-        `Insufficient funds! Customer balance: ₦${customer.balance.toLocaleString()}. Total deduction including charges: ₦${totalDeduction.toLocaleString()}`,
-        "error",
-      );
-      return;
-    }
-  }
-
-  const txnData = {
-    customerId: customerId,
-    customerName: customer.name,
-    type: type,
-    amount: amount,
-    charges: charges,
-    netAmount: netAmount,
-    description: formData.get("description"),
-    status: "pending",
-    requestedBy: state.currentUser.name,
-    requestedAt: new Date().toISOString(),
-  };
-
-  try {
-    const response = await api.post("/transactions", txnData);
-
-    await loadAllData();
-
-    if (charges > 0) {
-      showNotification(
-        `✅ Transaction request submitted! ${type === "deposit" ? "Deposit" : "Withdrawal"} of ₦${amount.toLocaleString()} with ₦${charges.toLocaleString()} charges. Net: ₦${netAmount.toLocaleString()}\n📱 SMS alert will be sent to customer upon approval.`,
-        "success",
-      );
-    } else {
-      showNotification(
-        `✅ Transaction request submitted for ${type} of ₦${amount.toLocaleString()}\n📱 SMS alert will be sent to customer upon approval.`,
-        "success",
-      );
-    }
-    navigate("history");
-  } catch (error) {
-    console.error("Transaction submission error:", error);
-    const errorMessage =
-      error.response?.data?.message || "Failed to submit transaction";
-    showNotification(errorMessage, "error");
-  }
-}
-
-async function processTransaction(
-  txnId,
-  action,
-  refreshView = true,
-  staffId = null,
-) {
-  try {
-    const transaction = state.transactions.find((t) => t.id === txnId);
-    if (!transaction) {
-      showNotification("Transaction not found", "error");
-      return;
-    }
-
-    const response = await api.patch(`/transactions/${txnId}`, {
-      status: action,
-      approvedBy: state.currentUser.name,
-    });
-
-    await loadAllData();
-
-    if (action === "approved") {
-      const charges = transaction.charges || 0;
-      const netAmount =
-        transaction.type === "deposit"
-          ? transaction.amount - charges
-          : transaction.amount + charges;
-
-      showNotification(
-        `✅ Transaction ${action}! ${transaction.type === "deposit" ? "Deposit" : "Withdrawal"} of ₦${transaction.amount.toLocaleString()} ${action}. ${charges > 0 ? `Charges: ₦${charges.toLocaleString()}. ` : ""}Net: ₦${netAmount.toLocaleString()}\n📱 SMS alert sent to customer.`,
-        "success",
-      );
-    } else {
-      showNotification(`❌ Transaction ${action}`, "error");
-    }
-
-    closeStaffPendingModal();
-    closeTransactionModal();
-
-    if (refreshView) {
-      if (staffId) {
-        navigate("staff");
-      } else {
-        navigate("transactions");
-      }
-    }
-  } catch (error) {
-    console.error("Transaction processing error:", error);
-    const errorMessage =
-      error.response?.data?.message || "Failed to process transaction";
-    showNotification(errorMessage, "error");
-  }
-}
-
-// ==================== NAVIGATION ====================
-
-function navigate(view) {
-  state.currentView = view;
-  renderSidebar();
-
-  if (window.innerWidth < 768) {
-    const sidebar = document.querySelector(".sidebar");
-    const overlay = document.getElementById("sidebarOverlay");
-    if (sidebar) sidebar.classList.remove("open");
-    if (overlay) overlay.classList.add("hidden");
-    document.body.style.overflow = "";
-  }
-
-  const titles = {
-    dashboard: "Dashboard Overview",
-    customers: "Customer Management",
-    "dormant-customers": "Dormant Customers",
-    transactions:
-      state.role === "admin" ? "Transaction Approvals" : "New Transaction",
-    staff: "Staff Management",
-    reports: "System Reports",
-    "customer-reports": "Customer Reports",
-    settings: "System Settings",
-    "new-customer": "Register New Customer",
-    history: "Transaction History",
-  };
-
-  document.getElementById("pageTitle").textContent = titles[view] || view;
-
-  const contentArea = document.getElementById("contentArea");
-  contentArea.innerHTML = "";
-
-  switch (view) {
-    case "dashboard":
-      renderDashboard(contentArea);
-      break;
-    case "customers":
-      renderCustomers(contentArea);
-      break;
-    case "dormant-customers":
-      renderDormantCustomers(contentArea);
-      break;
-    case "transactions":
-      state.role === "admin"
-        ? renderAdminTransactions(contentArea)
-        : renderNewTransaction(contentArea);
-      break;
-    case "new-customer":
-      renderNewCustomer(contentArea);
-      break;
-    case "staff":
-      renderStaffManagement(contentArea);
-      break;
-    case "history":
-      renderHistory(contentArea);
-      break;
-    case "customer-reports":
-      renderCustomerReports(contentArea);
-      break;
-    default:
-      renderDashboard(contentArea);
-  }
-}
-
-// ==================== NOTIFICATIONS ====================
-
-function toggleNotifications() {
-  const panel = document.getElementById("notificationPanel");
-  panel.classList.toggle("translate-x-full");
-}
-
-function checkPendingNotifications() {
-  const pendingCount = state.transactions.filter(
-    (t) => t.status === "pending",
-  ).length;
-  const badge = document.getElementById("notifBadge");
-  if (pendingCount > 0 && state.role === "admin") {
-    badge.classList.remove("hidden");
-    state.notifications.push({
-      id: Date.now(),
-      message: `${pendingCount} transactions pending approval`,
-      time: "Just now",
-      unread: true,
-    });
-    updateNotificationList();
-  }
-}
-
-function updateNotificationList() {
-  const list = document.getElementById("notificationList");
-  if (state.notifications.length === 0) {
-    list.innerHTML =
-      '<div class="p-4 text-center text-gray-500 text-sm">No notifications</div>';
-    return;
-  }
-
-  list.innerHTML = state.notifications
-    .map(
-      (n) => `
-      <div class="p-4 hover:bg-gray-800/50 transition-colors ${n.unread ? "border-l-2 border-blue-500" : ""}">
-        <p class="text-sm mb-1">${n.message}</p>
-        <p class="text-xs text-gray-500">${n.time}</p>
-      </div>
-    `,
-    )
-    .join("");
-}
-
-function clearNotifications() {
-  state.notifications = [];
-  document.getElementById("notifBadge").classList.add("hidden");
-  updateNotificationList();
-}
-
-function startClock() {
-  setInterval(() => {
-    const now = new Date();
-    document.getElementById("liveTime").textContent =
-      now.toLocaleTimeString("en-GB");
-  }, 1000);
-}
-
-function logout() {
-  localStorage.removeItem("token");
-  state.currentUser = null;
-  state.role = null;
-  state.customers = [];
-  state.transactions = [];
-  state.staff = [];
-  document.getElementById("app").classList.add("hidden");
-  document.getElementById("loginScreen").classList.remove("hidden");
-  document.getElementById("passwordInput").value = "";
-  document.getElementById("emailInput").value = "";
-  document.querySelectorAll(".role-btn").forEach((btn) => {
-    btn.classList.remove("border-blue-500", "bg-blue-500/10");
-    btn.classList.add("border-gray-600");
-  });
-}
-
 // ==================== CUSTOMER EDIT MODALS ====================
 
 function editCustomer(id) {
@@ -3883,7 +4061,7 @@ function checkAuth() {
   }
 }
 
-// Initialize with demo data
+// Initialize
 window.onload = () => {
   selectRole("admin");
   checkAuth();
