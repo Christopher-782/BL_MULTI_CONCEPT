@@ -1,4 +1,4 @@
-// services/smsService.js - Updated with proper "N" currency display
+// services/smsService.js - Clean Professional Format
 const axios = require("axios");
 require("dotenv").config();
 
@@ -33,37 +33,40 @@ const formatPhoneNumber = (phone) => {
   return cleaned;
 };
 
-// Format currency for SMS - Ensure "N" appears before amount
-const formatCurrencyForSMS = (amount) => {
-  // Format with commas and add "N" prefix
-  const formatted = amount.toLocaleString("en-US", {
+// Format currency for SMS
+const formatCurrency = (amount) => {
+  return amount.toLocaleString("en-NG", {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   });
-  return `N${formatted}`;
 };
 
-// Clean message to ensure compatibility with SMS gateway
+// Clean message for SMS gateway
 const cleanMessage = (message) => {
-  // Ensure "N" is properly placed before amounts
   let cleaned = message;
-
-  // Remove any existing ₦ symbol
-  cleaned = cleaned.replace(/₦/g, "");
-
-  // Ensure N is properly formatted (no spaces after N)
-  cleaned = cleaned.replace(/N\s+(\d)/g, "N$1");
-
-  // Ensure proper spacing
+  cleaned = cleaned.replace(/₦/g, "N");
   cleaned = cleaned.replace(/\s+/g, " ").trim();
-
-  // Convert to ASCII only
   cleaned = cleaned.replace(/[^\x20-\x7E\n]/g, "");
-
   return cleaned;
 };
 
-// Send SMS function with proper encoding
+// Format date
+const formatDate = () => {
+  const now = new Date();
+  return now
+    .toLocaleString("en-US", {
+      month: "numeric",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+    })
+    .replace(",", "");
+};
+
+// Send SMS function
 const sendSMS = async (phone, message) => {
   try {
     const formattedPhone = formatPhoneNumber(phone);
@@ -136,7 +139,7 @@ const sendSMS = async (phone, message) => {
   }
 };
 
-// Send credit alert (deposit) - With "N" currency symbol
+// Credit Alert (Deposit)
 const sendCreditAlert = async (
   phone,
   amount,
@@ -144,30 +147,17 @@ const sendCreditAlert = async (
   transactionId = null,
   charges = 0,
 ) => {
-  const netAmount = amount - charges;
-
-  // Format using "N" prefix
-  const formattedAmount = formatCurrencyForSMS(amount);
-  const formattedBalance = formatCurrencyForSMS(balance);
-  const formattedCharges = charges > 0 ? formatCurrencyForSMS(charges) : null;
-  const formattedNetAmount = formatCurrencyForSMS(netAmount);
-  const date = new Date().toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
+  const formattedAmount = formatCurrency(amount);
+  const formattedBalance = formatCurrency(balance);
+  const formattedCharges = formatCurrency(charges);
+  const date = formatDate();
 
   let message = `BL MULTI CONCEPT\n\n`;
   message += `CREDIT ALERT\n`;
   message += `Amount: ${formattedAmount}\n`;
 
   if (charges > 0) {
-    message += `Charges: ${formattedCharges}\n`;
-    message += `Net: ${formattedNetAmount}\n`;
+    message += `charges: N${formattedCharges}\n`;
   }
 
   message += `Balance: ${formattedBalance}\n`;
@@ -178,7 +168,7 @@ const sendCreditAlert = async (
   return await sendSMS(phone, message);
 };
 
-// Send debit alert (withdrawal) - With "N" currency symbol
+// Debit Alert (Withdrawal)
 const sendDebitAlert = async (
   phone,
   amount,
@@ -186,30 +176,17 @@ const sendDebitAlert = async (
   transactionId = null,
   charges = 0,
 ) => {
-  const netAmount = amount + charges;
-
-  // Format using "N" prefix
-  const formattedAmount = formatCurrencyForSMS(amount);
-  const formattedBalance = formatCurrencyForSMS(balance);
-  const formattedCharges = charges > 0 ? formatCurrencyForSMS(charges) : null;
-  const formattedNetAmount = formatCurrencyForSMS(netAmount);
-  const date = new Date().toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
+  const formattedAmount = formatCurrency(amount);
+  const formattedBalance = formatCurrency(balance);
+  const formattedCharges = formatCurrency(charges);
+  const date = formatDate();
 
   let message = `BL MULTI CONCEPT\n\n`;
   message += `DEBIT ALERT\n`;
   message += `Amount: ${formattedAmount}\n`;
 
   if (charges > 0) {
-    message += `Charges: ${formattedCharges}\n`;
-    message += `Net: ${formattedNetAmount}\n`;
+    message += `charges: N${formattedCharges}\n`;
   }
 
   message += `Balance: ${formattedBalance}\n`;
@@ -220,7 +197,7 @@ const sendDebitAlert = async (
   return await sendSMS(phone, message);
 };
 
-// Send transaction status alert
+// Transaction Status Alert
 const sendTransactionAlert = async (
   phone,
   transaction,
@@ -228,48 +205,46 @@ const sendTransactionAlert = async (
   customerBalance = null,
 ) => {
   const charges = transaction.charges || 0;
-  const netAmount =
-    transaction.type === "deposit"
-      ? transaction.amount - charges
-      : transaction.amount + charges;
-
-  const formattedAmount = formatCurrencyForSMS(transaction.amount);
-  const formattedCharges = charges > 0 ? formatCurrencyForSMS(charges) : null;
-  const formattedNetAmount = formatCurrencyForSMS(netAmount);
-  const formattedBalance =
-    customerBalance !== null ? formatCurrencyForSMS(customerBalance) : null;
-  const date = new Date().toLocaleString("en-GB", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
+  const amount = transaction.amount;
+  const balance = customerBalance;
+  const date = formatDate();
 
   let message = `BL MULTI CONCEPT\n\n`;
-  message += `${status === "approved" ? "✓" : "✗"} TRANSACTION ${status.toUpperCase()}\n`;
-  message += `Type: ${transaction.type.toUpperCase()}\n`;
-  message += `Amount: ${formattedAmount}\n`;
+
+  if (status === "approved") {
+    if (transaction.type === "deposit") {
+      message += `CREDIT ALERT\n`;
+    } else {
+      message += `DEBIT ALERT\n`;
+    }
+  } else {
+    message += `TRANSACTION ${status.toUpperCase()}\n`;
+  }
+
+  message += `Amount: ${formatCurrency(amount)}\n`;
 
   if (charges > 0) {
-    message += `Charges: ${formattedCharges}\n`;
-    message += `Net: ${formattedNetAmount}\n`;
+    message += `charges: N${formatCurrency(charges)}\n`;
   }
 
-  if (formattedBalance) {
-    message += `Balance: ${formattedBalance}\n`;
+  if (balance !== null) {
+    message += `Balance: ${formatCurrency(balance)}\n`;
   }
 
-  message += `Ref: ${transaction.id}\n`;
-  message += `Date: ${date}\n\n`;
+  message += `Date: ${date}\n`;
+  message += `Ref: ${transaction.id}\n\n`;
   message += `Thank you for banking with us!`;
 
   return await sendSMS(phone, message);
 };
 
-// Send bulk SMS to multiple recipients
+// Simple SMS for general messages
+const sendSimpleSMS = async (phone, message) => {
+  const fullMessage = `BL MULTI CONCEPT\n\n${message}\n\nThank you for banking with us!`;
+  return await sendSMS(phone, fullMessage);
+};
+
+// Bulk SMS
 const sendBulkSMS = async (recipients, message) => {
   const results = [];
   const cleanMsg = cleanMessage(message);
@@ -301,36 +276,63 @@ const sendBulkSMS = async (recipients, message) => {
   };
 };
 
-// Send dormant customer reactivation SMS
+// Reactivation SMS
 const sendReactivationSMS = async (phone, customerName, daysDormant) => {
   const message = `BL MULTI CONCEPT\n\nREACTIVATION OFFER\n\nDear ${customerName},\n\nWe miss you! It's been ${daysDormant} since your last transaction.\n\nSpecial offer: Make a deposit today and get 50% off charges!\n\nLog in to your account to get started.\n\nThank you for banking with us!`;
 
   return await sendSMS(phone, message);
 };
 
-// Test function to verify SMS formatting
+// Test function
 const testSMSFormat = () => {
   console.log("\n🧪 Testing SMS Format...");
   console.log("================================================");
 
   const testAmount = 5000;
   const testBalance = 33500;
-  const testCharges = 0;
+  const testCharges = 500;
   const testId = "TXN1774436733684";
 
-  const formattedAmount = formatCurrencyForSMS(testAmount);
-  const formattedBalance = formatCurrencyForSMS(testBalance);
+  console.log("\n📱 DEBIT ALERT WITH CHARGES:");
+  console.log("================================================");
+  const debitWithCharges = `BL MULTI CONCEPT
 
-  console.log("Formatted Amount:", formattedAmount);
-  console.log("Formatted Balance:", formattedBalance);
+DEBIT ALERT
+Amount: 5,000
+charges: N500
+Balance: 33,500
+Date: 3/25/2026, 11:05:50 AM
+Ref: TXN1774436733684
 
-  const testMessage = `BL MULTI CONCEPT\n\nDEBIT ALERT\nAmount: ${formattedAmount}\nBalance: ${formattedBalance}\nDate: ${new Date().toLocaleString()}\nRef: ${testId}\n\nThank you for banking with us!`;
+Thank you for banking with us!`;
+  console.log(debitWithCharges);
 
-  console.log("\nExpected SMS Output:");
-  console.log(testMessage);
-  console.log("\n================================================\n");
+  console.log("\n📱 DEBIT ALERT WITHOUT CHARGES:");
+  console.log("================================================");
+  const debitWithoutCharges = `BL MULTI CONCEPT
 
-  return testMessage;
+DEBIT ALERT
+Amount: 5,000
+Balance: 33,500
+Date: 3/25/2026, 11:05:50 AM
+Ref: TXN1774436733684
+
+Thank you for banking with us!`;
+  console.log(debitWithoutCharges);
+
+  console.log("\n📱 CREDIT ALERT WITH CHARGES:");
+  console.log("================================================");
+  const creditWithCharges = `BL MULTI CONCEPT
+
+CREDIT ALERT
+Amount: 5,000
+charges: N500
+Balance: 33,500
+Date: 3/25/2026, 11:05:50 AM
+Ref: TXN1774436733684
+
+Thank you for banking with us!`;
+  console.log(creditWithCharges);
 };
 
 module.exports = {
@@ -340,8 +342,8 @@ module.exports = {
   sendReactivationSMS,
   sendBulkSMS,
   sendSMS,
+  sendSimpleSMS,
   formatPhoneNumber,
-  formatCurrencyForSMS,
   cleanMessage,
   testSMSFormat,
 };
