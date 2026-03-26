@@ -153,7 +153,7 @@ const sendCreditAlert = async (
   const date = formatDate();
 
   let message = `BL MULTI CONCEPT\n\n`;
-  message += `CREDIT ALERT\n`;
+  message += `CR ALERT\n`;
   message += `Amount: ${formattedAmount}\n`;
 
   if (charges > 0) {
@@ -163,7 +163,7 @@ const sendCreditAlert = async (
   message += `Balance: ${formattedBalance}\n`;
   message += `Date: ${date}\n`;
   message += `Ref: ${transactionId || "N/A"}\n\n`;
-  message += `Thank you for banking with us!`;
+  message += `Thank you for trusting  us!`;
 
   return await sendSMS(phone, message);
 };
@@ -182,7 +182,7 @@ const sendDebitAlert = async (
   const date = formatDate();
 
   let message = `BL MULTI CONCEPT\n\n`;
-  message += `DEBIT ALERT\n`;
+  message += `DR ALERT\n`;
   message += `Amount: ${formattedAmount}\n`;
 
   if (charges > 0) {
@@ -192,7 +192,7 @@ const sendDebitAlert = async (
   message += `Balance: ${formattedBalance}\n`;
   message += `Date: ${date}\n`;
   message += `Ref: ${transactionId || "N/A"}\n\n`;
-  message += `Thank you for banking with us!`;
+  message += `Thank you for trusting us!`;
 
   return await sendSMS(phone, message);
 };
@@ -213,9 +213,9 @@ const sendTransactionAlert = async (
 
   if (status === "approved") {
     if (transaction.type === "deposit") {
-      message += `CREDIT ALERT\n`;
+      message += `CR ALERT\n`;
     } else {
-      message += `DEBIT ALERT\n`;
+      message += `DR ALERT\n`;
     }
   } else {
     message += `TRANSACTION ${status.toUpperCase()}\n`;
@@ -233,14 +233,14 @@ const sendTransactionAlert = async (
 
   message += `Date: ${date}\n`;
   message += `Ref: ${transaction.id}\n\n`;
-  message += `Thank you for banking with us!`;
+  message += `Thank you for trusting us!`;
 
   return await sendSMS(phone, message);
 };
 
 // Simple SMS for general messages
 const sendSimpleSMS = async (phone, message) => {
-  const fullMessage = `BL MULTI CONCEPT\n\n${message}\n\nThank you for banking with us!`;
+  const fullMessage = `BL MULTI CONCEPT\n\n${message}\n\nThank you for trusting us!`;
   return await sendSMS(phone, fullMessage);
 };
 
