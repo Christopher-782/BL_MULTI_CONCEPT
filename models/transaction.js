@@ -1,4 +1,3 @@
-// transaction.js model
 const mongoose = require("mongoose");
 
 const transactionSchema = new mongoose.Schema({
@@ -14,13 +13,17 @@ const transactionSchema = new mongoose.Schema({
     enum: ["pending", "approved", "rejected"],
     default: "pending",
   },
-  date: String,
+  // Change from String to Date
+  date: { type: Date, default: Date.now },
   approvedBy: String,
   description: String,
   requestedBy: String,
   requestedAt: Date,
   createdAt: { type: Date, default: Date.now },
 });
+
+// Index for faster queries
+transactionSchema.index({ date: -1, status: 1, charges: 1 });
 
 module.exports = mongoose.model(
   "Transaction",

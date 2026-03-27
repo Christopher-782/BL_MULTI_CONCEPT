@@ -132,7 +132,7 @@ Ref: ${currentTransaction.id}
 
 Please ensure you have sufficient balance.`;
 
-            await sendSMS(customer.phone, rejectionMessage); // Now sendSMS is imported
+            await sendSMS(customer.phone, rejectionMessage);
           } catch (smsError) {
             console.error("Rejection SMS failed:", smsError.message);
           }
@@ -146,14 +146,22 @@ Please ensure you have sufficient balance.`;
     }
 
     // ✅ Update transaction status
+    // FIX: Build update object with conditional date field
+    const updateData = {
+      status,
+      approvedBy,
+      processedAmount: netAmount,
+      processedAt: new Date(),
+    };
+
+    // ADD THIS: Set date field when approving (for revenue reports)
+    if (status === "approved") {
+      updateData.date = new Date();
+    }
+
     const transaction = await Transaction.findOneAndUpdate(
       { id: req.params.id },
-      {
-        status,
-        approvedBy,
-        processedAmount: netAmount,
-        processedAt: new Date(),
-      },
+      updateData,
       { returnDocument: "after" },
     );
 
@@ -198,7 +206,7 @@ Please ensure you have sufficient balance.`;
               console.log(`📱 Credit SMS sent to ${customer.phone}`);
             } else {
               console.log(`⚠️ Credit SMS failed: ${result.error}`);
-            }
+            } // <-- FIXED: Removed extra ) here
           } else if (transaction.type === "withdrawal") {
             const result = await sendDebitAlert(
               customer.phone,
@@ -248,7 +256,7 @@ Ref: ${transaction.id}
 
 Contact support for more information.`;
 
-          await sendSMS(customer.phone, rejectionMessage); // Now sendSMS is imported
+          await sendSMS(customer.phone, rejectionMessage);
           console.log(`📱 Rejection SMS sent to ${customer.phone}`);
         } catch (smsError) {
           console.error("Rejection SMS failed:", smsError.message);
@@ -262,7 +270,6 @@ Contact support for more information.`;
     res.status(500).json({ error: error.message });
   }
 };
-
 // Optional: Add a test SMS endpoint
 exports.testSMS = async (req, res) => {
   try {

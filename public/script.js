@@ -1532,6 +1532,7 @@ async function handleNewTransaction(e) {
     status: "pending",
     requestedBy: state.currentUser.name,
     requestedAt: new Date().toISOString(),
+    date: new Date(),
   };
 
   try {
@@ -1550,7 +1551,6 @@ async function handleNewTransaction(e) {
     );
   }
 }
-
 async function processTransaction(
   txnId,
   action,
@@ -1563,10 +1563,16 @@ async function processTransaction(
       showNotification("Transaction not found", "error");
       return;
     }
-    await api.patch(`/transactions/${txnId}`, {
+
+    const updateData = {
       status: action,
       approvedBy: state.currentUser.name,
-    });
+
+      ...(action === "approved" && { date: new Date() }),
+    };
+
+    await api.patch(`/transactions/${txnId}`, updateData);
+
     await loadAllData();
     showNotification(
       `✅ Transaction ${action}!`,
@@ -2206,7 +2212,6 @@ function calculateLoanDetails() {
   document.getElementById("loanSummary").classList.remove("hidden");
 }
 
-// In script.js - handleLoanRequest function
 async function handleLoanRequest(e) {
   e.preventDefault();
 
@@ -2372,26 +2377,18 @@ function renderMyLoans(container) {
 
 async function renderRevenueReports(container) {
   try {
-    // Fetch all periods with error handling
+    // Fetch all periods
     const fetchReport = async (period) => {
       try {
         const response = await api.get(`/reports/revenue?period=${period}`);
+        console.log(`${period} report:`, response.data);
         return response.data;
       } catch (error) {
         console.error(`Failed to fetch ${period} report:`, error);
-        // Return default data structure
         return {
           totalRevenue: 0,
-          breakdown: {
-            interestRevenue: 0,
-            transactionCharges: 0,
-          },
-          summary: {
-            totalLoans: 0,
-            totalTransactions: 0,
-            totalDisbursed: 0,
-            totalRepaid: 0,
-          },
+          breakdown: { interestRevenue: 0, transactionCharges: 0 },
+          summary: { totalLoans: 0, totalTransactions: 0 },
         };
       }
     };
@@ -2409,10 +2406,23 @@ async function renderRevenueReports(container) {
       return num.toLocaleString();
     };
 
+    // FIX: Define formatDate if not already defined, or ensure it's available
+    const formatDate = (dateStr) => {
+      if (!dateStr) return "N/A";
+      const date = new Date(dateStr);
+      return date.toLocaleString();
+    };
+
     const calculatePercentage = (value, total) => {
       if (!total || total === 0) return 0;
       return (((value || 0) / total) * 100).toFixed(1);
     };
+
+    // FIX: Pre-filter and store transactions to avoid scope issues
+    const transactionsWithCharges =
+      state.transactions?.filter(
+        (t) => t.status === "approved" && t.charges > 0,
+      ) || [];
 
     const html = `
       <div class="space-y-6 animate-fade-in px-4 sm:px-0">
@@ -2426,7 +2436,7 @@ async function renderRevenueReports(container) {
               <i class="fas fa-calendar-day text-blue-400 text-xl"></i>
             </div>
             <p class="text-2xl font-bold text-green-400">₦${formatNumber(daily.totalRevenue)}</p>
-            <p class="text-xs text-gray-400 mt-1">Interest: ₦${formatNumber(daily.breakdown?.interestRevenue)} | Charges: ₦${formatNumber(daily.breakdown?.transactionCharges)}</p>
+            <p class="text-xs text-gray-400 mt-1">Charges: ₦${formatNumber(daily.breakdown?.transactionCharges)}</p>
           </div>
           
           <div class="glass-panel p-6 rounded-xl">
@@ -2435,7 +2445,7 @@ async function renderRevenueReports(container) {
               <i class="fas fa-calendar-week text-green-400 text-xl"></i>
             </div>
             <p class="text-2xl font-bold text-green-400">₦${formatNumber(weekly.totalRevenue)}</p>
-            <p class="text-xs text-gray-400 mt-1">Interest: ₦${formatNumber(weekly.breakdown?.interestRevenue)} | Charges: ₦${formatNumber(weekly.breakdown?.transactionCharges)}</p>
+            <p class="text-xs text-gray-400 mt-1">Charges: ₦${formatNumber(weekly.breakdown?.transactionCharges)}</p>
           </div>
           
           <div class="glass-panel p-6 rounded-xl">
@@ -2444,7 +2454,7 @@ async function renderRevenueReports(container) {
               <i class="fas fa-calendar-alt text-yellow-400 text-xl"></i>
             </div>
             <p class="text-2xl font-bold text-green-400">₦${formatNumber(monthly.totalRevenue)}</p>
-            <p class="text-xs text-gray-400 mt-1">Interest: ₦${formatNumber(monthly.breakdown?.interestRevenue)} | Charges: ₦${formatNumber(monthly.breakdown?.transactionCharges)}</p>
+            <p class="text-xs text-gray-400 mt-1">Charges: ₦${formatNumber(monthly.breakdown?.transactionCharges)}</p>
           </div>
           
           <div class="glass-panel p-6 rounded-xl">
@@ -2453,108 +2463,44 @@ async function renderRevenueReports(container) {
               <i class="fas fa-calendar-year text-purple-400 text-xl"></i>
             </div>
             <p class="text-2xl font-bold text-green-400">₦${formatNumber(yearly.totalRevenue)}</p>
-            <p class="text-xs text-gray-400 mt-1">Interest: ₦${formatNumber(yearly.breakdown?.interestRevenue)} | Charges: ₦${formatNumber(yearly.breakdown?.transactionCharges)}</p>
+            <p class="text-xs text-gray-400 mt-1">Charges: ₦${formatNumber(yearly.breakdown?.transactionCharges)}</p>
           </div>
         </div>
         
         <!-- Revenue Breakdown Chart -->
         <div class="glass-panel rounded-2xl p-6">
-          <h3 class="text-lg font-semibold mb-4">Revenue Breakdown</h3>
+          <h3 class="text-lg font-semibold mb-4">Revenue Sources</h3>
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div>
-              <h4 class="text-sm font-medium text-gray-400 mb-3">Interest Revenue</h4>
-              <div class="space-y-4">
-                <div>
-                  <div class="flex justify-between text-sm mb-1">
-                    <span>Daily</span>
-                    <span>₦${formatNumber(daily.breakdown?.interestRevenue)}</span>
-                  </div>
-                  <div class="w-full bg-gray-700 rounded-full h-2">
-                    <div class="bg-blue-500 h-2 rounded-full" style="width: ${calculatePercentage(daily.breakdown?.interestRevenue, daily.totalRevenue)}%"></div>
-                  </div>
-                </div>
-                <div>
-                  <div class="flex justify-between text-sm mb-1">
-                    <span>Weekly</span>
-                    <span>₦${formatNumber(weekly.breakdown?.interestRevenue)}</span>
-                  </div>
-                  <div class="w-full bg-gray-700 rounded-full h-2">
-                    <div class="bg-blue-500 h-2 rounded-full" style="width: ${calculatePercentage(weekly.breakdown?.interestRevenue, weekly.totalRevenue)}%"></div>
-                  </div>
-                </div>
-                <div>
-                  <div class="flex justify-between text-sm mb-1">
-                    <span>Monthly</span>
-                    <span>₦${formatNumber(monthly.breakdown?.interestRevenue)}</span>
-                  </div>
-                  <div class="w-full bg-gray-700 rounded-full h-2">
-                    <div class="bg-blue-500 h-2 rounded-full" style="width: ${calculatePercentage(monthly.breakdown?.interestRevenue, monthly.totalRevenue)}%"></div>
-                  </div>
-                </div>
-              </div>
+            <div class="bg-gray-800/30 p-4 rounded-xl text-center">
+              <h4 class="text-sm font-medium text-gray-400 mb-2">Transaction Charges</h4>
+              <p class="text-3xl font-bold text-green-400">₦${formatNumber(yearly.breakdown?.transactionCharges)}</p>
+              <p class="text-xs text-gray-500 mt-1">From ${formatNumber(yearly.summary?.totalTransactions)} transactions</p>
             </div>
-            
-            <div>
-              <h4 class="text-sm font-medium text-gray-400 mb-3">Transaction Charges</h4>
-              <div class="space-y-4">
-                <div>
-                  <div class="flex justify-between text-sm mb-1">
-                    <span>Daily</span>
-                    <span>₦${formatNumber(daily.breakdown?.transactionCharges)}</span>
-                  </div>
-                  <div class="w-full bg-gray-700 rounded-full h-2">
-                    <div class="bg-green-500 h-2 rounded-full" style="width: ${calculatePercentage(daily.breakdown?.transactionCharges, daily.totalRevenue)}%"></div>
-                  </div>
-                </div>
-                <div>
-                  <div class="flex justify-between text-sm mb-1">
-                    <span>Weekly</span>
-                    <span>₦${formatNumber(weekly.breakdown?.transactionCharges)}</span>
-                  </div>
-                  <div class="w-full bg-gray-700 rounded-full h-2">
-                    <div class="bg-green-500 h-2 rounded-full" style="width: ${calculatePercentage(weekly.breakdown?.transactionCharges, weekly.totalRevenue)}%"></div>
-                  </div>
-                </div>
-                <div>
-                  <div class="flex justify-between text-sm mb-1">
-                    <span>Monthly</span>
-                    <span>₦${formatNumber(monthly.breakdown?.transactionCharges)}</span>
-                  </div>
-                  <div class="w-full bg-gray-700 rounded-full h-2">
-                    <div class="bg-green-500 h-2 rounded-full" style="width: ${calculatePercentage(monthly.breakdown?.transactionCharges, monthly.totalRevenue)}%"></div>
-                  </div>
-                </div>
+            <div class="bg-gray-800/30 p-4 rounded-xl text-center">
+              <h4 class="text-sm font-medium text-gray-400 mb-2">Loan Interest</h4>
+              <p class="text-3xl font-bold text-blue-400">₦${formatNumber(yearly.breakdown?.interestRevenue)}</p>
+              <p class="text-xs text-gray-500 mt-1">From ${formatNumber(yearly.summary?.totalLoans)} loans</p>
+            </div>
+          </div>
+          
+          <!-- Progress Bar for Revenue Split -->
+          <div class="mt-6">
+            <div class="flex justify-between text-sm mb-2">
+              <span>Transaction Charges (${calculatePercentage(yearly.breakdown?.transactionCharges, yearly.totalRevenue)}%)</span>
+              <span>Loan Interest (${calculatePercentage(yearly.breakdown?.interestRevenue, yearly.totalRevenue)}%)</span>
+            </div>
+            <div class="w-full bg-gray-700 rounded-full h-4 overflow-hidden">
+              <div class="flex h-full">
+                <div class="bg-green-500 h-full" style="width: ${calculatePercentage(yearly.breakdown?.transactionCharges, yearly.totalRevenue)}%"></div>
+                <div class="bg-blue-500 h-full" style="width: ${calculatePercentage(yearly.breakdown?.interestRevenue, yearly.totalRevenue)}%"></div>
               </div>
             </div>
           </div>
         </div>
         
-        <!-- Summary Cards -->
+        <!-- Recent Transactions with Charges -->
         <div class="glass-panel rounded-2xl p-6">
-          <h3 class="text-lg font-semibold mb-4">Activity Summary (Year to Date)</h3>
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div class="bg-gray-800/50 p-4 rounded-xl text-center">
-              <p class="text-xs text-gray-400 mb-1">Total Loans</p>
-              <p class="text-xl font-bold text-blue-400">${formatNumber(yearly.summary?.totalLoans)}</p>
-            </div>
-            <div class="bg-gray-800/50 p-4 rounded-xl text-center">
-              <p class="text-xs text-gray-400 mb-1">Total Transactions</p>
-              <p class="text-xl font-bold text-green-400">${formatNumber(yearly.summary?.totalTransactions)}</p>
-            </div>
-            <div class="bg-gray-800/50 p-4 rounded-xl text-center">
-              <p class="text-xs text-gray-400 mb-1">Total Disbursed</p>
-              <p class="text-xl font-bold text-purple-400">₦${formatNumber(yearly.summary?.totalDisbursed)}</p>
-            </div>
-            <div class="bg-gray-800/50 p-4 rounded-xl text-center">
-              <p class="text-xs text-gray-400 mb-1">Total Repaid</p>
-              <p class="text-xl font-bold text-orange-400">₦${formatNumber(yearly.summary?.totalRepaid)}</p>
-            </div>
-          </div>
-        </div>
-        
-        <!-- Recent Transactions Table -->
-        <div class="glass-panel rounded-2xl p-6">
-          <h3 class="text-lg font-semibold mb-4">Recent Approved Transactions</h3>
+          <h3 class="text-lg font-semibold mb-4">Recent Transactions with Charges</h3>
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-700">
               <thead>
@@ -2565,35 +2511,33 @@ async function renderRevenueReports(container) {
                   <th class="pb-3">Amount</th>
                   <th class="pb-3">Charges</th>
                   <th class="pb-3">Net</th>
-                 </thead>
+                </tr>
+              </thead>
               <tbody class="divide-y divide-gray-800">
-                ${state.transactions
-                  ?.filter((t) => t.status === "approved")
-                  .slice(0, 5)
-                  .map(
-                    (txn) => `
-                  <tr class="hover:bg-gray-800/30">
-                    <td class="py-3 text-sm">${formatDate(txn.date)}</td>
-                    <td class="py-3">${txn.customerName}</td>
-                    <td class="py-3 capitalize ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">${txn.type}</td>
-                    <td class="py-3 font-mono">₦${formatNumber(txn.amount)}</td>
-                    <td class="py-3 font-mono text-red-400">₦${formatNumber(txn.charges)}</td>
-                    <td class="py-3 font-mono text-blue-400">₦${formatNumber(txn.netAmount)}</td>
-                  </tr>
-                `,
-                  )
-                  .join("")}
                 ${
-                  !state.transactions?.filter((t) => t.status === "approved")
-                    .length
-                    ? `
-                  <tr>
-                    <td colspan="6" class="py-8 text-center text-gray-400">
-                      No approved transactions found
-                    </td>
-                  </tr>
-                `
-                    : ""
+                  transactionsWithCharges.length > 0
+                    ? transactionsWithCharges
+                        .slice(0, 10)
+                        .map(
+                          (txn) => `
+                          <tr class="hover:bg-gray-800/30">
+                            <td class="py-3 text-sm">${formatDate(txn.date)}</td>
+                            <td class="py-3">${txn.customerName}</td>
+                            <td class="py-3 capitalize ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">${txn.type}</td>
+                            <td class="py-3 font-mono">₦${formatNumber(txn.amount)}</td>
+                            <td class="py-3 font-mono text-red-400 font-bold">₦${formatNumber(txn.charges)}</td>
+                            <td class="py-3 font-mono text-blue-400">₦${formatNumber(txn.netAmount)}</td>
+                          </tr>
+                        `,
+                        )
+                        .join("")
+                    : `
+                      <tr>
+                        <td colspan="6" class="py-8 text-center text-gray-400">
+                          No transactions with charges found
+                        </td>
+                      </tr>
+                    `
                 }
               </tbody>
             </table>
@@ -2616,8 +2560,7 @@ async function renderRevenueReports(container) {
       </div>
     `;
   }
-}
-// ==================== DORMANT CUSTOMERS SECTION ====================
+} // ==================== DORMANT CUSTOMERS SECTION ====================
 
 function renderDormantCustomers(container) {
   const thirtyDaysAgo = new Date();
@@ -3003,6 +2946,27 @@ function renderAdminTransactions(container) {
 }
 
 // ==================== HELPER FUNCTIONS ====================
+// Add a helper function to format dates safely
+function formatTransactionDate(dateValue) {
+  if (!dateValue) return "N/A";
+  try {
+    // Handle both Date objects and string dates
+    const date = new Date(dateValue);
+    if (isNaN(date.getTime())) return dateValue;
+    return date
+      .toLocaleString("en-GB", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      })
+      .replace(",", "");
+  } catch (error) {
+    return dateValue;
+  }
+}
 
 function filterTransactionsByStaff() {
   const staffId = document.getElementById("staffTransactionFilter")?.value;
