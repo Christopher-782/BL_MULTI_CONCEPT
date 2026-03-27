@@ -58,7 +58,7 @@ exports.createTransaction = async (req, res) => {
       status: "pending",
       requestedBy: req.body.requestedBy || "Customer",
       requestedAt: req.body.requestedAt || new Date(),
-      date: new Date().toLocaleString("en-GB").replace(",", ""),
+      date: new Date(),
     };
 
     const transaction = new Transaction(transactionData);
@@ -153,11 +153,6 @@ Please ensure you have sufficient balance.`;
       processedAmount: netAmount,
       processedAt: new Date(),
     };
-
-    // ADD THIS: Set date field when approving (for revenue reports)
-    if (status === "approved") {
-      updateData.date = new Date();
-    }
 
     const transaction = await Transaction.findOneAndUpdate(
       { id: req.params.id },

@@ -1531,7 +1531,7 @@ async function handleNewTransaction(e) {
     description: formData.get("description"),
     status: "pending",
     requestedBy: state.currentUser.name,
-    requestedAt: new Date().toISOString(),
+    requestedAt: new Date(),
     date: new Date(),
   };
 
@@ -1567,8 +1567,6 @@ async function processTransaction(
     const updateData = {
       status: action,
       approvedBy: state.currentUser.name,
-
-      ...(action === "approved" && { date: new Date() }),
     };
 
     await api.patch(`/transactions/${txnId}`, updateData);
