@@ -22,8 +22,11 @@ function calculateLoanDetails(
 }
 
 // Create loan/overdraft request
+// Create loan/overdraft request
 exports.createLoanRequest = async (req, res) => {
   try {
+    console.log("Received loan request body:", req.body); // Debug log
+
     const {
       customerId,
       customerName,
@@ -40,7 +43,35 @@ exports.createLoanRequest = async (req, res) => {
       requestedBy,
     } = req.body;
 
-    // Validate customer exists and has sufficient balance for overdraft
+    // ========== ADD VALIDATION ==========
+    // Validate required fields
+    if (!customerId) {
+      return res.status(400).json({ error: "Customer ID is required" });
+    }
+    if (!customerName) {
+      return res.status(400).json({ error: "Customer name is required" });
+    }
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: "Valid amount is required" });
+    }
+    if (!interestRate || interestRate < 0) {
+      return res.status(400).json({ error: "Valid interest rate is required" });
+    }
+    if (!repaymentPeriod) {
+      return res.status(400).json({ error: "Repayment period is required" });
+    }
+    if (!numberOfInstallments || numberOfInstallments <= 0) {
+      return res
+        .status(400)
+        .json({ error: "Valid number of installments is required" });
+    }
+    if (!repaymentStartDate) {
+      return res
+        .status(400)
+        .json({ error: "Repayment start date is required" });
+    }
+
+    // Validate customer exists
     const customer = await Customer.findOne({ id: customerId });
     if (!customer) {
       return res.status(404).json({ error: "Customer not found" });
@@ -87,7 +118,7 @@ exports.createLoanRequest = async (req, res) => {
 
     for (let i = 0; i < numberOfInstallments; i++) {
       repayments.push({
-        id: "REPAY" + Date.now() + i,
+        id: "REPAY" + Date.now() + i + Math.random().toString(36).substr(2, 4),
         dueDate: new Date(currentDate),
         amount: installmentAmount,
         status: "pending",
@@ -102,6 +133,13 @@ exports.createLoanRequest = async (req, res) => {
       }
     }
 
+    // ========== FIX: Handle requestedBy properly ==========
+    // Create a safe requestedBy object
+    const safeRequestedBy = {
+      staffId: requestedBy?.staffId || "system",
+      staffName: requestedBy?.staffName || "System",
+    };
+
     // Create loan object
     const loan = new Loan({
       id: generateId(),
@@ -109,36 +147,48 @@ exports.createLoanRequest = async (req, res) => {
       customerName,
       customerNumber,
       phone,
-      type,
-      amount,
-      interestRate,
+      type: type || "loan",
+      amount: Number(amount),
+      interestRate: Number(interestRate),
       totalPayable,
       repaymentPeriod,
-      numberOfInstallments,
+      numberOfInstallments: Number(numberOfInstallments),
       installmentAmount,
       repaymentStartDate: startDate,
       repaymentEndDate: endDate,
       repayments,
       status: "pending",
-      requestedBy,
+      requestedBy: safeRequestedBy,
       requestedAt: new Date(),
-      purpose,
-      notes,
+      purpose: purpose || "",
+      notes: notes || "",
       outstandingBalance: totalPayable,
+      amountDisbursed: 0,
+      amountRepaid: 0,
     });
 
     await loan.save();
+    console.log("✅ Loan saved successfully:", loan.id);
 
     res.status(201).json({
+      success: true,
       message: `${type === "loan" ? "Loan" : "Overdraft"} request submitted successfully`,
-      loan,
+      loan: {
+        id: loan.id,
+        customerName: loan.customerName,
+        amount: loan.amount,
+        status: loan.status,
+        createdAt: loan.createdAt,
+      },
     });
   } catch (error) {
     console.error("Create loan request error:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({
+      error: error.message || "Failed to create loan request",
+      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
+    });
   }
 };
-
 // Get all loan requests (admin view)
 exports.getAllLoans = async (req, res) => {
   try {

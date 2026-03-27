@@ -2206,13 +2206,16 @@ function calculateLoanDetails() {
   document.getElementById("loanSummary").classList.remove("hidden");
 }
 
+// In script.js - handleLoanRequest function
 async function handleLoanRequest(e) {
   e.preventDefault();
+
   const customerId = document.getElementById("selectedCustomerId").value;
   if (!customerId) {
     showNotification("Please select a customer", "error");
     return;
   }
+
   const type = document.querySelector('input[name="type"]:checked').value;
   const amount = parseFloat(document.getElementById("loanAmount").value);
   const interestRate = parseFloat(
@@ -2225,34 +2228,41 @@ async function handleLoanRequest(e) {
   const repaymentStartDate = document.getElementById("startDate").value;
   const purpose = document.getElementById("purpose").value;
   const notes = document.getElementById("notes").value;
+
   if (!amount || amount < 1000) {
     showNotification("Amount must be at least ₦1,000", "error");
     return;
   }
+
   if (!repaymentStartDate) {
     showNotification("Please select a start date", "error");
     return;
   }
+
+  // Make sure requestedBy has the correct structure
   const loanData = {
-    customerId,
+    customerId: customerId,
     customerName: window.selectedCustomerForLoan.name,
     customerNumber: window.selectedCustomerForLoan.customerNumber,
     phone: window.selectedCustomerForLoan.phone,
-    type,
-    amount,
-    interestRate,
-    repaymentPeriod,
-    numberOfInstallments,
-    repaymentStartDate,
-    purpose,
-    notes,
+    type: type,
+    amount: amount,
+    interestRate: interestRate,
+    repaymentPeriod: repaymentPeriod,
+    numberOfInstallments: numberOfInstallments,
+    repaymentStartDate: repaymentStartDate,
+    purpose: purpose,
+    notes: notes,
     requestedBy: {
-      staffId: state.currentUser.id,
-      staffName: state.currentUser.name,
+      staffId: state.currentUser?.id || "system", // Add fallback
+      staffName: state.currentUser?.name || "System", // Add fallback
     },
   };
+
+  console.log("Sending loan data:", loanData); // Debug log
+
   try {
-    await api.post("/loans", loanData);
+    const response = await api.post("/loans", loanData);
     showNotification(
       `${type === "loan" ? "Loan" : "Overdraft"} request submitted successfully!`,
       "success",
@@ -2260,13 +2270,13 @@ async function handleLoanRequest(e) {
     navigate("my-loans");
   } catch (error) {
     console.error("Loan request error:", error);
-    showNotification(
-      error.response?.data?.error || "Failed to submit request",
-      "error",
-    );
+    const errorMessage =
+      error.response?.data?.error ||
+      error.response?.data?.message ||
+      "Failed to submit request";
+    showNotification(errorMessage, "error");
   }
 }
-
 // ==================== ADMIN LOANS VIEW ====================
 
 function renderAdminLoans(container) {
@@ -2362,124 +2372,235 @@ function renderMyLoans(container) {
 
 async function renderRevenueReports(container) {
   try {
+    // Fetch all periods with error handling
+    const fetchReport = async (period) => {
+      try {
+        const response = await api.get(`/reports/revenue?period=${period}`);
+        return response.data;
+      } catch (error) {
+        console.error(`Failed to fetch ${period} report:`, error);
+        // Return default data structure
+        return {
+          totalRevenue: 0,
+          breakdown: {
+            interestRevenue: 0,
+            transactionCharges: 0,
+          },
+          summary: {
+            totalLoans: 0,
+            totalTransactions: 0,
+            totalDisbursed: 0,
+            totalRepaid: 0,
+          },
+        };
+      }
+    };
+
     const [daily, weekly, monthly, yearly] = await Promise.all([
-      api.get("/reports/revenue?period=daily"), // No /api prefix
-      api.get("/reports/revenue?period=weekly"),
-      api.get("/reports/revenue?period=monthly"),
-      api.get("/reports/revenue?period=yearly"),
+      fetchReport("daily"),
+      fetchReport("weekly"),
+      fetchReport("monthly"),
+      fetchReport("yearly"),
     ]);
 
-    const html = `<div class="space-y-6 animate-fade-in px-4 sm:px-0">
-      <h2 class="text-xl font-bold">Revenue Reports</h2>
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div class="glass-panel p-6 rounded-xl">
-          <div class="flex items-center justify-between mb-2">
-            <span class="text-gray-400">Today's Revenue</span>
-            <i class="fas fa-calendar-day text-blue-400"></i>
-          </div>
-          <p class="text-2xl font-bold text-green-400">₦${daily.data.totalRevenue.toLocaleString()}</p>
-          <p class="text-xs text-gray-400">Interest: ₦${daily.data.breakdown.interestRevenue.toLocaleString()} | Charges: ₦${daily.data.breakdown.transactionCharges.toLocaleString()}</p>
-        </div>
+    // Safe number formatter
+    const formatNumber = (num) => {
+      if (num === undefined || num === null) return "0";
+      return num.toLocaleString();
+    };
+
+    const calculatePercentage = (value, total) => {
+      if (!total || total === 0) return 0;
+      return (((value || 0) / total) * 100).toFixed(1);
+    };
+
+    const html = `
+      <div class="space-y-6 animate-fade-in px-4 sm:px-0">
+        <h2 class="text-xl font-bold">Revenue Reports</h2>
         
-        <div class="glass-panel p-6 rounded-xl">
-          <div class="flex items-center justify-between mb-2">
-            <span class="text-gray-400">This Week's Revenue</span>
-            <i class="fas fa-calendar-week text-green-400"></i>
-          </div>
-          <p class="text-2xl font-bold text-green-400">₦${weekly.data.totalRevenue.toLocaleString()}</p>
-          <p class="text-xs text-gray-400">Interest: ₦${weekly.data.breakdown.interestRevenue.toLocaleString()} | Charges: ₦${weekly.data.breakdown.transactionCharges.toLocaleString()}</p>
-        </div>
-        
-        <div class="glass-panel p-6 rounded-xl">
-          <div class="flex items-center justify-between mb-2">
-            <span class="text-gray-400">This Month's Revenue</span>
-            <i class="fas fa-calendar-alt text-yellow-400"></i>
-          </div>
-          <p class="text-2xl font-bold text-green-400">₦${monthly.data.totalRevenue.toLocaleString()}</p>
-          <p class="text-xs text-gray-400">Interest: ₦${monthly.data.breakdown.interestRevenue.toLocaleString()} | Charges: ₦${monthly.data.breakdown.transactionCharges.toLocaleString()}</p>
-        </div>
-        
-        <div class="glass-panel p-6 rounded-xl">
-          <div class="flex items-center justify-between mb-2">
-            <span class="text-gray-400">This Year's Revenue</span>
-            <i class="fas fa-calendar-year text-purple-400"></i>
-          </div>
-          <p class="text-2xl font-bold text-green-400">₦${yearly.data.totalRevenue.toLocaleString()}</p>
-          <p class="text-xs text-gray-400">Interest: ₦${yearly.data.breakdown.interestRevenue.toLocaleString()} | Charges: ₦${yearly.data.breakdown.transactionCharges.toLocaleString()}</p>
-        </div>
-      </div>
-      
-      <div class="glass-panel rounded-2xl p-6">
-        <h3 class="text-lg font-semibold mb-4">Revenue Breakdown</h3>
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div>
-            <h4 class="text-sm font-medium text-gray-400 mb-3">Interest Revenue</h4>
-            <div class="space-y-3">
-              <div>
-                <div class="flex justify-between text-sm mb-1">
-                  <span>Daily</span>
-                  <span>₦${daily.data.breakdown.interestRevenue.toLocaleString()}</span>
-                </div>
-                <div class="w-full bg-gray-700 rounded-full h-2">
-                  <div class="bg-blue-500 h-2 rounded-full" style="width: ${(daily.data.breakdown.interestRevenue / daily.data.totalRevenue) * 100 || 0}%"></div>
-                </div>
-              </div>
-              <div>
-                <div class="flex justify-between text-sm mb-1">
-                  <span>Weekly</span>
-                  <span>₦${weekly.data.breakdown.interestRevenue.toLocaleString()}</span>
-                </div>
-                <div class="w-full bg-gray-700 rounded-full h-2">
-                  <div class="bg-blue-500 h-2 rounded-full" style="width: ${(weekly.data.breakdown.interestRevenue / weekly.data.totalRevenue) * 100 || 0}%"></div>
-                </div>
-              </div>
-              <div>
-                <div class="flex justify-between text-sm mb-1">
-                  <span>Monthly</span>
-                  <span>₦${monthly.data.breakdown.interestRevenue.toLocaleString()}</span>
-                </div>
-                <div class="w-full bg-gray-700 rounded-full h-2">
-                  <div class="bg-blue-500 h-2 rounded-full" style="width: ${(monthly.data.breakdown.interestRevenue / monthly.data.totalRevenue) * 100 || 0}%"></div>
-                </div>
-              </div>
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="glass-panel p-6 rounded-xl">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-gray-400">Today's Revenue</span>
+              <i class="fas fa-calendar-day text-blue-400 text-xl"></i>
             </div>
+            <p class="text-2xl font-bold text-green-400">₦${formatNumber(daily.totalRevenue)}</p>
+            <p class="text-xs text-gray-400 mt-1">Interest: ₦${formatNumber(daily.breakdown?.interestRevenue)} | Charges: ₦${formatNumber(daily.breakdown?.transactionCharges)}</p>
           </div>
           
-          <div>
-            <h4 class="text-sm font-medium text-gray-400 mb-3">Transaction Charges</h4>
-            <div class="space-y-3">
-              <div>
-                <div class="flex justify-between text-sm mb-1">
-                  <span>Daily</span>
-                  <span>₦${daily.data.breakdown.transactionCharges.toLocaleString()}</span>
+          <div class="glass-panel p-6 rounded-xl">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-gray-400">This Week's Revenue</span>
+              <i class="fas fa-calendar-week text-green-400 text-xl"></i>
+            </div>
+            <p class="text-2xl font-bold text-green-400">₦${formatNumber(weekly.totalRevenue)}</p>
+            <p class="text-xs text-gray-400 mt-1">Interest: ₦${formatNumber(weekly.breakdown?.interestRevenue)} | Charges: ₦${formatNumber(weekly.breakdown?.transactionCharges)}</p>
+          </div>
+          
+          <div class="glass-panel p-6 rounded-xl">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-gray-400">This Month's Revenue</span>
+              <i class="fas fa-calendar-alt text-yellow-400 text-xl"></i>
+            </div>
+            <p class="text-2xl font-bold text-green-400">₦${formatNumber(monthly.totalRevenue)}</p>
+            <p class="text-xs text-gray-400 mt-1">Interest: ₦${formatNumber(monthly.breakdown?.interestRevenue)} | Charges: ₦${formatNumber(monthly.breakdown?.transactionCharges)}</p>
+          </div>
+          
+          <div class="glass-panel p-6 rounded-xl">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-gray-400">This Year's Revenue</span>
+              <i class="fas fa-calendar-year text-purple-400 text-xl"></i>
+            </div>
+            <p class="text-2xl font-bold text-green-400">₦${formatNumber(yearly.totalRevenue)}</p>
+            <p class="text-xs text-gray-400 mt-1">Interest: ₦${formatNumber(yearly.breakdown?.interestRevenue)} | Charges: ₦${formatNumber(yearly.breakdown?.transactionCharges)}</p>
+          </div>
+        </div>
+        
+        <!-- Revenue Breakdown Chart -->
+        <div class="glass-panel rounded-2xl p-6">
+          <h3 class="text-lg font-semibold mb-4">Revenue Breakdown</h3>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div>
+              <h4 class="text-sm font-medium text-gray-400 mb-3">Interest Revenue</h4>
+              <div class="space-y-4">
+                <div>
+                  <div class="flex justify-between text-sm mb-1">
+                    <span>Daily</span>
+                    <span>₦${formatNumber(daily.breakdown?.interestRevenue)}</span>
+                  </div>
+                  <div class="w-full bg-gray-700 rounded-full h-2">
+                    <div class="bg-blue-500 h-2 rounded-full" style="width: ${calculatePercentage(daily.breakdown?.interestRevenue, daily.totalRevenue)}%"></div>
+                  </div>
                 </div>
-                <div class="w-full bg-gray-700 rounded-full h-2">
-                  <div class="bg-green-500 h-2 rounded-full" style="width: ${(daily.data.breakdown.transactionCharges / daily.data.totalRevenue) * 100 || 0}%"></div>
+                <div>
+                  <div class="flex justify-between text-sm mb-1">
+                    <span>Weekly</span>
+                    <span>₦${formatNumber(weekly.breakdown?.interestRevenue)}</span>
+                  </div>
+                  <div class="w-full bg-gray-700 rounded-full h-2">
+                    <div class="bg-blue-500 h-2 rounded-full" style="width: ${calculatePercentage(weekly.breakdown?.interestRevenue, weekly.totalRevenue)}%"></div>
+                  </div>
+                </div>
+                <div>
+                  <div class="flex justify-between text-sm mb-1">
+                    <span>Monthly</span>
+                    <span>₦${formatNumber(monthly.breakdown?.interestRevenue)}</span>
+                  </div>
+                  <div class="w-full bg-gray-700 rounded-full h-2">
+                    <div class="bg-blue-500 h-2 rounded-full" style="width: ${calculatePercentage(monthly.breakdown?.interestRevenue, monthly.totalRevenue)}%"></div>
+                  </div>
                 </div>
               </div>
-              <div>
-                <div class="flex justify-between text-sm mb-1">
-                  <span>Weekly</span>
-                  <span>₦${weekly.data.breakdown.transactionCharges.toLocaleString()}</span>
+            </div>
+            
+            <div>
+              <h4 class="text-sm font-medium text-gray-400 mb-3">Transaction Charges</h4>
+              <div class="space-y-4">
+                <div>
+                  <div class="flex justify-between text-sm mb-1">
+                    <span>Daily</span>
+                    <span>₦${formatNumber(daily.breakdown?.transactionCharges)}</span>
+                  </div>
+                  <div class="w-full bg-gray-700 rounded-full h-2">
+                    <div class="bg-green-500 h-2 rounded-full" style="width: ${calculatePercentage(daily.breakdown?.transactionCharges, daily.totalRevenue)}%"></div>
+                  </div>
                 </div>
-                <div class="w-full bg-gray-700 rounded-full h-2">
-                  <div class="bg-green-500 h-2 rounded-full" style="width: ${(weekly.data.breakdown.transactionCharges / weekly.data.totalRevenue) * 100 || 0}%"></div>
+                <div>
+                  <div class="flex justify-between text-sm mb-1">
+                    <span>Weekly</span>
+                    <span>₦${formatNumber(weekly.breakdown?.transactionCharges)}</span>
+                  </div>
+                  <div class="w-full bg-gray-700 rounded-full h-2">
+                    <div class="bg-green-500 h-2 rounded-full" style="width: ${calculatePercentage(weekly.breakdown?.transactionCharges, weekly.totalRevenue)}%"></div>
+                  </div>
                 </div>
-              </div>
-              <div>
-                <div class="flex justify-between text-sm mb-1">
-                  <span>Monthly</span>
-                  <span>₦${monthly.data.breakdown.transactionCharges.toLocaleString()}</span>
-                </div>
-                <div class="w-full bg-gray-700 rounded-full h-2">
-                  <div class="bg-green-500 h-2 rounded-full" style="width: ${(monthly.data.breakdown.transactionCharges / monthly.data.totalRevenue) * 100 || 0}%"></div>
+                <div>
+                  <div class="flex justify-between text-sm mb-1">
+                    <span>Monthly</span>
+                    <span>₦${formatNumber(monthly.breakdown?.transactionCharges)}</span>
+                  </div>
+                  <div class="w-full bg-gray-700 rounded-full h-2">
+                    <div class="bg-green-500 h-2 rounded-full" style="width: ${calculatePercentage(monthly.breakdown?.transactionCharges, monthly.totalRevenue)}%"></div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
+        
+        <!-- Summary Cards -->
+        <div class="glass-panel rounded-2xl p-6">
+          <h3 class="text-lg font-semibold mb-4">Activity Summary (Year to Date)</h3>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div class="bg-gray-800/50 p-4 rounded-xl text-center">
+              <p class="text-xs text-gray-400 mb-1">Total Loans</p>
+              <p class="text-xl font-bold text-blue-400">${formatNumber(yearly.summary?.totalLoans)}</p>
+            </div>
+            <div class="bg-gray-800/50 p-4 rounded-xl text-center">
+              <p class="text-xs text-gray-400 mb-1">Total Transactions</p>
+              <p class="text-xl font-bold text-green-400">${formatNumber(yearly.summary?.totalTransactions)}</p>
+            </div>
+            <div class="bg-gray-800/50 p-4 rounded-xl text-center">
+              <p class="text-xs text-gray-400 mb-1">Total Disbursed</p>
+              <p class="text-xl font-bold text-purple-400">₦${formatNumber(yearly.summary?.totalDisbursed)}</p>
+            </div>
+            <div class="bg-gray-800/50 p-4 rounded-xl text-center">
+              <p class="text-xs text-gray-400 mb-1">Total Repaid</p>
+              <p class="text-xl font-bold text-orange-400">₦${formatNumber(yearly.summary?.totalRepaid)}</p>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Recent Transactions Table -->
+        <div class="glass-panel rounded-2xl p-6">
+          <h3 class="text-lg font-semibold mb-4">Recent Approved Transactions</h3>
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-700">
+              <thead>
+                <tr class="text-left text-gray-400 text-sm">
+                  <th class="pb-3">Date</th>
+                  <th class="pb-3">Customer</th>
+                  <th class="pb-3">Type</th>
+                  <th class="pb-3">Amount</th>
+                  <th class="pb-3">Charges</th>
+                  <th class="pb-3">Net</th>
+                 </thead>
+              <tbody class="divide-y divide-gray-800">
+                ${state.transactions
+                  ?.filter((t) => t.status === "approved")
+                  .slice(0, 5)
+                  .map(
+                    (txn) => `
+                  <tr class="hover:bg-gray-800/30">
+                    <td class="py-3 text-sm">${formatDate(txn.date)}</td>
+                    <td class="py-3">${txn.customerName}</td>
+                    <td class="py-3 capitalize ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">${txn.type}</td>
+                    <td class="py-3 font-mono">₦${formatNumber(txn.amount)}</td>
+                    <td class="py-3 font-mono text-red-400">₦${formatNumber(txn.charges)}</td>
+                    <td class="py-3 font-mono text-blue-400">₦${formatNumber(txn.netAmount)}</td>
+                  </tr>
+                `,
+                  )
+                  .join("")}
+                ${
+                  !state.transactions?.filter((t) => t.status === "approved")
+                    .length
+                    ? `
+                  <tr>
+                    <td colspan="6" class="py-8 text-center text-gray-400">
+                      No approved transactions found
+                    </td>
+                  </tr>
+                `
+                    : ""
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
-    </div>`;
+    `;
 
     container.innerHTML = html;
   } catch (error) {
@@ -2489,14 +2610,13 @@ async function renderRevenueReports(container) {
         <i class="fas fa-exclamation-circle text-4xl mb-3"></i>
         <p>Failed to load revenue reports</p>
         <p class="text-xs text-gray-500 mt-2">${error.message}</p>
-        <button onclick="renderRevenueReports(document.getElementById('contentArea'))" class="mt-4 px-4 py-2 bg-blue-600 rounded-lg text-sm">
-          Retry
+        <button onclick="renderRevenueReports(document.getElementById('contentArea'))" class="mt-4 px-4 py-2 bg-blue-600 rounded-lg text-sm hover:bg-blue-500 transition-colors">
+          <i class="fas fa-sync-alt mr-2"></i>Retry
         </button>
       </div>
     `;
   }
 }
-
 // ==================== DORMANT CUSTOMERS SECTION ====================
 
 function renderDormantCustomers(container) {

@@ -43,7 +43,14 @@ const loanSchema = new mongoose.Schema({
   // Status tracking
   status: {
     type: String,
-    enum: ["pending", "approved", "active", "completed", "defaulted"],
+    enum: [
+      "pending",
+      "approved",
+      "active",
+      "completed",
+      "defaulted",
+      "rejected",
+    ],
     default: "pending",
   },
 
@@ -74,9 +81,17 @@ const loanSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now },
 });
 
-// Update timestamps
+// ========== FIX: Proper pre-save middleware ==========
 loanSchema.pre("save", function (next) {
+  // Update the updatedAt field
   this.updatedAt = new Date();
+  // IMPORTANT: Call next() to continue the save operation
+  next();
+});
+
+// Optional: Add pre-update middleware
+loanSchema.pre("findOneAndUpdate", function (next) {
+  this.set({ updatedAt: new Date() });
   next();
 });
 
