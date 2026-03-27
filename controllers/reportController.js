@@ -1,7 +1,7 @@
 const Loan = require("../models/loan");
 const Transaction = require("../models/transaction");
 
-// Get revenue reports with filtering
+// Get revenue reports - NO AGGREGATION, just simple find()
 exports.getRevenueReports = async (req, res) => {
   try {
     const { period } = req.query;
@@ -29,12 +29,14 @@ exports.getRevenueReports = async (req, res) => {
         startDate.setHours(0, 0, 0, 0);
         break;
       default:
-        startDate = new Date(0); // all time
+        startDate = new Date(0);
         endDate = new Date();
     }
 
-    // Get transaction charges - use createdAt field
-    const transactionQuery = {
+    console.log(`Date range: ${startDate} to ${endDate}`);
+
+    // Build query for transactions - use createdAt field
+    let transactionQuery = {
       status: "approved",
       charges: { $gt: 0 },
     };
@@ -46,14 +48,20 @@ exports.getRevenueReports = async (req, res) => {
       }
     }
 
+    // SIMPLE FIND - NO AGGREGATION
     const transactions = await Transaction.find(transactionQuery);
     const totalCharges = transactions.reduce(
       (sum, t) => sum + (t.charges || 0),
       0,
     );
 
-    // Get loan interest revenue - use createdAt field
-    const loanQuery = { status: "completed" };
+    console.log(
+      `Found ${transactions.length} transactions with charges: ₦${totalCharges}`,
+    );
+
+    // Build query for loans - use createdAt field
+    let loanQuery = { status: "completed" };
+
     if (period && period !== "all") {
       loanQuery.createdAt = { $gte: startDate };
       if (period === "daily") {
@@ -61,17 +69,14 @@ exports.getRevenueReports = async (req, res) => {
       }
     }
 
+    // SIMPLE FIND - NO AGGREGATION
     const loans = await Loan.find(loanQuery);
     const totalInterest = loans.reduce((sum, l) => {
-      return sum + ((l.totalPayable || l.amount) - (l.amount || 0));
+      const interest = (l.totalPayable || l.amount) - (l.amount || 0);
+      return sum + (interest > 0 ? interest : 0);
     }, 0);
 
-    console.log(
-      `Found ${transactions.length} transactions with charges: ₦${totalCharges}`,
-    );
-    console.log(
-      `Found ${loans.length} completed loans with interest: ₦${totalInterest}`,
-    );
+    console.log(`Found ${loans.length} completed loans: ₦${totalInterest}`);
 
     res.json({
       success: true,
@@ -90,13 +95,11 @@ exports.getRevenueReports = async (req, res) => {
     });
   } catch (error) {
     console.error("Get revenue reports error:", error);
-    res.status(500).json({
-      error: error.message,
-    });
+    res.status(500).json({ error: error.message });
   }
 };
 
-// Get detailed revenue by date range - FIXED (no aggregation on date string)
+// Get revenue by date range - NO AGGREGATION
 exports.getRevenueByDateRange = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
@@ -111,27 +114,30 @@ exports.getRevenueByDateRange = async (req, res) => {
     const end = new Date(endDate);
     end.setHours(23, 59, 59, 999);
 
-    // Get transactions within date range - use createdAt field
+    // Get transactions - simple find
     const transactions = await Transaction.find({
       status: "approved",
       charges: { $gt: 0 },
       createdAt: { $gte: start, $lte: end },
-    }).sort({ createdAt: 1 });
-
-    // Group by day manually
-    const dailyMap = new Map();
-
-    transactions.forEach((t) => {
-      const dateKey = t.createdAt.toISOString().split("T")[0];
-      if (!dailyMap.has(dateKey)) {
-        dailyMap.set(dateKey, { totalCharges: 0, totalTransactions: 0 });
-      }
-      const dayData = dailyMap.get(dateKey);
-      dayData.totalCharges += t.charges || 0;
-      dayData.totalTransactions += 1;
     });
 
-    const dailyBreakdown = Array.from(dailyMap.entries())
+    const totalCharges = transactions.reduce(
+      (sum, t) => sum + (t.charges || 0),
+      0,
+    );
+
+    // Group by day manually (in JavaScript, not MongoDB)
+    const dailyMap = {};
+    transactions.forEach((t) => {
+      const dateKey = t.createdAt.toISOString().split("T")[0];
+      if (!dailyMap[dateKey]) {
+        dailyMap[dateKey] = { totalCharges: 0, totalTransactions: 0 };
+      }
+      dailyMap[dateKey].totalCharges += t.charges || 0;
+      dailyMap[dateKey].totalTransactions += 1;
+    });
+
+    const dailyBreakdown = Object.entries(dailyMap)
       .map(([date, data]) => ({
         _id: { date },
         totalCharges: data.totalCharges,
@@ -139,14 +145,15 @@ exports.getRevenueByDateRange = async (req, res) => {
       }))
       .sort((a, b) => a._id.date.localeCompare(b._id.date));
 
-    // Get loan revenue by date range
+    // Get loans
     const loans = await Loan.find({
       status: "completed",
       createdAt: { $gte: start, $lte: end },
     });
 
     const totalInterest = loans.reduce((sum, l) => {
-      return sum + ((l.totalPayable || l.amount) - (l.amount || 0));
+      const interest = (l.totalPayable || l.amount) - (l.amount || 0);
+      return sum + (interest > 0 ? interest : 0);
     }, 0);
 
     res.json({
@@ -155,9 +162,7 @@ exports.getRevenueByDateRange = async (req, res) => {
       endDate,
       dailyBreakdown,
       loanRevenue: { totalInterest, totalLoans: loans.length },
-      totalRevenue:
-        totalInterest +
-        dailyBreakdown.reduce((sum, d) => sum + d.totalCharges, 0),
+      totalRevenue: totalInterest + totalCharges,
     });
   } catch (error) {
     console.error("Get revenue by date range error:", error);
@@ -165,21 +170,36 @@ exports.getRevenueByDateRange = async (req, res) => {
   }
 };
 
-// Get loan summary report - FIXED (no aggregation on date string)
+// Get loan summary report - NO AGGREGATION on date fields
 exports.getLoanSummary = async (req, res) => {
   try {
-    const summary = await Loan.aggregate([
-      {
-        $group: {
-          _id: "$status",
-          count: { $sum: 1 },
-          totalAmount: { $sum: "$amount" },
-          totalPayable: { $sum: "$totalPayable" },
-          totalRepaid: { $sum: "$amountRepaid" },
-          totalOutstanding: { $sum: "$outstandingBalance" },
-        },
-      },
-    ]);
+    // Get all loans and group by status manually
+    const allLoans = await Loan.find({});
+
+    // Group by status
+    const summaryMap = {};
+    allLoans.forEach((loan) => {
+      const status = loan.status;
+      if (!summaryMap[status]) {
+        summaryMap[status] = {
+          count: 0,
+          totalAmount: 0,
+          totalPayable: 0,
+          totalRepaid: 0,
+          totalOutstanding: 0,
+        };
+      }
+      summaryMap[status].count++;
+      summaryMap[status].totalAmount += loan.amount || 0;
+      summaryMap[status].totalPayable += loan.totalPayable || 0;
+      summaryMap[status].totalRepaid += loan.amountRepaid || 0;
+      summaryMap[status].totalOutstanding += loan.outstandingBalance || 0;
+    });
+
+    const summary = Object.entries(summaryMap).map(([_id, data]) => ({
+      _id,
+      ...data,
+    }));
 
     const activeLoans = await Loan.find({ status: "active" }).sort({
       createdAt: -1,
@@ -209,16 +229,18 @@ exports.getLoanSummary = async (req, res) => {
       (a, b) => new Date(a.dueDate) - new Date(b.dueDate),
     );
 
+    const totalOutstanding = summary.reduce(
+      (sum, s) => sum + (s.totalOutstanding || 0),
+      0,
+    );
+
     res.json({
       success: true,
       summary,
       activeLoansCount: activeLoans.length,
       activeLoans: activeLoans.slice(0, 10),
       upcomingRepayments: upcomingRepayments.slice(0, 10),
-      totalOutstanding: summary.reduce(
-        (sum, s) => sum + (s.totalOutstanding || 0),
-        0,
-      ),
+      totalOutstanding,
     });
   } catch (error) {
     console.error("Get loan summary error:", error);
@@ -226,54 +248,61 @@ exports.getLoanSummary = async (req, res) => {
   }
 };
 
-// Get transaction summary - FIXED (use createdAt field)
+// Get transaction summary - NO AGGREGATION on date fields
 exports.getTransactionSummary = async (req, res) => {
   try {
     const { startDate, endDate } = req.query;
 
-    const matchQuery = { status: "approved" };
+    let query = { status: "approved" };
 
     if (startDate && endDate) {
-      matchQuery.createdAt = {
+      query.createdAt = {
         $gte: new Date(startDate),
         $lte: new Date(endDate),
       };
     }
 
-    const summary = await Transaction.aggregate([
-      { $match: matchQuery },
-      {
-        $group: {
-          _id: "$type",
-          totalAmount: { $sum: "$amount" },
-          totalCharges: { $sum: "$charges" },
-          totalNet: { $sum: "$netAmount" },
-          count: { $sum: 1 },
-        },
-      },
-    ]);
+    const transactions = await Transaction.find(query);
 
-    const total = await Transaction.aggregate([
-      { $match: matchQuery },
-      {
-        $group: {
-          _id: null,
-          totalAmount: { $sum: "$amount" },
-          totalCharges: { $sum: "$charges" },
-          totalNet: { $sum: "$netAmount" },
-          count: { $sum: 1 },
-        },
-      },
-    ]);
+    // Group by type manually
+    const byTypeMap = {};
+    let totalAmount = 0;
+    let totalCharges = 0;
+    let totalNet = 0;
+
+    transactions.forEach((t) => {
+      const type = t.type;
+      if (!byTypeMap[type]) {
+        byTypeMap[type] = {
+          totalAmount: 0,
+          totalCharges: 0,
+          totalNet: 0,
+          count: 0,
+        };
+      }
+      byTypeMap[type].totalAmount += t.amount || 0;
+      byTypeMap[type].totalCharges += t.charges || 0;
+      byTypeMap[type].totalNet += t.netAmount || 0;
+      byTypeMap[type].count++;
+
+      totalAmount += t.amount || 0;
+      totalCharges += t.charges || 0;
+      totalNet += t.netAmount || 0;
+    });
+
+    const summary = Object.entries(byTypeMap).map(([_id, data]) => ({
+      _id,
+      ...data,
+    }));
 
     res.json({
       success: true,
       byType: summary,
-      total: total[0] || {
-        totalAmount: 0,
-        totalCharges: 0,
-        totalNet: 0,
-        count: 0,
+      total: {
+        totalAmount,
+        totalCharges,
+        totalNet,
+        count: transactions.length,
       },
     });
   } catch (error) {
