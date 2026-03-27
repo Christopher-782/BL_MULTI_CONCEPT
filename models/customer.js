@@ -3,6 +3,17 @@ const mongoose = require("mongoose");
 const customerSchema = new mongoose.Schema({
   id: { type: String, unique: true },
   customerId: { type: String, unique: true, sparse: true },
+  customerNumber: {
+    type: String,
+    unique: true,
+    sparse: true,
+    validate: {
+      validator: function (v) {
+        return !v || /^\d{3}$/.test(v);
+      },
+      message: "Customer number must be a 3-digit number (001-999)",
+    },
+  },
   name: String,
   email: String,
   phone: { type: String, required: true },

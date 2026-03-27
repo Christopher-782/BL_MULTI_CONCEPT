@@ -6,6 +6,8 @@ const mongoose = require("mongoose");
 const customerRouter = require("./routes/customerRoutes");
 const staffRouter = require("./routes/staffRoutes");
 const transactionRouter = require("./routes/transactionRoutes");
+const loanRoutes = require("./routes/loanRoutes");
+const reportRoutes = require("./routes/reportRoutes");
 const app = express();
 mongoose
   .connect(process.env.MONGO)
@@ -23,6 +25,8 @@ app.get("/", (req, res) => {
 app.use("/", staffRouter);
 app.use("/", customerRouter);
 app.use("/", transactionRouter);
+app.use("/", loanRoutes);
+app.use("/", reportRoutes);
 
 const Staff = require("./models/staff");
 

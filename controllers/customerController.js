@@ -1,7 +1,39 @@
 const Customer = require("../models/customer");
 
-// Create customer with staff tracking
-// Create customer with staff tracking
+// Generate next available customer number
+async function generateNextCustomerNumber() {
+  try {
+    // Get all existing customer numbers
+    const customers = await Customer.find({
+      customerNumber: { $exists: true, $ne: null },
+    });
+    const usedNumbers = customers
+      .map((c) => parseInt(c.customerNumber))
+      .filter((n) => !isNaN(n))
+      .sort((a, b) => a - b);
+
+    // Find next available number
+    let nextNum = 1;
+    for (let num of usedNumbers) {
+      if (num === nextNum) {
+        nextNum++;
+      } else if (num > nextNum) {
+        break;
+      }
+    }
+
+    if (nextNum > 999) {
+      return null; // No available numbers
+    }
+
+    return nextNum.toString().padStart(3, "0");
+  } catch (error) {
+    console.error("Error generating customer number:", error);
+    return null;
+  }
+}
+
+// Create customer with staff tracking and auto-generated customer number
 exports.createCustomer = async (req, res) => {
   try {
     const {
@@ -13,6 +45,7 @@ exports.createCustomer = async (req, res) => {
       staffId,
       staffName,
       staffEmail,
+      customerNumber, // Optional - can be provided or auto-generated
     } = req.body;
 
     console.log("Creating customer with data:", {
@@ -24,29 +57,58 @@ exports.createCustomer = async (req, res) => {
       staffId,
       staffName,
       staffEmail,
+      customerNumber,
     });
 
     // Validate required fields
-    if (!name || !email) {
-      return res.status(400).json({ error: "Name and email are required" });
+    if (!name || !email || !phone) {
+      return res
+        .status(400)
+        .json({ error: "Name, email, and phone are required" });
     }
 
     // Generate a customer ID
     const customerId = "CUST" + Date.now();
 
-    // Check if customer already exists
+    // Check if customer already exists by email
     const existingCustomer = await Customer.findOne({ email });
     if (existingCustomer) {
       return res.status(400).json({ error: "Customer already exists" });
+    }
+
+    // Handle customer number
+    let finalCustomerNumber = customerNumber;
+
+    if (finalCustomerNumber) {
+      // Check if provided number is available
+      const numberExists = await Customer.findOne({
+        customerNumber: finalCustomerNumber,
+      });
+      if (numberExists) {
+        return res
+          .status(400)
+          .json({
+            error: `Customer number ${finalCustomerNumber} is already taken`,
+          });
+      }
+    } else {
+      // Auto-generate a number
+      finalCustomerNumber = await generateNextCustomerNumber();
+      if (!finalCustomerNumber) {
+        return res
+          .status(400)
+          .json({ error: "No available customer numbers (001-999)" });
+      }
     }
 
     // Create customer object
     const customerData = {
       id: customerId,
       customerId: customerId,
+      customerNumber: finalCustomerNumber,
       name,
       email,
-      phone: phone || "",
+      phone,
       address: address || "",
       balance: balance || 0,
       status: "active",
@@ -65,12 +127,18 @@ exports.createCustomer = async (req, res) => {
     const customer = new Customer(customerData);
     await customer.save();
 
-    console.log("Customer saved successfully:", customer.id);
+    console.log(
+      "Customer saved successfully:",
+      customer.id,
+      "Number:",
+      customer.customerNumber,
+    );
 
     res.status(201).json({
       message: "Customer created successfully",
       customer: {
         id: customer.id,
+        customerNumber: customer.customerNumber,
         name: customer.name,
         email: customer.email,
         phone: customer.phone,
@@ -83,6 +151,27 @@ exports.createCustomer = async (req, res) => {
     });
   } catch (error) {
     console.error("Create customer error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Get customer by customer number
+exports.getCustomerByNumber = async (req, res) => {
+  try {
+    const { number } = req.params;
+    const paddedNumber = number.padStart(3, "0");
+
+    const customer = await Customer.findOne({ customerNumber: paddedNumber });
+
+    if (!customer) {
+      return res
+        .status(404)
+        .json({ error: `Customer number ${paddedNumber} not found` });
+    }
+
+    res.json(customer);
+  } catch (error) {
+    console.error("Get customer by number error:", error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -121,6 +210,7 @@ exports.updateCustomer = async (req, res) => {
     // Remove fields that shouldn't be updated directly
     delete updates._id;
     delete updates.id;
+    delete updates.customerNumber; // Prevent customer number updates
     delete updates.addedBy;
     delete updates.createdAt;
 
