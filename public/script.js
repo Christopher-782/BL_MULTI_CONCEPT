@@ -570,6 +570,8 @@ function navigate(view) {
 
 // ==================== DASHBOARD VIEW ====================
 
+// ==================== DASHBOARD VIEW ====================
+
 function renderDashboard(container) {
   // Calculate statistics with separate balances
   const totalCashBalance = state.customers.reduce(
@@ -769,11 +771,24 @@ function renderDashboard(container) {
             .map((txn, idx) => {
               const charges = txn.charges || 0;
               const netAmount = txn.amount - charges;
+              const loanDeduction = txn.loanDeduction || 0;
+              const availableToCustomer = netAmount - loanDeduction;
+
               const isLoanRelated =
                 txn.type === "loan_disbursement" ||
                 txn.type === "loan_repayment";
+
+              // Determine badge color for loan deduction
+              const loanBadge =
+                loanDeduction > 0
+                  ? `<span class="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full text-xs ml-2 flex items-center gap-1">
+                     <i class="fas fa-hand-holding-usd text-xs"></i>
+                     Loan: ₦${loanDeduction.toLocaleString()}
+                   </span>`
+                  : "";
+
               return `
-              <div class="transaction-card flex flex-col sm:flex-row sm:items-center justify-between p-3 sm:p-4 bg-gray-800/50 rounded-xl border border-gray-700/50" style="animation-delay: ${idx * 0.1}s">
+              <div class="transaction-card flex flex-col sm:flex-row sm:items-center justify-between p-3 sm:p-4 bg-gray-800/50 rounded-xl border border-gray-700/50 hover:border-blue-500/30 transition-all" style="animation-delay: ${idx * 0.1}s">
                 <div class="flex items-center gap-3 sm:gap-4 mb-2 sm:mb-0">
                   <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-full ${
                     txn.type === "deposit"
@@ -786,16 +801,20 @@ function renderDashboard(container) {
                   } flex items-center justify-center flex-shrink-0">
                     <i class="fas fa-arrow-${txn.type === "deposit" ? "down" : txn.type === "withdrawal" ? "up" : "exchange-alt"} text-sm sm:text-base"></i>
                   </div>
-                  <div>
-                    <p class="font-medium text-sm sm:text-base">${txn.customerName}</p>
+                  <div class="flex-1 min-w-0">
+                    <p class="font-medium text-sm sm:text-base flex items-center flex-wrap gap-1">
+                      ${txn.customerName}
+                      ${loanBadge}
+                    </p>
                     <div class="flex items-center gap-1 text-xs text-gray-400">
                       <i class="fas fa-calendar-alt"></i>
                       <span>${formatDate(txn.date)}</span>
                     </div>
                     ${isLoanRelated ? `<p class="text-xs text-blue-400 mt-1">${txn.type === "loan_disbursement" ? "Loan Disbursement" : "Loan Repayment"}</p>` : ""}
+                    ${txn.loanDeduction > 0 ? `<p class="text-xs text-purple-400 mt-1"><i class="fas fa-info-circle mr-1"></i>Auto-deducted for loan repayment</p>` : ""}
                   </div>
                 </div>
-                <div class="text-left sm:text-right pl-11 sm:pl-0">
+                <div class="text-left sm:text-right pl-11 sm:pl-0 mt-2 sm:mt-0">
                   <p class="font-bold text-sm sm:text-base ${
                     txn.type === "deposit" || txn.type === "loan_disbursement"
                       ? "text-green-400"
@@ -807,7 +826,10 @@ function renderDashboard(container) {
                     ${txn.type === "deposit" || txn.type === "loan_disbursement" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()}
                   </p>
                   ${charges > 0 ? `<p class="text-xs text-red-400">Charge: -₦${charges.toLocaleString()}</p>` : ""}
-                  <p class="text-xs text-blue-400">Net: ₦${netAmount.toLocaleString()}</p>
+                  ${loanDeduction > 0 ? `<p class="text-xs text-purple-400">Loan Deduction: -₦${loanDeduction.toLocaleString()}</p>` : ""}
+                  <p class="text-xs ${loanDeduction > 0 ? "text-green-400 font-semibold" : "text-blue-400"}">
+                    ${loanDeduction > 0 ? "Available" : "Net"}: ₦${availableToCustomer.toLocaleString()}
+                  </p>
                   <span class="text-xs px-2 py-1 rounded-full ${getStatusStyle(txn.status)} inline-block mt-1">
                     ${txn.status}
                   </span>
@@ -919,7 +941,6 @@ function renderDashboard(container) {
   `;
   container.innerHTML = html;
 }
-
 // ==================== CUSTOMERS VIEW ====================
 
 function renderCustomers(container) {
@@ -1802,6 +1823,8 @@ function initTransactionSearch(customersData) {
 
 // ==================== TRANSACTION HANDLER ====================
 
+// ==================== ENHANCED TRANSACTION HANDLER WITH AUTO-LOAN REPAYMENT ====================
+
 async function handleNewTransaction(e) {
   e.preventDefault();
   const formData = new FormData(e.target);
@@ -1815,12 +1838,14 @@ async function handleNewTransaction(e) {
     showNotification("Please select a customer", "error");
     return;
   }
+
   const netAmount = amount - charges;
   if (netAmount < 0) {
     showNotification("Charges cannot be greater than the amount!", "error");
     return;
   }
 
+  // Check for withdrawal validity
   const availableBalance = customer.cashBalance || customer.balance || 0;
   if (type === "withdrawal" && netAmount > availableBalance) {
     showNotification(
@@ -1830,14 +1855,47 @@ async function handleNewTransaction(e) {
     return;
   }
 
+  // Check if customer has active loan for auto-repayment
+  const activeLoan = state.loans?.find(
+    (l) => l.customerId === customerId && l.status === "active",
+  );
+
+  let loanDeduction = 0;
+  let loanRepaymentInfo = null;
+
+  // If it's a deposit and customer has active loan, calculate auto-repayment
+  if (type === "deposit" && activeLoan) {
+    const outstandingBalance = activeLoan.outstandingBalance || 0;
+
+    if (outstandingBalance > 0) {
+      // Calculate how much to deduct (up to the net deposit amount or outstanding balance)
+      loanDeduction = Math.min(netAmount, outstandingBalance);
+
+      loanRepaymentInfo = {
+        loanId: activeLoan.id,
+        amount: loanDeduction,
+        outstandingBefore: outstandingBalance,
+        outstandingAfter: outstandingBalance - loanDeduction,
+        fullyPaid: outstandingBalance - loanDeduction <= 0,
+      };
+    }
+  }
+
   const txnData = {
     customerId,
     customerName: customer.name,
+    customerPhone: customer.phone, // Include phone for SMS
     type,
     amount,
     charges,
     netAmount,
-    description: formData.get("description"),
+    loanDeduction: loanDeduction > 0 ? loanDeduction : undefined,
+    loanRepaymentInfo: loanRepaymentInfo,
+    description:
+      formData.get("description") ||
+      (loanDeduction > 0
+        ? `Deposit with auto loan repayment of ₦${loanDeduction.toLocaleString()}`
+        : ""),
     status: "pending",
     requestedBy: state.currentUser.name,
     requestedAt: new Date(),
@@ -1847,10 +1905,13 @@ async function handleNewTransaction(e) {
   try {
     await api.post("/transactions", txnData);
     await loadAllData();
-    showNotification(
-      `✅ Transaction request submitted! ${type === "deposit" ? "Deposit" : "Withdrawal"} of ₦${amount.toLocaleString()} with ₦${charges.toLocaleString()} charges.`,
-      "success",
-    );
+
+    let successMessage = `✅ Transaction request submitted! ${type === "deposit" ? "Deposit" : "Withdrawal"} of ₦${amount.toLocaleString()}`;
+    if (loanDeduction > 0) {
+      successMessage += ` with ₦${loanDeduction.toLocaleString()} auto-deducted for loan repayment`;
+    }
+
+    showNotification(successMessage, "success");
     navigate("history");
   } catch (error) {
     console.error("Transaction submission error:", error);
@@ -1860,7 +1921,6 @@ async function handleNewTransaction(e) {
     );
   }
 }
-
 async function processTransaction(
   txnId,
   action,
@@ -1874,20 +1934,57 @@ async function processTransaction(
       return;
     }
 
+    // Prepare update data
     const updateData = {
       status: action,
       approvedBy: state.currentUser.name,
+      approvedAt: new Date(),
     };
+
+    // If approving a deposit with loan repayment, handle the loan deduction
+    if (
+      action === "approved" &&
+      transaction.type === "deposit" &&
+      transaction.loanDeduction > 0 &&
+      transaction.loanRepaymentInfo
+    ) {
+      const { loanId, amount, fullyPaid } = transaction.loanRepaymentInfo;
+
+      // Add loan repayment details to update
+      updateData.loanRepayment = {
+        loanId: loanId,
+        amount: amount,
+        recordedAt: new Date(),
+        fullyPaid: fullyPaid,
+      };
+
+      // Update the transaction description to include loan info
+      updateData.finalDescription = `Deposit: ₦${transaction.amount.toLocaleString()} | Charges: ₦${(transaction.charges || 0).toLocaleString()} | Loan Repayment: ₦${amount.toLocaleString()} | Available to Customer: ₦${(transaction.netAmount - amount).toLocaleString()}`;
+    }
 
     await api.patch(`/transactions/${txnId}`, updateData);
 
-    await loadAllData();
-    showNotification(
-      `✅ Transaction ${action}!`,
-      action === "approved" ? "success" : "error",
-    );
+    // If loan repayment was processed, show detailed notification
+    if (action === "approved" && transaction.loanDeduction > 0) {
+      const remaining = transaction.loanRepaymentInfo.outstandingAfter;
+      const customer = state.customers.find(
+        (c) => c.id === transaction.customerId,
+      );
+
+      showNotification(
+        `✅ Approved! ₦${transaction.loanDeduction.toLocaleString()} deducted for loan repayment. ${remaining > 0 ? `₦${remaining.toLocaleString()} remaining.` : "Loan FULLY PAID!"} SMS sent to ${customer?.phone || "customer"}`,
+        "success",
+      );
+    } else {
+      showNotification(
+        `✅ Transaction ${action}!`,
+        action === "approved" ? "success" : "error",
+      );
+    }
+
     closeStaffPendingModal();
     closeTransactionModal();
+    await loadAllData();
     if (refreshView) navigate(staffId ? "staff" : "transactions");
   } catch (error) {
     console.error("Transaction processing error:", error);
@@ -1897,7 +1994,6 @@ async function processTransaction(
     );
   }
 }
-
 // ==================== LOGOUT FUNCTION ====================
 
 function logout() {
@@ -1977,6 +2073,8 @@ function startClock() {
 
 // ==================== CUSTOMER TRANSACTION HISTORY FUNCTIONS ====================
 
+// ==================== CUSTOMER TRANSACTION HISTORY FUNCTIONS ====================
+
 function viewCustomer(id) {
   const customer = state.customers.find((c) => c.id === id);
   if (!customer) {
@@ -1990,6 +2088,11 @@ function viewCustomer(id) {
   const transactions = stats?.transactions || [];
   const sortedTransactions = [...transactions].sort(
     (a, b) => new Date(b.date) - new Date(a.date),
+  );
+
+  // Check if customer has active loan
+  const activeLoan = state.loans?.find(
+    (l) => l.customerId === id && l.status === "active",
   );
 
   const html = `
@@ -2030,6 +2133,44 @@ function viewCustomer(id) {
             ${customer.loanBalance > 0 ? `<p class="text-xs text-orange-400">Loan: ₦${customer.loanBalance.toLocaleString()}</p>` : ""}
           </div>
         </div>
+        
+        ${
+          activeLoan
+            ? `
+        <div class="mt-4 p-3 sm:p-4 bg-purple-500/10 border border-purple-500/30 rounded-xl">
+          <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <div>
+              <h4 class="text-sm font-semibold text-purple-400 flex items-center gap-2">
+                <i class="fas fa-hand-holding-usd"></i>
+                Active Loan - Auto Repayment Enabled
+              </h4>
+              <p class="text-xs text-gray-300 mt-1">
+                Outstanding: <span class="font-bold text-orange-400">₦${activeLoan.outstandingBalance?.toLocaleString() || 0}</span> 
+                of <span class="text-gray-400">₦${activeLoan.totalPayable?.toLocaleString() || 0}</span>
+                (Principal: ₦${activeLoan.amount?.toLocaleString() || 0} + Interest: ₦${((activeLoan.totalPayable || 0) - (activeLoan.amount || 0)).toLocaleString()})
+              </p>
+            </div>
+            <div class="w-full sm:w-auto">
+              <div class="flex justify-between text-xs mb-1">
+                <span>Repayment Progress</span>
+                <span>${(((activeLoan.amountRepaid || 0) / (activeLoan.totalPayable || 1)) * 100).toFixed(1)}%</span>
+              </div>
+              <div class="w-full sm:w-48 bg-gray-700 rounded-full h-2">
+                <div class="bg-purple-500 h-2 rounded-full" style="width: ${((activeLoan.amountRepaid || 0) / (activeLoan.totalPayable || 1)) * 100}%"></div>
+              </div>
+              <p class="text-xs text-gray-400 mt-1">₦${activeLoan.amountRepaid?.toLocaleString() || 0} repaid</p>
+            </div>
+          </div>
+          <div class="mt-2 p-2 bg-gray-900/50 rounded-lg">
+            <p class="text-xs text-purple-300">
+              <i class="fas fa-info-circle mr-1"></i>
+              All deposits will be auto-deducted to pay this loan until fully repaid. Customer will receive SMS alerts for each deduction.
+            </p>
+          </div>
+        </div>
+        `
+            : ""
+        }
       </div>
 
       <div class="glass-panel rounded-2xl p-4 sm:p-6">
@@ -2046,25 +2187,87 @@ function viewCustomer(id) {
         <div class="overflow-x-auto -mx-4 sm:mx-0">
           <div class="inline-block min-w-full align-middle">
             <table class="min-w-full divide-y divide-gray-700">
-              <thead><tr class="text-left text-gray-400 text-xs sm:text-sm"><th class="pb-3 px-4 sm:px-0">Date</th><th class="pb-3 px-4 sm:px-0">Type</th><th class="pb-3 px-4 sm:px-0">Gross</th><th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Charges</th><th class="pb-3 px-4 sm:px-0">Net</th><th class="pb-3 px-4 sm:px-0">Status</th><th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Description</th><th class="pb-3 px-4 sm:px-0 hidden lg:table-cell">Processed By</th> </thead>
+              <thead>
+                <tr class="text-left text-gray-400 text-xs sm:text-sm">
+                  <th class="pb-3 px-4 sm:px-0">Date</th>
+                  <th class="pb-3 px-4 sm:px-0">Type</th>
+                  <th class="pb-3 px-4 sm:px-0">Gross</th>
+                  <th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Charges</th>
+                  <th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Loan Deduction</th>
+                  <th class="pb-3 px-4 sm:px-0">Net/Available</th>
+                  <th class="pb-3 px-4 sm:px-0">Status</th>
+                  <th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Description</th>
+                  <th class="pb-3 px-4 sm:px-0 hidden lg:table-cell">Processed By</th>
+                </tr>
+              </thead>
               <tbody class="divide-y divide-gray-800">
                 ${sortedTransactions
                   .slice(0, 50)
                   .map((txn) => {
                     const charges = txn.charges || 0;
                     const netAmount = txn.amount - charges;
-                    return `<tr class="hover:bg-gray-800/30 transition-colors"><td class="py-3 px-4 sm:px-0"><div class="flex items-center gap-1 text-xs sm:text-sm"><i class="fas fa-calendar-alt text-gray-500 text-xs"></i>${formatDate(txn.date)}</div>  </div>
-                  <td class="py-3 px-4 sm:px-0"><span class="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm"><i class="fas fa-arrow-${txn.type === "deposit" ? "down text-green-400" : "up text-orange-400"}"></i>${txn.type}</span>  </div>
-                  <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">${txn.type === "deposit" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()}  </div>
-                  <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-red-400 hidden sm:table-cell">-₦${charges.toLocaleString()}  </div>
-                  <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-blue-400">₦${netAmount.toLocaleString()}  </div>
-                  <td class="py-3 px-4 sm:px-0"><span class="px-2 py-1 rounded text-xs ${getStatusStyle(txn.status)}">${txn.status}</span>  </div>
-                  <td class="py-3 px-4 sm:px-0 hidden md:table-cell"><p class="text-xs sm:text-sm text-gray-300 truncate max-w-[150px]" title="${txn.description || ""}">${txn.description || "-"}</p>  </div>
-                  <td class="py-3 px-4 sm:px-0 hidden lg:table-cell text-xs sm:text-sm text-gray-400">${txn.approvedBy || "-"}  </div>  </tr>`;
+                    const loanDeduction = txn.loanDeduction || 0;
+                    const finalAvailable = netAmount - loanDeduction;
+
+                    // Determine loan badge
+                    const loanIndicator =
+                      loanDeduction > 0
+                        ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs ml-1" title="Auto loan repayment">
+                           <i class="fas fa-hand-holding-usd text-xs"></i>
+                           ₦${loanDeduction.toLocaleString()}
+                         </span>`
+                        : "";
+
+                    return `
+                      <tr class="hover:bg-gray-800/30 transition-colors ${loanDeduction > 0 ? "bg-purple-500/5" : ""}">
+                        <td class="py-3 px-4 sm:px-0">
+                          <div class="flex items-center gap-1 text-xs sm:text-sm">
+                            <i class="fas fa-calendar-alt text-gray-500 text-xs"></i>
+                            ${formatDate(txn.date)}
+                          </div>
+                        </td>
+                        <td class="py-3 px-4 sm:px-0">
+                          <span class="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm flex-wrap">
+                            <i class="fas fa-arrow-${txn.type === "deposit" ? "down text-green-400" : "up text-orange-400"}"></i>
+                            ${txn.type}
+                            ${loanIndicator}
+                          </span>
+                        </td>
+                        <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">
+                          ${txn.type === "deposit" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()}
+                        </td>
+                        <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-red-400 hidden sm:table-cell">
+                          ${charges > 0 ? `-₦${charges.toLocaleString()}` : "-"}
+                        </td>
+                        <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-purple-400 hidden sm:table-cell">
+                          ${loanDeduction > 0 ? `-₦${loanDeduction.toLocaleString()}` : "-"}
+                        </td>
+                        <td class="py-3 px-4 sm:px-0">
+                          <div class="font-mono text-xs sm:text-sm ${loanDeduction > 0 ? "text-green-400 font-semibold" : "text-blue-400"}">
+                            ₦${finalAvailable.toLocaleString()}
+                          </div>
+                          ${loanDeduction > 0 ? `<div class="text-xs text-gray-400">Gross: ₦${netAmount.toLocaleString()}</div>` : ""}
+                        </td>
+                        <td class="py-3 px-4 sm:px-0">
+                          <span class="px-2 py-1 rounded text-xs ${getStatusStyle(txn.status)}">
+                            ${txn.status}
+                          </span>
+                        </td>
+                        <td class="py-3 px-4 sm:px-0 hidden md:table-cell">
+                          <p class="text-xs sm:text-sm text-gray-300 truncate max-w-[150px]" title="${txn.description || ""}">
+                            ${txn.description || "-"}
+                          </p>
+                          ${txn.loanRepaymentInfo?.fullyPaid ? '<p class="text-xs text-green-400 mt-1"><i class="fas fa-check-circle mr-1"></i>Loan fully paid!</p>' : ""}
+                        </td>
+                        <td class="py-3 px-4 sm:px-0 hidden lg:table-cell text-xs sm:text-sm text-gray-400">
+                          ${txn.approvedBy || "-"}
+                        </td>
+                      </tr>
+                    `;
                   })
                   .join("")}
-                ${sortedTransactions.length === 0 ? '  <tr><td colspan="8" class="py-8 text-center text-gray-400">No transactions found for this customer</td></tr>' : ""}
-                ${sortedTransactions.length > 50 ? '  <tr><td colspan="8" class="py-4 text-center text-gray-500 text-xs sm:text-sm">Showing first 50 transactions. Use period filters to see more.</td></tr>' : ""}
+                ${sortedTransactions.length === 0 ? '<tr><td colspan="9" class="py-8 text-center text-gray-400">No transactions found for this customer</td></tr>' : ""}
+                ${sortedTransactions.length > 50 ? '<tr><td colspan="9" class="py-4 text-center text-gray-500 text-xs sm:text-sm">Showing first 50 transactions. Use period filters to see more.</td></tr>' : ""}
               </tbody>
             </table>
           </div>
@@ -2077,7 +2280,6 @@ function viewCustomer(id) {
   document.getElementById("pageTitle").textContent =
     `${customer.name} - Transactions`;
 }
-
 function getCustomerStats(customerId, period = "all") {
   const customer = state.customers.find((c) => c.id === customerId);
   if (!customer) return null;
@@ -3769,6 +3971,94 @@ function renderAdminTransactions(container) {
 
 // ==================== HELPER FUNCTIONS ====================
 
+function formatLoanRepaymentSMS(
+  customerName,
+  depositAmount,
+  loanDeduction,
+  remainingBalance,
+  outstandingLoan,
+  isFullyPaid,
+) {
+  let message = `VaultFlow Alert: Dear ${customerName}, your deposit of ₦${depositAmount.toLocaleString()} has been received. `;
+
+  if (loanDeduction > 0) {
+    message += `₦${loanDeduction.toLocaleString()} deducted for loan repayment. `;
+  }
+
+  message += `Available balance: ₦${remainingBalance.toLocaleString()}. `;
+
+  if (isFullyPaid) {
+    message += `Congratulations! Your loan is now FULLY PAID.`;
+  } else if (outstandingLoan > 0) {
+    message += `Outstanding loan: ₦${outstandingLoan.toLocaleString()}.`;
+  }
+
+  return message;
+}
+// Add this helper function to format transaction display with loan info
+function getTransactionDisplayHTML(txn, idx = 0) {
+  const charges = txn.charges || 0;
+  const netAmount = txn.amount - charges;
+  const loanDeduction = txn.loanDeduction || 0;
+  const availableToCustomer = netAmount - loanDeduction;
+
+  const isLoanRelated =
+    txn.type === "loan_disbursement" || txn.type === "loan_repayment";
+
+  let loanBadge = "";
+  if (loanDeduction > 0) {
+    loanBadge = `<span class="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full text-xs ml-2">Loan Payment: ₦${loanDeduction.toLocaleString()}</span>`;
+  }
+
+  return `
+    <div class="transaction-card flex flex-col sm:flex-row sm:items-center justify-between p-3 sm:p-4 bg-gray-800/50 rounded-xl border border-gray-700/50" style="animation-delay: ${idx * 0.1}s">
+      <div class="flex items-center gap-3 sm:gap-4 mb-2 sm:mb-0">
+        <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-full ${
+          txn.type === "deposit"
+            ? "bg-green-500/20 text-green-400"
+            : txn.type === "withdrawal"
+              ? "bg-orange-500/20 text-orange-400"
+              : txn.type === "loan_disbursement"
+                ? "bg-blue-500/20 text-blue-400"
+                : "bg-purple-500/20 text-purple-400"
+        } flex items-center justify-center flex-shrink-0">
+          <i class="fas fa-arrow-${txn.type === "deposit" ? "down" : txn.type === "withdrawal" ? "up" : "exchange-alt"} text-sm sm:text-base"></i>
+        </div>
+        <div>
+          <p class="font-medium text-sm sm:text-base flex items-center flex-wrap gap-2">
+            ${txn.customerName}
+            ${loanBadge}
+          </p>
+          <div class="flex items-center gap-1 text-xs text-gray-400">
+            <i class="fas fa-calendar-alt"></i>
+            <span>${formatDate(txn.date)}</span>
+          </div>
+          ${isLoanRelated ? `<p class="text-xs text-blue-400 mt-1">${txn.type === "loan_disbursement" ? "Loan Disbursement" : "Loan Repayment"}</p>` : ""}
+          ${txn.loanDeduction > 0 ? `<p class="text-xs text-purple-400 mt-1"><i class="fas fa-info-circle mr-1"></i>Auto-deducted for loan</p>` : ""}
+        </div>
+      </div>
+      <div class="text-left sm:text-right pl-11 sm:pl-0">
+        <p class="font-bold text-sm sm:text-base ${
+          txn.type === "deposit" || txn.type === "loan_disbursement"
+            ? "text-green-400"
+            : txn.type === "withdrawal" || txn.type === "loan_repayment"
+              ? "text-orange-400"
+              : "text-blue-400"
+        }">
+          ${txn.type === "deposit" || txn.type === "loan_disbursement" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()}
+        </p>
+        ${charges > 0 ? `<p class="text-xs text-red-400">Charge: -₦${charges.toLocaleString()}</p>` : ""}
+        ${loanDeduction > 0 ? `<p class="text-xs text-purple-400">Loan Deduction: -₦${loanDeduction.toLocaleString()}</p>` : ""}
+        <p class="text-xs ${loanDeduction > 0 ? "text-green-400 font-semibold" : "text-blue-400"}">
+          ${loanDeduction > 0 ? "Available to Customer" : "Net"}: ₦${availableToCustomer.toLocaleString()}
+        </p>
+        <span class="text-xs px-2 py-1 rounded-full ${getStatusStyle(txn.status)} inline-block mt-1">
+          ${txn.status}
+        </span>
+      </div>
+    </div>
+  `;
+}
 function formatTransactionDate(dateValue) {
   if (!dateValue) return "N/A";
   try {
