@@ -1,13 +1,22 @@
-// transactionController.js - Fixed Version
+// transactionController.js - Fixed Version with Loan Support
 const Transaction = require("../models/transaction");
 const Customer = require("../models/customer");
+const Loan = require("../models/loan"); // Add Loan model import
 
 // ✅ IMPORT SMS SERVICE
 const {
   sendCreditAlert,
   sendDebitAlert,
   sendSMS,
+  sendLoanDisbursementAlert,
+  sendLoanRepaymentCreditAlert,
+  sendLoanRepaymentDebitAlert,
+  sendAutoDebitSummary,
+  sendLoanCompletedAlert,
 } = require("../services/smsService");
+
+// Import auto-debit function
+const { processAutoDebitForLoan } = require("./loanController");
 
 exports.getAllTransactions = async (req, res) => {
   try {
@@ -33,27 +42,46 @@ exports.createTransaction = async (req, res) => {
   try {
     console.log("Creating transaction with data:", req.body);
 
-    // Get customer to retrieve phone number
     const customer = await Customer.findOne({ id: req.body.customerId });
+    if (!customer) {
+      return res.status(404).json({ error: "Customer not found" });
+    }
 
     const txnId = "TXN" + Date.now();
     const charges = req.body.charges || 0;
 
-    const netAmount =
-      req.body.type === "deposit"
-        ? req.body.amount - charges
-        : req.body.amount + charges;
+    // Handle different transaction types
+    let netAmount;
+    switch (req.body.type) {
+      case "deposit":
+        netAmount = req.body.amount - charges;
+        break;
+      case "withdrawal":
+        netAmount = req.body.amount + charges;
+        break;
+      case "loan_disbursement":
+        netAmount = req.body.amount; // Positive - customer receives money
+        break;
+      case "loan_repayment":
+      case "loan_repayment_auto":
+        netAmount = req.body.amount; // Positive amount, but will be deducted
+        break;
+      default:
+        netAmount = req.body.amount;
+    }
 
     const transactionData = {
       id: txnId,
       transactionId: txnId,
       customerId: req.body.customerId,
       customerName: req.body.customerName,
-      customerPhone: customer?.phone || null,
+      customerPhone: customer.phone || null,
       type: req.body.type,
       amount: req.body.amount,
       charges: charges,
       netAmount: netAmount,
+      principalPortion: req.body.principalPortion || 0,
+      interestPortion: req.body.interestPortion || 0,
       description: req.body.description || "",
       status: "pending",
       requestedBy: req.body.requestedBy || "Customer",
@@ -64,7 +92,7 @@ exports.createTransaction = async (req, res) => {
     const transaction = new Transaction(transactionData);
     await transaction.save();
 
-    console.log(`✅ Transaction created: ${txnId} for ${customer?.name}`);
+    console.log(`✅ Transaction created: ${txnId} for ${customer.name}`);
 
     res.status(201).json(transaction);
   } catch (error) {
@@ -81,19 +109,13 @@ exports.updateTransactionStatus = async (req, res) => {
       `🔄 Updating transaction ${req.params.id} to status: ${status}`,
     );
 
-    // Get current transaction
     const currentTransaction = await Transaction.findOne({ id: req.params.id });
-
     if (!currentTransaction) {
       return res.status(404).json({ error: "Transaction not found" });
     }
 
     const charges = currentTransaction.charges || 0;
-
-    const netAmount =
-      currentTransaction.type === "deposit"
-        ? currentTransaction.amount - charges
-        : currentTransaction.amount + charges;
+    const netAmount = currentTransaction.netAmount || currentTransaction.amount;
 
     // 🔒 Check withdrawal balance BEFORE approval
     if (status === "approved" && currentTransaction.type === "withdrawal") {
@@ -105,7 +127,6 @@ exports.updateTransactionStatus = async (req, res) => {
         return res.status(404).json({ error: "Customer not found" });
       }
 
-      // FIX: Use cashBalance instead of balance (based on your customer model)
       const availableBalance =
         customer.cashBalance !== undefined
           ? customer.cashBalance
@@ -124,10 +145,9 @@ exports.updateTransactionStatus = async (req, res) => {
 
         console.log(`❌ Transaction rejected: Insufficient funds`);
 
-        // Send rejection SMS
         if (customer.phone) {
           try {
-            const rejectionMessage = `VAULTFLOW BANKING
+            const rejectionMessage = `BL MULTI CONCEPT
 
 ❌ TRANSACTION REJECTED
 Type: ${currentTransaction.type.toUpperCase()}
@@ -169,63 +189,218 @@ Please ensure you have sufficient balance.`;
     // 🚀 HANDLE APPROVAL
     if (status === "approved") {
       const customer = await Customer.findOne({ id: transaction.customerId });
-
       if (!customer) {
         return res.status(404).json({ error: "Customer not found" });
       }
 
-      // FIX: Use cashBalance consistently (based on your customer model)
       const oldBalance =
         customer.cashBalance !== undefined
           ? customer.cashBalance
           : customer.balance || 0;
 
-      // 💰 UPDATE BALANCE
-      if (transaction.type === "deposit") {
-        customer.cashBalance = (customer.cashBalance || 0) + netAmount;
-        customer.balance = customer.cashBalance; // Keep legacy field in sync
-        console.log(`💰 Deposit: Added ₦${netAmount} to ${customer.name}`);
-      } else if (transaction.type === "withdrawal") {
-        customer.cashBalance = (customer.cashBalance || 0) - netAmount;
-        customer.balance = customer.cashBalance; // Keep legacy field in sync
-        console.log(
-          `💰 Withdrawal: Deducted ₦${netAmount} from ${customer.name}`,
-        );
+      let newBalance = oldBalance;
+      let autoDebitResult = null;
+
+      // 💰 UPDATE BALANCE BASED ON TRANSACTION TYPE
+      switch (transaction.type) {
+        case "deposit":
+          newBalance = oldBalance + netAmount;
+          await Customer.findOneAndUpdate(
+            { id: transaction.customerId },
+            {
+              $set: {
+                cashBalance: newBalance,
+                balance: newBalance,
+                lastActive: new Date(),
+              },
+            },
+          );
+          console.log(`💰 Deposit: Added ₦${netAmount} to ${customer.name}`);
+
+          // Process auto-debit for loan repayments
+          autoDebitResult = await processAutoDebitForLoan(
+            transaction.customerId,
+            netAmount,
+            transaction.id,
+          );
+
+          if (autoDebitResult && autoDebitResult.debited) {
+            const updatedCustomer = await Customer.findOne({
+              id: transaction.customerId,
+            });
+            newBalance = updatedCustomer.cashBalance;
+            console.log(
+              `💰 Auto-Debit: Deducted ₦${autoDebitResult.totalDebited.toLocaleString()} for loan repayment`,
+            );
+          }
+          break;
+
+        case "withdrawal":
+          newBalance = oldBalance - netAmount;
+          await Customer.findOneAndUpdate(
+            { id: transaction.customerId },
+            {
+              $set: {
+                cashBalance: newBalance,
+                balance: newBalance,
+                lastActive: new Date(),
+              },
+            },
+          );
+          console.log(
+            `💰 Withdrawal: Deducted ₦${netAmount} from ${customer.name}`,
+          );
+          break;
+
+        case "loan_disbursement":
+          // LOAN DISBURSEMENT - ADD MONEY TO CUSTOMER
+          newBalance = oldBalance + netAmount;
+          await Customer.findOneAndUpdate(
+            { id: transaction.customerId },
+            {
+              $set: {
+                cashBalance: newBalance,
+                balance: newBalance,
+                lastActive: new Date(),
+              },
+              $inc: {
+                loanBalance: netAmount,
+                totalLoanAmount: netAmount,
+              },
+            },
+          );
+          console.log(
+            `💰 Loan Disbursement: Added ₦${netAmount} to ${customer.name}`,
+          );
+          break;
+
+        case "loan_repayment":
+        case "loan_repayment_auto":
+          // LOAN REPAYMENT - DEDUCT MONEY FROM CUSTOMER
+          if (oldBalance < netAmount) {
+            return res.status(400).json({
+              error: "Insufficient funds for loan repayment",
+              balance: oldBalance,
+              required: netAmount,
+            });
+          }
+          newBalance = oldBalance - netAmount;
+          await Customer.findOneAndUpdate(
+            { id: transaction.customerId },
+            {
+              $set: {
+                cashBalance: newBalance,
+                balance: newBalance,
+                lastActive: new Date(),
+              },
+              $inc: {
+                loanBalance: -(transaction.principalPortion || netAmount),
+              },
+            },
+          );
+          console.log(
+            `💰 Loan Repayment: Deducted ₦${netAmount} from ${customer.name}`,
+          );
+          break;
+
+        default:
+          console.log(`⚠️ Unknown transaction type: ${transaction.type}`);
       }
 
-      await customer.save();
-
       console.log(
-        `✅ Customer ${customer.name} balance updated: ₦${oldBalance.toLocaleString()} → ₦${customer.cashBalance.toLocaleString()}`,
+        `✅ Customer ${customer.name} balance updated: ₦${oldBalance.toLocaleString()} → ₦${newBalance.toLocaleString()}`,
       );
 
       // 📱 SEND SMS (NON-BLOCKING)
       if (customer.phone) {
         try {
-          if (transaction.type === "deposit") {
-            const result = await sendCreditAlert(
-              customer.phone,
-              netAmount,
-              customer.cashBalance,
-              transaction.id,
-            );
-            if (result.success) {
-              console.log(`📱 Credit SMS sent to ${customer.phone}`);
-            } else {
-              console.log(`⚠️ Credit SMS failed: ${result.error}`);
-            }
-          } else if (transaction.type === "withdrawal") {
-            const result = await sendDebitAlert(
-              customer.phone,
-              netAmount,
-              customer.cashBalance,
-              transaction.id,
-            );
-            if (result.success) {
-              console.log(`📱 Debit SMS sent to ${customer.phone}`);
-            } else {
-              console.log(`⚠️ Debit SMS failed: ${result.error}`);
-            }
+          switch (transaction.type) {
+            case "deposit":
+              if (autoDebitResult && autoDebitResult.debited) {
+                await sendAutoDebitSummary(
+                  customer.phone,
+                  customer.name,
+                  netAmount,
+                  autoDebitResult.totalDebited,
+                  newBalance,
+                  autoDebitResult.details,
+                );
+              } else {
+                await sendCreditAlert(
+                  customer.phone,
+                  netAmount,
+                  newBalance,
+                  transaction.id,
+                  charges,
+                );
+              }
+              break;
+
+            case "withdrawal":
+              await sendDebitAlert(
+                customer.phone,
+                netAmount,
+                newBalance,
+                transaction.id,
+                charges,
+              );
+              break;
+
+            case "loan_disbursement":
+              // Get loan details for SMS
+              const loan =
+                (await Loan.findOne({ id: transaction.relatedLoanId })) ||
+                (await Loan.findOne({
+                  id: transaction.description?.match(/LOAN\d+/)?.[0],
+                }));
+              if (loan) {
+                await sendLoanDisbursementAlert(
+                  customer.phone,
+                  loan.amount,
+                  newBalance,
+                  loan.id,
+                  loan.interestRate,
+                  loan.totalPayable,
+                  loan.numberOfInstallments,
+                  loan.repaymentPeriod,
+                  loan.installmentAmount,
+                );
+              } else {
+                await sendCreditAlert(
+                  customer.phone,
+                  netAmount,
+                  newBalance,
+                  transaction.id,
+                  charges,
+                );
+              }
+              break;
+
+            case "loan_repayment":
+              await sendLoanRepaymentCreditAlert(
+                customer.phone,
+                netAmount,
+                transaction.principalPortion || netAmount,
+                transaction.interestPortion || 0,
+                newBalance,
+                transaction.relatedLoanId || "N/A",
+                transaction.installmentNumber || 1,
+                transaction.totalInstallments || 1,
+              );
+              break;
+
+            case "loan_repayment_auto":
+              await sendLoanRepaymentDebitAlert(
+                customer.phone,
+                netAmount,
+                transaction.principalPortion || netAmount,
+                transaction.interestPortion || 0,
+                newBalance,
+                transaction.relatedLoanId || "N/A",
+                transaction.installmentNumber || 1,
+                transaction.totalInstallments || 1,
+              );
+              break;
           }
         } catch (smsError) {
           console.error(
@@ -239,24 +414,24 @@ Please ensure you have sufficient balance.`;
 
       return res.json({
         ...transaction.toObject(),
-        updatedCustomerBalance: customer.cashBalance,
+        updatedCustomerBalance: newBalance,
         netAmount: netAmount,
         charges: charges,
+        autoDebit: autoDebitResult,
         smsSent: customer.phone ? true : false,
       });
     }
 
-    // Handle rejection (manual rejection by staff)
+    // Handle rejection
     if (status === "rejected") {
       const customer = await Customer.findOne({ id: transaction.customerId });
       if (customer && customer.phone) {
         try {
-          // FIX: Use currentTransaction or check if transaction has amount
           const amount = transaction.amount || currentTransaction.amount || 0;
           const txnCharges =
             transaction.charges || currentTransaction.charges || 0;
 
-          const rejectionMessage = `VAULTFLOW BANKING
+          const rejectionMessage = `BL MULTI CONCEPT
 
 ❌ TRANSACTION REJECTED
 Type: ${(transaction.type || currentTransaction.type).toUpperCase()}
@@ -283,7 +458,87 @@ Contact support for more information.`;
   }
 };
 
-// Optional: Add a test SMS endpoint
+// Get transactions by customer
+exports.getTransactionsByCustomer = async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const transactions = await Transaction.find({ customerId }).sort({
+      createdAt: -1,
+    });
+    res.json(transactions);
+  } catch (error) {
+    console.error("Get transactions by customer error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Get transaction by ID
+exports.getTransactionById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const transaction = await Transaction.findOne({ id: id });
+
+    if (!transaction) {
+      return res.status(404).json({ error: "Transaction not found" });
+    }
+
+    res.json(transaction);
+  } catch (error) {
+    console.error("Get transaction by ID error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Get transaction statistics
+exports.getTransactionStatistics = async (req, res) => {
+  try {
+    const stats = await Transaction.aggregate([
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 },
+          totalAmount: { $sum: "$amount" },
+          totalCharges: { $sum: "$charges" },
+        },
+      },
+    ]);
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const dailyTotal = await Transaction.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: today },
+          status: "approved",
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$netAmount" },
+          totalCharges: { $sum: "$charges" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    res.json({
+      success: true,
+      statusBreakdown: stats,
+      today: {
+        total: dailyTotal[0]?.total || 0,
+        charges: dailyTotal[0]?.totalCharges || 0,
+        count: dailyTotal[0]?.count || 0,
+      },
+    });
+  } catch (error) {
+    console.error("Get transaction statistics error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Test SMS endpoint
 exports.testSMS = async (req, res) => {
   try {
     const { phone, type = "credit" } = req.body;
@@ -304,7 +559,7 @@ exports.testSMS = async (req, res) => {
         testRef,
       );
       res.json({ message: "Test credit alert sent", result });
-    } else {
+    } else if (type === "debit") {
       const result = await sendDebitAlert(
         phone,
         testAmount,
@@ -312,6 +567,21 @@ exports.testSMS = async (req, res) => {
         testRef,
       );
       res.json({ message: "Test debit alert sent", result });
+    } else if (type === "loan_disbursement") {
+      const result = await sendLoanDisbursementAlert(
+        phone,
+        50000,
+        90000,
+        "LOAN001",
+        10,
+        55000,
+        4,
+        "weekly",
+        13750,
+      );
+      res.json({ message: "Test loan disbursement alert sent", result });
+    } else {
+      res.status(400).json({ error: "Invalid test type" });
     }
   } catch (error) {
     console.error("Test SMS error:", error);

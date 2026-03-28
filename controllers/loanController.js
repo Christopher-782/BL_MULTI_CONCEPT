@@ -1,6 +1,7 @@
 const Loan = require("../models/loan");
 const Customer = require("../models/customer");
 const Transaction = require("../models/transaction");
+const smsService = require("../services/smsService"); // ADDED: Import SMS service
 
 // Generate unique ID
 function generateId() {
@@ -24,7 +25,7 @@ function calculateLoanDetails(
 // Create loan/overdraft request
 exports.createLoanRequest = async (req, res) => {
   try {
-    console.log("Received loan request body:", req.body); // Debug log
+    console.log("Received loan request body:", req.body);
 
     const {
       customerId,
@@ -42,7 +43,6 @@ exports.createLoanRequest = async (req, res) => {
       requestedBy,
     } = req.body;
 
-    // ========== ADD VALIDATION ==========
     // Validate required fields
     if (!customerId) {
       return res.status(400).json({ error: "Customer ID is required" });
@@ -132,8 +132,7 @@ exports.createLoanRequest = async (req, res) => {
       }
     }
 
-    // ========== FIX: Handle requestedBy properly ==========
-    // Create a safe requestedBy object
+    // Create safe requestedBy object
     const safeRequestedBy = {
       staffId: requestedBy?.staffId || "system",
       staffName: requestedBy?.staffName || "System",
@@ -188,6 +187,7 @@ exports.createLoanRequest = async (req, res) => {
     });
   }
 };
+
 // Get all loan requests (admin view)
 exports.getAllLoans = async (req, res) => {
   try {
@@ -225,14 +225,7 @@ exports.getLoansByCustomer = async (req, res) => {
   }
 };
 
-// Approve loan request
-// controllers/loanController.js - Update approveLoan function
-// Approve loan request - FIXED VERSION
-// Approve loan - SIMPLIFIED VERSION
-// Customer is DEBITED immediately (loan + interest), pays back later
-// controllers/loanController.js
-
-// Approve loan - CORRECTED VERSION
+// Approve loan - CORRECTED VERSION WITH SMS
 exports.approveLoan = async (req, res) => {
   try {
     const { loanId } = req.params;
@@ -247,19 +240,14 @@ exports.approveLoan = async (req, res) => {
       return res.status(400).json({ error: "Loan already processed" });
     }
 
-    // Find customer
     const customer = await Customer.findOne({ id: loan.customerId });
     if (!customer) {
       return res.status(404).json({ error: "Customer not found" });
     }
 
-    // ========== CORRECT LOAN APPROVAL LOGIC ==========
-    // DO NOT deduct anything from cash balance!
-    // Instead, ADD the principal to cash balance (disbursement)
-
     const interest = loan.totalPayable - loan.amount;
 
-    // Update loan status to ACTIVE
+    // Update loan status
     loan.status = "active";
     loan.approvedBy = {
       adminId: approvedBy.id,
@@ -270,12 +258,11 @@ exports.approveLoan = async (req, res) => {
     loan.outstandingBalance = loan.totalPayable;
     loan.outstandingPrincipal = loan.amount;
     loan.outstandingInterest = interest;
-    loan.autoDebitEnabled = true; // Enable auto-debit for repayments
+    loan.autoDebitEnabled = true;
 
     await loan.save();
 
-    // CREATE TRANSACTION: DISBURSE LOAN PRINCIPAL
-    // This ADDS money to customer's cash balance
+    // Create disbursement transaction
     const disbursementTransaction = new Transaction({
       id: "TXN" + Date.now() + Math.random(),
       customerId: loan.customerId,
@@ -290,29 +277,45 @@ exports.approveLoan = async (req, res) => {
       approvedBy: approvedBy.name,
       date: new Date().toISOString(),
     });
-
     await disbursementTransaction.save();
 
-    // INCREASE customer's cash balance (they receive the loan money)
+    // Credit customer's account
     const newCashBalance = (customer.cashBalance || 0) + loan.amount;
-
     await Customer.findOneAndUpdate(
       { id: loan.customerId },
       {
         $set: {
           cashBalance: newCashBalance,
-          balance: newCashBalance, // Legacy field
+          balance: newCashBalance,
         },
         $inc: {
-          loanBalance: loan.amount, // Track as liability
+          loanBalance: loan.amount,
           totalLoanAmount: loan.amount,
           totalInterestAccrued: interest,
         },
       },
     );
 
-    // Send SMS notification
-    await sendLoanApprovalSMS(customer, loan);
+    // ✅ FIXED: Send SMS notification using proper service
+    if (customer.phone) {
+      try {
+        await smsService.sendLoanDisbursementAlert(
+          customer.phone,
+          loan.amount,
+          newCashBalance,
+          loan.id,
+          loan.interestRate,
+          loan.totalPayable,
+          loan.numberOfInstallments,
+          loan.repaymentPeriod,
+          loan.installmentAmount,
+        );
+        console.log(`✅ Loan disbursement SMS sent to ${customer.phone}`);
+      } catch (smsError) {
+        console.error("❌ Failed to send loan SMS:", smsError.message);
+        // Don't fail the loan approval if SMS fails
+      }
+    }
 
     res.json({
       success: true,
@@ -336,16 +339,6 @@ exports.approveLoan = async (req, res) => {
   }
 };
 
-// SMS notification for loan approval
-async function sendLoanApprovalSMS(customer, loan) {
-  if (!customer.phone) return;
-
-  const message = `🏦 LOAN APPROVED!\n\nDear ${customer.name},\nYour loan of ₦${loan.amount.toLocaleString()} has been approved and disbursed to your account.\n\nRepayment Schedule:\n- ${loan.numberOfInstallments} ${loan.repaymentPeriod}ly installments\n- Each installment: ₦${loan.installmentAmount.toLocaleString()}\n- Total to repay: ₦${loan.totalPayable.toLocaleString()}\n\n⚠️ Note: 50% of future deposits will be automatically deducted for loan repayment.\n\nThank you for banking with us.`;
-
-  // Send SMS (implement your SMS service)
-  console.log("SMS to", customer.phone, ":", message);
-  // await sendSMS(customer.phone, message);
-}
 // Reject loan request
 exports.rejectLoan = async (req, res) => {
   try {
@@ -376,10 +369,7 @@ exports.rejectLoan = async (req, res) => {
   }
 };
 
-// Record repayment
-// controllers/loanController.js - Update recordRepayment function
-// Record repayment - SIMPLIFIED VERSION
-// Customer pays back to restore their cash balance
+// Record repayment - CORRECTED WITH SMS
 exports.recordRepayment = async (req, res) => {
   try {
     const { loanId, repaymentId } = req.params;
@@ -404,15 +394,11 @@ exports.recordRepayment = async (req, res) => {
         .json({ error: "This installment has already been paid" });
     }
 
-    const Customer = require("../models/customer");
     const customer = await Customer.findOne({ id: loan.customerId });
-
     if (!customer) {
       return res.status(404).json({ error: "Customer not found" });
     }
 
-    // For cash payments, we don't check cashBalance - we ADD to it
-    // For transfer deductions, check if they have enough
     const repaymentAmount = paymentAmount || repayment.amount || 0;
 
     // Update repayment status
@@ -442,22 +428,20 @@ exports.recordRepayment = async (req, res) => {
     const interestPortion = repaymentAmount * interestRatio;
     const principalPortion = repaymentAmount - interestPortion;
 
-    // ADD payment to customer's cash balance (they're getting money back)
-    // REDUCE loan balance
+    // Update customer balances
     const updatedCustomer = await Customer.findOneAndUpdate(
       { id: loan.customerId },
       {
         $inc: {
-          cashBalance: repaymentAmount, // Money ADDED to account
-          balance: repaymentAmount, // Legacy field
-          loanBalance: -principalPortion, // Loan liability decreases
+          cashBalance: repaymentAmount,
+          balance: repaymentAmount,
+          loanBalance: -principalPortion,
         },
       },
       { returnDocument: "after", new: true },
     );
 
     // Create transaction record
-    const Transaction = require("../models/transaction");
     const transaction = new Transaction({
       id: "TXN" + Date.now(),
       customerId: loan.customerId,
@@ -468,7 +452,7 @@ exports.recordRepayment = async (req, res) => {
       principalPortion: principalPortion,
       interestPortion: interestPortion,
       charges: 0,
-      netAmount: repaymentAmount, // Positive = credit
+      netAmount: repaymentAmount,
       description: `Loan repayment - Installment ${repaymentIndex + 1}/${loan.numberOfInstallments} (Principal: ₦${principalPortion.toLocaleString()}, Interest: ₦${interestPortion.toLocaleString()})`,
       status: "approved",
       requestedBy: paidBy || "Customer",
@@ -477,20 +461,39 @@ exports.recordRepayment = async (req, res) => {
     });
     await transaction.save();
 
-    // Send notification
-    try {
-      if (
-        typeof NotificationService !== "undefined" &&
-        NotificationService.notifyRepaymentReceived
-      ) {
-        await NotificationService.notifyRepaymentReceived(
-          loan,
-          repayment,
+    // ✅ FIXED: Send SMS notification for repayment
+    if (customer?.phone) {
+      try {
+        await smsService.sendLoanRepaymentCreditAlert(
+          customer.phone,
+          repaymentAmount,
+          principalPortion,
+          interestPortion,
+          updatedCustomer?.cashBalance || 0,
+          loan.id,
           repaymentIndex + 1,
+          loan.numberOfInstallments,
         );
+        console.log(`✅ Loan repayment SMS sent to ${customer.phone}`);
+      } catch (smsError) {
+        console.error("❌ Failed to send repayment SMS:", smsError.message);
       }
-    } catch (e) {
-      console.log("Notification skipped:", e.message);
+    }
+
+    // ✅ Send loan completed SMS if fully paid
+    if (loan.status === "completed" && customer?.phone) {
+      try {
+        await smsService.sendLoanCompletedAlert(
+          customer.phone,
+          customer.name,
+          loan.id,
+          loan.amountRepaid,
+          totalInterest,
+        );
+        console.log(`✅ Loan completion SMS sent to ${customer.phone}`);
+      } catch (smsError) {
+        console.error("❌ Failed to send completion SMS:", smsError.message);
+      }
     }
 
     res.json({
@@ -531,18 +534,15 @@ exports.recordRepayment = async (req, res) => {
     });
   }
 };
+
 // Get revenue reports
-// Get revenue reports - INTEREST SHOWS AS REVENUE
 exports.getRevenueReports = async (req, res) => {
   try {
-    const { period, type } = req.query; // period: daily, weekly, monthly, yearly, all
-    // type: 'interest', 'charges', 'all'
+    const { period, type } = req.query;
 
     let startDate = new Date();
     let matchStage = {};
-    let groupFormat = {};
 
-    // Set date range
     switch (period) {
       case "daily":
         startDate.setHours(0, 0, 0, 0);
@@ -557,15 +557,13 @@ exports.getRevenueReports = async (req, res) => {
         startDate.setFullYear(startDate.getFullYear() - 1);
         break;
       default:
-        startDate = new Date(0); // all time
+        startDate = new Date(0);
     }
 
-    // Build match stage for date filtering
     if (period && period !== "all") {
       matchStage.createdAt = { $gte: startDate };
     }
 
-    // Get INTEREST REVENUE from approved loans
     let interestRevenue = [];
     if (!type || type === "all" || type === "interest") {
       interestRevenue = await Loan.aggregate([
@@ -605,10 +603,8 @@ exports.getRevenueReports = async (req, res) => {
       ]);
     }
 
-    // Get TRANSACTION CHARGES revenue
     let transactionCharges = [];
     if (!type || type === "all" || type === "charges") {
-      const Transaction = require("../models/transaction");
       transactionCharges = await Transaction.aggregate([
         {
           $match: {
@@ -647,7 +643,6 @@ exports.getRevenueReports = async (req, res) => {
       ]);
     }
 
-    // Calculate totals
     const totalInterest = interestRevenue.reduce(
       (sum, item) => sum + (item.totalInterest || 0),
       0,
@@ -670,7 +665,6 @@ exports.getRevenueReports = async (req, res) => {
         interest: interestRevenue,
         charges: transactionCharges,
       },
-      // For dashboard widgets
       dashboard: {
         totalInterestEarned: totalInterest,
         totalChargesEarned: totalCharges,
@@ -731,7 +725,8 @@ exports.getLoanSummary = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-// Add to loanController.js
+
+// Get customer loan summary
 exports.getCustomerLoanSummary = async (req, res) => {
   try {
     const { customerId } = req.params;
@@ -806,80 +801,6 @@ exports.getCustomerLoanSummary = async (req, res) => {
   }
 };
 
-// Add route
-exports.getCustomerLoanSummary = async (req, res) => {
-  try {
-    const { customerId } = req.params;
-
-    const customer = await Customer.findOne({ id: customerId });
-    if (!customer) {
-      return res.status(404).json({ error: "Customer not found" });
-    }
-
-    const activeLoans = await Loan.find({
-      customerId: customerId,
-      status: "active",
-    });
-
-    const loanHistory = await Loan.find({
-      customerId: customerId,
-      status: { $in: ["completed", "defaulted"] },
-    });
-
-    const upcomingRepayments = [];
-    activeLoans.forEach((loan) => {
-      loan.repayments.forEach((repayment) => {
-        if (
-          repayment.status === "pending" &&
-          new Date(repayment.dueDate) > new Date()
-        ) {
-          upcomingRepayments.push({
-            loanId: loan.id,
-            loanType: loan.type,
-            dueDate: repayment.dueDate,
-            amount: repayment.amount,
-            remainingBalance: loan.outstandingBalance,
-          });
-        }
-      });
-    });
-
-    upcomingRepayments.sort(
-      (a, b) => new Date(a.dueDate) - new Date(b.dueDate),
-    );
-
-    res.json({
-      customer: {
-        name: customer.name,
-        cashBalance: customer.cashBalance,
-        loanBalance: customer.loanBalance,
-        netWorth: customer.cashBalance - customer.loanBalance,
-        totalLoansTaken: customer.totalLoanAmount,
-        totalInterestAccrued: customer.totalInterestAccrued,
-      },
-      activeLoans: activeLoans.map((loan) => ({
-        id: loan.id,
-        type: loan.type,
-        originalAmount: loan.amount,
-        totalPayable: loan.totalPayable,
-        amountRepaid: loan.amountRepaid,
-        outstandingBalance: loan.outstandingBalance,
-        nextInstallment: upcomingRepayments.find((r) => r.loanId === loan.id)
-          ?.dueDate,
-      })),
-      loanHistory: loanHistory.map((loan) => ({
-        id: loan.id,
-        type: loan.type,
-        amount: loan.amount,
-        completedAt: loan.completedAt || loan.updatedAt,
-      })),
-      upcomingRepayments: upcomingRepayments.slice(0, 5),
-    });
-  } catch (error) {
-    console.error("Get customer loan summary error:", error);
-    res.status(500).json({ error: error.message });
-  }
-};
 // Get dashboard summary with interest revenue
 exports.getDashboardSummary = async (req, res) => {
   try {
@@ -890,7 +811,6 @@ exports.getDashboardSummary = async (req, res) => {
     thisMonth.setDate(1);
     thisMonth.setHours(0, 0, 0, 0);
 
-    // Today's interest revenue
     const todayRevenue = await Loan.aggregate([
       {
         $match: {
@@ -907,7 +827,6 @@ exports.getDashboardSummary = async (req, res) => {
       },
     ]);
 
-    // This month's interest revenue
     const monthRevenue = await Loan.aggregate([
       {
         $match: {
@@ -925,7 +844,6 @@ exports.getDashboardSummary = async (req, res) => {
       },
     ]);
 
-    // All-time totals
     const allTime = await Loan.aggregate([
       {
         $match: { status: { $in: ["active", "completed"] } },
@@ -940,8 +858,6 @@ exports.getDashboardSummary = async (req, res) => {
       },
     ]);
 
-    // Transaction charges
-    const Transaction = require("../models/transaction");
     const chargesToday = await Transaction.aggregate([
       { $match: { status: "approved", createdAt: { $gte: today } } },
       { $group: { _id: null, total: { $sum: "$charges" } } },

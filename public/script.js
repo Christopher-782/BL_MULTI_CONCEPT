@@ -1855,47 +1855,58 @@ async function handleNewTransaction(e) {
     return;
   }
 
-  // Check if customer has active loan for auto-repayment
-  const activeLoan = state.loans?.find(
-    (l) => l.customerId === customerId && l.status === "active",
-  );
-
+  // ==================== AUTO-LOAN REPAYMENT LOGIC ====================
   let loanDeduction = 0;
   let loanRepaymentInfo = null;
+  let remainingForCustomer = netAmount;
 
-  // If it's a deposit and customer has active loan, calculate auto-repayment
-  if (type === "deposit" && activeLoan) {
-    const outstandingBalance = activeLoan.outstandingBalance || 0;
+  // Only for DEPOSITS when customer has active loan
+  if (
+    type === "deposit" &&
+    customer.hasActiveLoan &&
+    customer.loanBalance > 0
+  ) {
+    const outstandingLoan = customer.loanBalance;
 
-    if (outstandingBalance > 0) {
-      // Calculate how much to deduct (up to the net deposit amount or outstanding balance)
-      loanDeduction = Math.min(netAmount, outstandingBalance);
+    // Deduct either full deposit or remaining loan, whichever is smaller
+    loanDeduction = Math.min(netAmount, outstandingLoan);
+    remainingForCustomer = netAmount - loanDeduction;
 
-      loanRepaymentInfo = {
-        loanId: activeLoan.id,
-        amount: loanDeduction,
-        outstandingBefore: outstandingBalance,
-        outstandingAfter: outstandingBalance - loanDeduction,
-        fullyPaid: outstandingBalance - loanDeduction <= 0,
-      };
+    const newLoanBalance = outstandingLoan - loanDeduction;
+    const isFullyPaid = newLoanBalance <= 0;
+
+    loanRepaymentInfo = {
+      loanId: customer.activeLoanId,
+      amount: loanDeduction,
+      outstandingBefore: outstandingLoan,
+      outstandingAfter: Math.max(0, newLoanBalance),
+      fullyPaid: isFullyPaid,
+    };
+
+    // Update customer balances immediately for the transaction
+    customer.cashBalance = (customer.cashBalance || 0) + remainingForCustomer;
+    customer.loanBalance = Math.max(0, newLoanBalance);
+
+    if (isFullyPaid) {
+      customer.hasActiveLoan = false;
+      customer.activeLoanId = null;
     }
   }
 
   const txnData = {
     customerId,
     customerName: customer.name,
-    customerPhone: customer.phone, // Include phone for SMS
+    customerPhone: customer.phone,
     type,
     amount,
     charges,
-    netAmount,
+    netAmount: remainingForCustomer,
     loanDeduction: loanDeduction > 0 ? loanDeduction : undefined,
     loanRepaymentInfo: loanRepaymentInfo,
     description:
-      formData.get("description") ||
-      (loanDeduction > 0
-        ? `Deposit with auto loan repayment of ₦${loanDeduction.toLocaleString()}`
-        : ""),
+      loanDeduction > 0
+        ? `Deposit ₦${amount.toLocaleString()}: ₦${loanDeduction.toLocaleString()} auto-deducted for loan repayment. Available: ₦${remainingForCustomer.toLocaleString()}`
+        : "",
     status: "pending",
     requestedBy: state.currentUser.name,
     requestedAt: new Date(),
@@ -1906,9 +1917,20 @@ async function handleNewTransaction(e) {
     await api.post("/transactions", txnData);
     await loadAllData();
 
-    let successMessage = `✅ Transaction request submitted! ${type === "deposit" ? "Deposit" : "Withdrawal"} of ₦${amount.toLocaleString()}`;
-    if (loanDeduction > 0) {
-      successMessage += ` with ₦${loanDeduction.toLocaleString()} auto-deducted for loan repayment`;
+    let successMessage = `✅ Transaction request submitted! `;
+    if (type === "deposit") {
+      successMessage += `Deposit ₦${amount.toLocaleString()}`;
+      if (loanDeduction > 0) {
+        successMessage += `. ₦${loanDeduction.toLocaleString()} auto-deducted for loan`;
+        if (loanRepaymentInfo?.fullyPaid) {
+          successMessage += `. 🎉 Loan FULLY PAID!`;
+        } else {
+          successMessage += `. Remaining loan: ₦${loanRepaymentInfo.outstandingAfter.toLocaleString()}`;
+        }
+        successMessage += `. Available to customer: ₦${remainingForCustomer.toLocaleString()}`;
+      }
+    } else {
+      successMessage += `Withdrawal ₦${amount.toLocaleString()}`;
     }
 
     showNotification(successMessage, "success");
@@ -1934,53 +1956,58 @@ async function processTransaction(
       return;
     }
 
-    // Prepare update data
     const updateData = {
       status: action,
       approvedBy: state.currentUser.name,
       approvedAt: new Date(),
     };
 
-    // If approving a deposit with loan repayment, handle the loan deduction
+    // If approving a deposit with loan repayment
     if (
       action === "approved" &&
       transaction.type === "deposit" &&
-      transaction.loanDeduction > 0 &&
-      transaction.loanRepaymentInfo
+      transaction.loanDeduction > 0
     ) {
-      const { loanId, amount, fullyPaid } = transaction.loanRepaymentInfo;
+      const { loanId, amount, fullyPaid, outstandingAfter } =
+        transaction.loanRepaymentInfo;
+      const customer = state.customers.find(
+        (c) => c.id === transaction.customerId,
+      );
 
-      // Add loan repayment details to update
       updateData.loanRepayment = {
         loanId: loanId,
         amount: amount,
         recordedAt: new Date(),
         fullyPaid: fullyPaid,
+        outstandingAfter: outstandingAfter,
       };
 
-      // Update the transaction description to include loan info
-      updateData.finalDescription = `Deposit: ₦${transaction.amount.toLocaleString()} | Charges: ₦${(transaction.charges || 0).toLocaleString()} | Loan Repayment: ₦${amount.toLocaleString()} | Available to Customer: ₦${(transaction.netAmount - amount).toLocaleString()}`;
-    }
+      updateData.finalDescription =
+        `Deposit: ₦${transaction.amount.toLocaleString()} | ` +
+        `Charges: ₦${(transaction.charges || 0).toLocaleString()} | ` +
+        `Loan Repayment: ₦${amount.toLocaleString()} | ` +
+        `Available to Customer: ₦${transaction.netAmount.toLocaleString()}`;
 
-    await api.patch(`/transactions/${txnId}`, updateData);
+      // Show detailed notification
+      let notifMessage = `✅ Approved! ₦${amount.toLocaleString()} deducted for loan repayment.`;
+      if (fullyPaid) {
+        notifMessage += ` 🎉 Loan FULLY PAID!`;
+      } else {
+        notifMessage += ` ₦${outstandingAfter.toLocaleString()} remaining.`;
+      }
+      if (customer?.phone) {
+        notifMessage += ` SMS sent to ${customer.phone}`;
+      }
 
-    // If loan repayment was processed, show detailed notification
-    if (action === "approved" && transaction.loanDeduction > 0) {
-      const remaining = transaction.loanRepaymentInfo.outstandingAfter;
-      const customer = state.customers.find(
-        (c) => c.id === transaction.customerId,
-      );
-
-      showNotification(
-        `✅ Approved! ₦${transaction.loanDeduction.toLocaleString()} deducted for loan repayment. ${remaining > 0 ? `₦${remaining.toLocaleString()} remaining.` : "Loan FULLY PAID!"} SMS sent to ${customer?.phone || "customer"}`,
-        "success",
-      );
+      showNotification(notifMessage, "success");
     } else {
       showNotification(
         `✅ Transaction ${action}!`,
         action === "approved" ? "success" : "error",
       );
     }
+
+    await api.patch(`/transactions/${txnId}`, updateData);
 
     closeStaffPendingModal();
     closeTransactionModal();
@@ -1993,8 +2020,7 @@ async function processTransaction(
       "error",
     );
   }
-}
-// ==================== LOGOUT FUNCTION ====================
+} // ==================== LOGOUT FUNCTION ====================
 
 function logout() {
   localStorage.removeItem("token");
