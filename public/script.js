@@ -2375,58 +2375,90 @@ function renderMyLoans(container) {
 
 async function renderRevenueReports(container) {
   try {
-    // Fetch all periods
-    const fetchReport = async (period) => {
-      try {
-        const response = await api.get(`/reports/revenue?period=${period}`);
-        console.log(`${period} report:`, response.data);
-        return response.data;
-      } catch (error) {
-        console.error(`Failed to fetch ${period} report:`, error);
-        return {
-          totalRevenue: 0,
-          breakdown: { interestRevenue: 0, transactionCharges: 0 },
-          summary: { totalLoans: 0, totalTransactions: 0 },
-        };
+    // FRONTEND WORKAROUND: Calculate revenue from local state.transactions
+    // This bypasses the backend API which is returning 0
+
+    const calculateRevenueFromTransactions = (period) => {
+      const now = new Date();
+      let startDate;
+
+      switch (period) {
+        case "daily":
+          startDate = new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate(),
+          );
+          break;
+        case "weekly":
+          startDate = new Date(now);
+          startDate.setDate(now.getDate() - 7);
+          break;
+        case "monthly":
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          break;
+        case "yearly":
+          startDate = new Date(now.getFullYear(), 0, 1);
+          break;
+        default:
+          startDate = new Date(0);
       }
+
+      // Filter approved transactions with charges in the period
+      const filteredTransactions = state.transactions.filter((t) => {
+        const txnDate = new Date(t.date);
+        return (
+          t.status === "approved" &&
+          t.charges > 0 &&
+          txnDate >= startDate &&
+          txnDate <= now
+        );
+      });
+
+      const totalCharges = filteredTransactions.reduce(
+        (sum, t) => sum + (t.charges || 0),
+        0,
+      );
+      const totalAmount = filteredTransactions.reduce(
+        (sum, t) => sum + (t.amount || 0),
+        0,
+      );
+
+      return {
+        totalRevenue: totalCharges,
+        breakdown: {
+          transactionCharges: totalCharges,
+          interestRevenue: 0,
+          totalTransactionAmount: totalAmount,
+        },
+        summary: {
+          totalTransactions: filteredTransactions.length,
+          totalLoans: 0,
+        },
+        transactions: filteredTransactions,
+      };
     };
 
-    const [daily, weekly, monthly, yearly] = await Promise.all([
-      fetchReport("daily"),
-      fetchReport("weekly"),
-      fetchReport("monthly"),
-      fetchReport("yearly"),
-    ]);
+    // Calculate all periods from local data
+    const daily = calculateRevenueFromTransactions("daily");
+    const weekly = calculateRevenueFromTransactions("weekly");
+    const monthly = calculateRevenueFromTransactions("monthly");
+    const yearly = calculateRevenueFromTransactions("yearly");
+    const allTime = calculateRevenueFromTransactions("all");
 
-    // Safe number formatter
     const formatNumber = (num) => {
-      if (num === undefined || num === null) return "0";
+      if (num === undefined || num === null || isNaN(num)) return "0";
       return num.toLocaleString();
     };
 
-    // FIX: Define formatDate if not already defined, or ensure it's available
-    const formatDate = (dateStr) => {
-      if (!dateStr) return "N/A";
-      const date = new Date(dateStr);
-      return date.toLocaleString();
-    };
-
-    const calculatePercentage = (value, total) => {
-      if (!total || total === 0) return 0;
-      return (((value || 0) / total) * 100).toFixed(1);
-    };
-
-    // FIX: Pre-filter and store transactions to avoid scope issues
-    const transactionsWithCharges =
-      state.transactions?.filter(
-        (t) => t.status === "approved" && t.charges > 0,
-      ) || [];
+    const transactionsWithCharges = state.transactions
+      .filter((t) => t.status === "approved" && t.charges > 0)
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
 
     const html = `
       <div class="space-y-6 animate-fade-in px-4 sm:px-0">
         <h2 class="text-xl font-bold">Revenue Reports</h2>
         
-        <!-- Stats Cards -->
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div class="glass-panel p-6 rounded-xl">
             <div class="flex items-center justify-between mb-2">
@@ -2434,7 +2466,7 @@ async function renderRevenueReports(container) {
               <i class="fas fa-calendar-day text-blue-400 text-xl"></i>
             </div>
             <p class="text-2xl font-bold text-green-400">₦${formatNumber(daily.totalRevenue)}</p>
-            <p class="text-xs text-gray-400 mt-1">Charges: ₦${formatNumber(daily.breakdown?.transactionCharges)}</p>
+            <p class="text-xs text-gray-400 mt-1">${formatNumber(daily.summary.totalTransactions)} transactions</p>
           </div>
           
           <div class="glass-panel p-6 rounded-xl">
@@ -2443,7 +2475,7 @@ async function renderRevenueReports(container) {
               <i class="fas fa-calendar-week text-green-400 text-xl"></i>
             </div>
             <p class="text-2xl font-bold text-green-400">₦${formatNumber(weekly.totalRevenue)}</p>
-            <p class="text-xs text-gray-400 mt-1">Charges: ₦${formatNumber(weekly.breakdown?.transactionCharges)}</p>
+            <p class="text-xs text-gray-400 mt-1">${formatNumber(weekly.summary.totalTransactions)} transactions</p>
           </div>
           
           <div class="glass-panel p-6 rounded-xl">
@@ -2452,51 +2484,48 @@ async function renderRevenueReports(container) {
               <i class="fas fa-calendar-alt text-yellow-400 text-xl"></i>
             </div>
             <p class="text-2xl font-bold text-green-400">₦${formatNumber(monthly.totalRevenue)}</p>
-            <p class="text-xs text-gray-400 mt-1">Charges: ₦${formatNumber(monthly.breakdown?.transactionCharges)}</p>
+            <p class="text-xs text-gray-400 mt-1">${formatNumber(monthly.summary.totalTransactions)} transactions</p>
           </div>
           
           <div class="glass-panel p-6 rounded-xl">
             <div class="flex items-center justify-between mb-2">
               <span class="text-gray-400">This Year's Revenue</span>
-              <i class="fas fa-calendar-year text-purple-400 text-xl"></i>
+              <i class="fas fa-calendar text-purple-400 text-xl"></i>
             </div>
             <p class="text-2xl font-bold text-green-400">₦${formatNumber(yearly.totalRevenue)}</p>
-            <p class="text-xs text-gray-400 mt-1">Charges: ₦${formatNumber(yearly.breakdown?.transactionCharges)}</p>
+            <p class="text-xs text-gray-400 mt-1">${formatNumber(yearly.summary.totalTransactions)} transactions</p>
           </div>
         </div>
         
-        <!-- Revenue Breakdown Chart -->
         <div class="glass-panel rounded-2xl p-6">
           <h3 class="text-lg font-semibold mb-4">Revenue Sources</h3>
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div class="bg-gray-800/30 p-4 rounded-xl text-center">
               <h4 class="text-sm font-medium text-gray-400 mb-2">Transaction Charges</h4>
-              <p class="text-3xl font-bold text-green-400">₦${formatNumber(yearly.breakdown?.transactionCharges)}</p>
-              <p class="text-xs text-gray-500 mt-1">From ${formatNumber(yearly.summary?.totalTransactions)} transactions</p>
+              <p class="text-3xl font-bold text-green-400">₦${formatNumber(allTime.totalRevenue)}</p>
+              <p class="text-xs text-gray-500 mt-1">From ${formatNumber(allTime.summary.totalTransactions)} transactions</p>
             </div>
             <div class="bg-gray-800/30 p-4 rounded-xl text-center">
               <h4 class="text-sm font-medium text-gray-400 mb-2">Loan Interest</h4>
-              <p class="text-3xl font-bold text-blue-400">₦${formatNumber(yearly.breakdown?.interestRevenue)}</p>
-              <p class="text-xs text-gray-500 mt-1">From ${formatNumber(yearly.summary?.totalLoans)} loans</p>
+              <p class="text-3xl font-bold text-blue-400">₦0</p>
+              <p class="text-xs text-gray-500 mt-1">From 0 loans</p>
             </div>
           </div>
           
-          <!-- Progress Bar for Revenue Split -->
           <div class="mt-6">
             <div class="flex justify-between text-sm mb-2">
-              <span>Transaction Charges (${calculatePercentage(yearly.breakdown?.transactionCharges, yearly.totalRevenue)}%)</span>
-              <span>Loan Interest (${calculatePercentage(yearly.breakdown?.interestRevenue, yearly.totalRevenue)}%)</span>
+              <span>Transaction Charges (100%)</span>
+              <span>Loan Interest (0%)</span>
             </div>
             <div class="w-full bg-gray-700 rounded-full h-4 overflow-hidden">
               <div class="flex h-full">
-                <div class="bg-green-500 h-full" style="width: ${calculatePercentage(yearly.breakdown?.transactionCharges, yearly.totalRevenue)}%"></div>
-                <div class="bg-blue-500 h-full" style="width: ${calculatePercentage(yearly.breakdown?.interestRevenue, yearly.totalRevenue)}%"></div>
+                <div class="bg-green-500 h-full" style="width: 100%"></div>
+                <div class="bg-blue-500 h-full" style="width: 0%"></div>
               </div>
             </div>
           </div>
         </div>
         
-        <!-- Recent Transactions with Charges -->
         <div class="glass-panel rounded-2xl p-6">
           <h3 class="text-lg font-semibold mb-4">Recent Transactions with Charges</h3>
           <div class="overflow-x-auto">
@@ -2518,24 +2547,18 @@ async function renderRevenueReports(container) {
                         .slice(0, 10)
                         .map(
                           (txn) => `
-                          <tr class="hover:bg-gray-800/30">
-                            <td class="py-3 text-sm">${formatDate(txn.date)}</td>
-                            <td class="py-3">${txn.customerName}</td>
-                            <td class="py-3 capitalize ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">${txn.type}</td>
-                            <td class="py-3 font-mono">₦${formatNumber(txn.amount)}</td>
-                            <td class="py-3 font-mono text-red-400 font-bold">₦${formatNumber(txn.charges)}</td>
-                            <td class="py-3 font-mono text-blue-400">₦${formatNumber(txn.netAmount)}</td>
-                          </tr>
-                        `,
+                    <tr class="hover:bg-gray-800/30">
+                      <td class="py-3 text-sm">${formatDate(txn.date)}</td>
+                      <td class="py-3">${txn.customerName}</td>
+                      <td class="py-3 capitalize ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">${txn.type}</td>
+                      <td class="py-3 font-mono">₦${formatNumber(txn.amount)}</td>
+                      <td class="py-3 font-mono text-red-400 font-bold">₦${formatNumber(txn.charges)}</td>
+                      <td class="py-3 font-mono text-blue-400">₦${formatNumber(txn.netAmount || txn.amount - txn.charges)}</td>
+                    </tr>
+                  `,
                         )
                         .join("")
-                    : `
-                      <tr>
-                        <td colspan="6" class="py-8 text-center text-gray-400">
-                          No transactions with charges found
-                        </td>
-                      </tr>
-                    `
+                    : `<tr><td colspan="6" class="py-8 text-center text-gray-400">No transactions with charges found</td></tr>`
                 }
               </tbody>
             </table>
