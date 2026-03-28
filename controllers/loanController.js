@@ -230,6 +230,9 @@ exports.getLoansByCustomer = async (req, res) => {
 // Approve loan request - FIXED VERSION
 // Approve loan - SIMPLIFIED VERSION
 // Customer is DEBITED immediately (loan + interest), pays back later
+// controllers/loanController.js
+
+// Approve loan - CORRECTED VERSION
 exports.approveLoan = async (req, res) => {
   try {
     const { loanId } = req.params;
@@ -241,127 +244,108 @@ exports.approveLoan = async (req, res) => {
     }
 
     if (loan.status !== "pending") {
-      return res.status(400).json({ error: "Loan request already processed" });
+      return res.status(400).json({ error: "Loan already processed" });
     }
 
-    const Customer = require("../models/customer");
+    // Find customer
     const customer = await Customer.findOne({ id: loan.customerId });
-
     if (!customer) {
       return res.status(404).json({ error: "Customer not found" });
     }
 
-    // Calculate totals
-    const principal = loan.amount || 0;
-    const interest = (loan.totalPayable || 0) - principal;
-    const totalDeduction = loan.totalPayable || 0;
+    // ========== CORRECT LOAN APPROVAL LOGIC ==========
+    // DO NOT deduct anything from cash balance!
+    // Instead, ADD the principal to cash balance (disbursement)
 
-    // Check if customer has enough balance to cover the loan + interest
-    const availableCash = customer.cashBalance || customer.balance || 0;
+    const interest = loan.totalPayable - loan.amount;
 
-    if (availableCash < totalDeduction) {
-      return res.status(400).json({
-        error: "Insufficient balance to secure this loan",
-        required: totalDeduction,
-        available: availableCash,
-        shortfall: totalDeduction - availableCash,
-      });
-    }
-
-    // Update loan status
+    // Update loan status to ACTIVE
     loan.status = "active";
     loan.approvedBy = {
-      adminId: approvedBy?.id || approvedBy?.staffId || "system",
-      adminName: approvedBy?.name || approvedBy?.staffName || "System",
+      adminId: approvedBy.id,
+      adminName: approvedBy.name,
       approvedAt: new Date(),
     };
-    loan.amountDisbursed = principal;
-    loan.outstandingBalance = totalDeduction; // Full amount to be paid back
+    loan.amountDisbursed = loan.amount;
+    loan.outstandingBalance = loan.totalPayable;
+    loan.outstandingPrincipal = loan.amount;
+    loan.outstandingInterest = interest;
+    loan.autoDebitEnabled = true; // Enable auto-debit for repayments
 
     await loan.save();
 
-    // DEDUCT full amount (principal + interest) from customer cash balance
-    // This secures the loan - customer must pay back to restore balance
-    const updatedCustomer = await Customer.findOneAndUpdate(
-      { id: loan.customerId },
-      {
-        $inc: {
-          cashBalance: -totalDeduction,
-          balance: -totalDeduction, // Legacy field
-          loanBalance: principal, // Track principal as liability
-          totalLoanAmount: principal,
-          totalInterestAccrued: interest, // Interest tracked as revenue
-        },
-      },
-      { returnDocument: "after", new: true },
-    );
-
-    // Create transaction for loan disbursement (debit)
-    const Transaction = require("../models/transaction");
-    const disbursementTxn = new Transaction({
-      id: "TXN" + Date.now(),
+    // CREATE TRANSACTION: DISBURSE LOAN PRINCIPAL
+    // This ADDS money to customer's cash balance
+    const disbursementTransaction = new Transaction({
+      id: "TXN" + Date.now() + Math.random(),
       customerId: loan.customerId,
       customerName: loan.customerName,
-      customerPhone: customer?.phone || null,
       type: "loan_disbursement",
-      amount: principal,
-      interestAmount: interest,
-      totalDeducted: totalDeduction,
+      amount: loan.amount,
       charges: 0,
-      netAmount: -totalDeduction, // Negative = debit
-      description: `Loan secured - ${loan.type} #${loan.id} (Principal: ₦${principal.toLocaleString()}, Interest: ₦${interest.toLocaleString()})`,
+      netAmount: loan.amount,
+      description: `Loan disbursement - ${loan.id}`,
       status: "approved",
-      requestedBy: approvedBy?.name || "System",
-      approvedBy: approvedBy?.name || "System",
+      requestedBy: approvedBy.name,
+      approvedBy: approvedBy.name,
       date: new Date().toISOString(),
     });
-    await disbursementTxn.save();
 
-    // Send notification
-    try {
-      if (
-        typeof NotificationService !== "undefined" &&
-        NotificationService.notifyLoanApproval
-      ) {
-        await NotificationService.notifyLoanApproval(loan);
-      }
-    } catch (e) {
-      console.log("Notification skipped:", e.message);
-    }
+    await disbursementTransaction.save();
+
+    // INCREASE customer's cash balance (they receive the loan money)
+    const newCashBalance = (customer.cashBalance || 0) + loan.amount;
+
+    await Customer.findOneAndUpdate(
+      { id: loan.customerId },
+      {
+        $set: {
+          cashBalance: newCashBalance,
+          balance: newCashBalance, // Legacy field
+        },
+        $inc: {
+          loanBalance: loan.amount, // Track as liability
+          totalLoanAmount: loan.amount,
+          totalInterestAccrued: interest,
+        },
+      },
+    );
+
+    // Send SMS notification
+    await sendLoanApprovalSMS(customer, loan);
 
     res.json({
       success: true,
-      message: "Loan approved and secured successfully",
+      message: `✅ Loan approved! ₦${loan.amount.toLocaleString()} disbursed to ${customer.name}'s account.`,
       loan: {
         id: loan.id,
-        type: loan.type,
-        principal: principal,
-        interest: interest,
-        totalPayable: totalDeduction,
-        status: "active",
-        outstandingBalance: totalDeduction,
+        amount: loan.amount,
+        totalPayable: loan.totalPayable,
+        status: loan.status,
       },
       customer: {
-        name: updatedCustomer?.name,
-        previousBalance: availableCash,
-        newCashBalance: updatedCustomer?.cashBalance || 0,
-        loanBalance: updatedCustomer?.loanBalance || 0,
-        totalInterestAccrued: updatedCustomer?.totalInterestAccrued || 0,
-      },
-      transaction: {
-        id: disbursementTxn.id,
-        type: "loan_disbursement",
-        amountDeducted: totalDeduction,
+        id: customer.id,
+        name: customer.name,
+        newBalance: newCashBalance,
+        loanBalance: (customer.loanBalance || 0) + loan.amount,
       },
     });
   } catch (error) {
     console.error("Approve loan error:", error);
-    res.status(500).json({
-      error: error.message,
-      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
-    });
+    res.status(500).json({ error: error.message });
   }
 };
+
+// SMS notification for loan approval
+async function sendLoanApprovalSMS(customer, loan) {
+  if (!customer.phone) return;
+
+  const message = `🏦 LOAN APPROVED!\n\nDear ${customer.name},\nYour loan of ₦${loan.amount.toLocaleString()} has been approved and disbursed to your account.\n\nRepayment Schedule:\n- ${loan.numberOfInstallments} ${loan.repaymentPeriod}ly installments\n- Each installment: ₦${loan.installmentAmount.toLocaleString()}\n- Total to repay: ₦${loan.totalPayable.toLocaleString()}\n\n⚠️ Note: 50% of future deposits will be automatically deducted for loan repayment.\n\nThank you for banking with us.`;
+
+  // Send SMS (implement your SMS service)
+  console.log("SMS to", customer.phone, ":", message);
+  // await sendSMS(customer.phone, message);
+}
 // Reject loan request
 exports.rejectLoan = async (req, res) => {
   try {

@@ -3004,22 +3004,23 @@ function renderAdminLoans(container) {
   container.innerHTML = html;
 }
 
+// In renderAdminLoans function - Update showApproveLoanModal
 function showApproveLoanModal(loanId) {
   const loan = state.loans?.find((l) => l.id === loanId);
   if (!loan) return;
 
-  const interest = (loan.totalPayable || 0) - (loan.amount || 0);
+  const interest =
+    loan.totalInterest || (loan.totalPayable || 0) - (loan.amount || 0);
   const customer = state.customers.find((c) => c.id === loan.customerId);
   const customerBalance = customer?.cashBalance || customer?.balance || 0;
-  const canAfford = customerBalance >= (loan.totalPayable || 0);
 
   const modalHtml = `
     <div id="approveLoanModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
       <div class="bg-gray-900 rounded-2xl p-4 sm:p-8 max-w-md w-full mx-auto animate-slideIn">
         <div class="flex justify-between items-center mb-4 sm:mb-6">
-          <h3 class="text-lg sm:text-xl font-semibold text-yellow-400">
-            <i class="fas fa-exclamation-triangle mr-2"></i>
-            Approve & Secure Loan
+          <h3 class="text-lg sm:text-xl font-semibold text-green-400">
+            <i class="fas fa-hand-holding-usd mr-2"></i>
+            Approve Loan
           </h3>
           <button onclick="closeApproveLoanModal()" class="text-gray-400 hover:text-white p-2">
             <i class="fas fa-times text-lg"></i>
@@ -3033,8 +3034,19 @@ function showApproveLoanModal(loanId) {
             <p class="text-xs text-gray-400">#${loan.customerNumber || "---"} • ${loan.phone || "No phone"}</p>
           </div>
           
+          <div class="bg-green-500/10 border border-green-500/30 p-3 rounded-lg">
+            <div class="flex items-start gap-2">
+              <i class="fas fa-arrow-down text-green-400 mt-0.5"></i>
+              <div class="text-sm">
+                <p class="font-semibold text-green-400">Disbursement Amount</p>
+                <p class="font-mono text-xl font-bold">₦${(loan.amount || 0).toLocaleString()}</p>
+                <p class="text-xs text-green-300 mt-1">Will be ADDED to customer's account</p>
+              </div>
+            </div>
+          </div>
+          
           <div class="bg-gray-800/50 p-3 rounded-lg">
-            <p class="text-sm text-gray-400 mb-2">Deduction Breakdown</p>
+            <p class="text-sm text-gray-400 mb-2">Repayment Details</p>
             <div class="space-y-1 text-sm">
               <div class="flex justify-between">
                 <span>Principal:</span>
@@ -3045,39 +3057,29 @@ function showApproveLoanModal(loanId) {
                 <span class="font-mono text-yellow-400">₦${interest.toLocaleString()}</span>
               </div>
               <div class="flex justify-between pt-2 border-t border-gray-700 font-bold">
-                <span class="text-red-300">TOTAL TO DEDUCT:</span>
-                <span class="font-mono text-red-400">₦${(loan.totalPayable || 0).toLocaleString()}</span>
+                <span>Total to Repay:</span>
+                <span class="font-mono text-blue-400">₦${(loan.totalPayable || 0).toLocaleString()}</span>
               </div>
             </div>
           </div>
           
-          <div class="bg-gray-800/50 p-3 rounded-lg">
-            <p class="text-sm text-gray-400 mb-1">Customer Cash Balance</p>
-            <p class="font-mono text-lg ${canAfford ? "text-green-400" : "text-red-400"}">
-              ₦${customerBalance.toLocaleString()}
-            </p>
-            ${
-              !canAfford
-                ? `
-              <p class="text-xs text-red-400 mt-1">
-                <i class="fas fa-exclamation-circle mr-1"></i>
-                Insufficient balance! Shortfall: ₦${((loan.totalPayable || 0) - customerBalance).toLocaleString()}
-              </p>
-            `
-                : `
-              <p class="text-xs text-green-400 mt-1">
-                <i class="fas fa-check-circle mr-1"></i>
-                Sufficient balance available
-              </p>
-            `
-            }
+          <div class="bg-blue-500/10 border border-blue-500/30 p-3 rounded-lg">
+            <div class="flex items-start gap-2">
+              <i class="fas fa-info-circle text-blue-400 mt-0.5"></i>
+              <div class="text-xs text-blue-300">
+                <p class="font-semibold mb-1">How it works:</p>
+                <p>✓ ₦${(loan.amount || 0).toLocaleString()} will be <strong class="text-green-400">ADDED</strong> to customer's cash balance</p>
+                <p>✓ Customer will repay in ${loan.numberOfInstallments} ${loan.repaymentPeriod}ly installments</p>
+                <p>✓ <strong class="text-yellow-400">50% of future deposits</strong> will be automatically deducted for loan repayment</p>
+                <p>✓ Each installment: ₦${(loan.installmentAmount || 0).toLocaleString()}</p>
+              </div>
+            </div>
           </div>
           
           <div class="bg-yellow-500/10 border border-yellow-500/30 p-3 rounded-lg">
             <p class="text-xs text-yellow-300">
-              <i class="fas fa-info-circle mr-1"></i>
-              <strong>Important:</strong> This will immediately debit ₦${(loan.totalPayable || 0).toLocaleString()} from the customer's account. 
-              Interest (₦${interest.toLocaleString()}) will be recorded as revenue.
+              <i class="fas fa-robot mr-1"></i>
+              <strong>Auto-Debit Active:</strong> When customer makes deposits, 50% goes toward loan repayment until fully paid.
             </p>
           </div>
           
@@ -3085,8 +3087,8 @@ function showApproveLoanModal(loanId) {
             <button onclick="closeApproveLoanModal()" class="flex-1 px-6 py-3 border border-gray-600 rounded-xl hover:bg-gray-800">
               Cancel
             </button>
-            <button onclick="approveLoan('${loan.id}')" ${!canAfford ? 'disabled class="flex-1 px-6 py-3 bg-gray-600 rounded-xl cursor-not-allowed opacity-50"' : 'class="flex-1 px-6 py-3 bg-green-600 hover:bg-green-500 rounded-xl"'}>
-              ${canAfford ? "Approve & Debit" : "Cannot Approve"}
+            <button onclick="approveLoan('${loan.id}')" class="flex-1 px-6 py-3 bg-green-600 hover:bg-green-500 rounded-xl">
+              <i class="fas fa-check mr-2"></i>Approve & Disburse
             </button>
           </div>
         </div>
@@ -3099,6 +3101,31 @@ function showApproveLoanModal(loanId) {
   document.body.appendChild(modalContainer);
 }
 
+// Update approveLoan function to call the backend correctly
+async function approveLoan(loanId) {
+  try {
+    const response = await api.patch(`/loans/${loanId}/approve`, {
+      approvedBy: {
+        id: state.currentUser.id,
+        name: state.currentUser.name,
+      },
+    });
+
+    showNotification(
+      `✅ Loan approved! ₦${response.data.loan.amount.toLocaleString()} disbursed to customer.`,
+      "success",
+    );
+    closeApproveLoanModal();
+    await loadAllData();
+    navigate("loans");
+  } catch (error) {
+    console.error("Approve loan error:", error);
+    showNotification(
+      error.response?.data?.error || "Failed to approve loan",
+      "error",
+    );
+  }
+}
 function closeApproveLoanModal() {
   const modal = document.getElementById("approveLoanModal");
   if (modal) modal.remove();
