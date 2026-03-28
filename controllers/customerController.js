@@ -25,6 +25,12 @@ function parseDate(dateString) {
   return new Date();
 }
 
+// Helper function to format currency safely
+function formatCurrency(amount) {
+  if (amount === undefined || amount === null) return 0;
+  return Number(amount);
+}
+
 // Generate next available customer number
 async function generateNextCustomerNumber() {
   try {
@@ -82,7 +88,7 @@ exports.createCustomer = async (req, res) => {
       email,
       phone,
       address,
-      cashBalance: cashBalance || balance,
+      cashBalance: cashBalance !== undefined ? cashBalance : balance,
       loanBalance,
       staffId,
       staffName,
@@ -98,13 +104,34 @@ exports.createCustomer = async (req, res) => {
         .json({ error: "Name, email, and phone are required" });
     }
 
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: "Invalid email format" });
+    }
+
+    // Validate phone format (basic)
+    if (!phone || phone.length < 10) {
+      return res.status(400).json({ error: "Valid phone number is required" });
+    }
+
     // Generate a customer ID
-    const customerId = "CUST" + Date.now();
+    const customerId = "CUST" + Date.now() + Math.floor(Math.random() * 1000);
 
     // Check if customer already exists by email
     const existingCustomer = await Customer.findOne({ email });
     if (existingCustomer) {
-      return res.status(400).json({ error: "Customer already exists" });
+      return res
+        .status(400)
+        .json({ error: "Customer with this email already exists" });
+    }
+
+    // Check if customer already exists by phone
+    const existingPhone = await Customer.findOne({ phone });
+    if (existingPhone) {
+      return res
+        .status(400)
+        .json({ error: "Customer with this phone number already exists" });
     }
 
     // Handle customer number
@@ -131,9 +158,10 @@ exports.createCustomer = async (req, res) => {
     }
 
     // Handle balance - prefer cashBalance, fallback to balance
-    const finalCashBalance =
-      cashBalance !== undefined ? cashBalance : balance || 0;
-    const finalLoanBalance = loanBalance || 0;
+    const finalCashBalance = formatCurrency(
+      cashBalance !== undefined ? cashBalance : balance || 0,
+    );
+    const finalLoanBalance = formatCurrency(loanBalance || 0);
 
     // Handle joined date
     const joinedDate = joined ? parseDate(joined) : new Date();
@@ -143,10 +171,10 @@ exports.createCustomer = async (req, res) => {
       id: customerId,
       customerId: customerId,
       customerNumber: finalCustomerNumber,
-      name,
-      email,
-      phone,
-      address: address || "",
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      phone: phone.trim(),
+      address: address ? address.trim() : "",
       // Separate balance tracking
       cashBalance: finalCashBalance,
       loanBalance: finalLoanBalance,
@@ -156,14 +184,16 @@ exports.createCustomer = async (req, res) => {
       balance: finalCashBalance,
       status: status || "active",
       joined: joinedDate,
+      createdAt: new Date(),
+      updatedAt: new Date(),
     };
 
     // Only add addedBy if staff information is provided
     if (staffId && staffName) {
       customerData.addedBy = {
-        staffId,
-        staffName,
-        staffEmail: staffEmail || "",
+        staffId: staffId.trim(),
+        staffName: staffName.trim(),
+        staffEmail: staffEmail ? staffEmail.trim() : "",
       };
     }
 
@@ -182,6 +212,7 @@ exports.createCustomer = async (req, res) => {
     );
 
     res.status(201).json({
+      success: true,
       message: "Customer created successfully",
       customer: {
         id: customer.id,
@@ -192,7 +223,7 @@ exports.createCustomer = async (req, res) => {
         address: customer.address,
         cashBalance: customer.cashBalance,
         loanBalance: customer.loanBalance,
-        netWorth: customer.cashBalance - customer.loanBalance,
+        netWorth: (customer.cashBalance || 0) - (customer.loanBalance || 0),
         status: customer.status,
         joined: customer.joined,
         addedBy: customer.addedBy || null,
@@ -210,7 +241,17 @@ exports.createCustomer = async (req, res) => {
       });
     }
 
-    res.status(500).json({ error: error.message });
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      const field = Object.keys(error.keyPattern)[0];
+      return res.status(400).json({
+        error: `Duplicate value for ${field}. This value already exists.`,
+      });
+    }
+
+    res.status(500).json({
+      error: error.message || "Failed to create customer",
+    });
   }
 };
 
@@ -230,11 +271,37 @@ exports.getCustomerByNumber = async (req, res) => {
 
     // Return with net worth calculation
     const customerData = customer.toObject();
-    customerData.netWorth = customer.cashBalance - customer.loanBalance;
+    customerData.netWorth =
+      (customer.cashBalance || 0) - (customer.loanBalance || 0);
+    customerData.availableBalance = customer.cashBalance || 0;
 
     res.json(customerData);
   } catch (error) {
     console.error("Get customer by number error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Get customer by ID
+exports.getCustomerById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const customer = await Customer.findOne({ id: id });
+
+    if (!customer) {
+      return res.status(404).json({ error: "Customer not found" });
+    }
+
+    // Return with net worth calculation
+    const customerData = customer.toObject();
+    customerData.netWorth =
+      (customer.cashBalance || 0) - (customer.loanBalance || 0);
+    customerData.availableBalance = customer.cashBalance || 0;
+
+    res.json(customerData);
+  } catch (error) {
+    console.error("Get customer by ID error:", error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -247,7 +314,9 @@ exports.getAllCustomers = async (req, res) => {
     // Add net worth to each customer
     const customersWithNetWorth = customers.map((customer) => {
       const customerObj = customer.toObject();
-      customerObj.netWorth = customer.cashBalance - customer.loanBalance;
+      customerObj.netWorth =
+        (customer.cashBalance || 0) - (customer.loanBalance || 0);
+      customerObj.availableBalance = customer.cashBalance || 0;
       return customerObj;
     });
 
@@ -269,7 +338,9 @@ exports.getCustomersByStaff = async (req, res) => {
     // Add net worth to each customer
     const customersWithNetWorth = customers.map((customer) => {
       const customerObj = customer.toObject();
-      customerObj.netWorth = customer.cashBalance - customer.loanBalance;
+      customerObj.netWorth =
+        (customer.cashBalance || 0) - (customer.loanBalance || 0);
+      customerObj.availableBalance = customer.cashBalance || 0;
       return customerObj;
     });
 
@@ -306,36 +377,59 @@ exports.getCustomerSummary = async (req, res) => {
       totalInterestPaid += loan.totalInterest || 0;
     });
 
+    // Calculate total interest accrued from active loans
+    let totalInterestAccrued = 0;
+    activeLoans.forEach((loan) => {
+      totalInterestAccrued += loan.totalInterest || 0;
+    });
+
+    // Calculate total repayments
+    let totalRepaid = 0;
+    loans.forEach((loan) => {
+      totalRepaid += loan.amountRepaid || 0;
+    });
+
     res.json({
+      success: true,
       customer: {
         id: customer.id,
+        customerNumber: customer.customerNumber,
         name: customer.name,
         email: customer.email,
         phone: customer.phone,
-        cashBalance: customer.cashBalance,
-        loanBalance: customer.loanBalance,
-        netWorth: customer.cashBalance - customer.loanBalance,
-        totalLoanAmount: customer.totalLoanAmount,
+        address: customer.address,
+        cashBalance: customer.cashBalance || 0,
+        loanBalance: customer.loanBalance || 0,
+        netWorth: (customer.cashBalance || 0) - (customer.loanBalance || 0),
+        totalLoanAmount: customer.totalLoanAmount || 0,
         totalInterestPaid: totalInterestPaid,
+        totalInterestAccrued: totalInterestAccrued,
+        totalRepaid: totalRepaid,
         status: customer.status,
         joined: customer.joined,
+        addedBy: customer.addedBy,
       },
       loans: {
         active: activeLoans.length,
         completed: completedLoans.length,
         pending: pendingLoans.length,
-        totalDisbursed: customer.totalLoanAmount,
-        outstanding: customer.loanBalance,
+        totalDisbursed: customer.totalLoanAmount || 0,
+        outstanding: customer.loanBalance || 0,
+        totalRepaid: totalRepaid,
       },
       activeLoans: activeLoans.map((loan) => ({
         id: loan.id,
         type: loan.type,
         amount: loan.amount,
+        interestRate: loan.interestRate,
         totalPayable: loan.totalPayable,
         repaid: loan.amountRepaid,
         outstanding: loan.outstandingBalance,
-        nextInstallment: loan.repayments.find((r) => r.status === "pending")
+        nextInstallment: loan.repayments?.find((r) => r.status === "pending")
           ?.dueDate,
+        nextInstallmentAmount: loan.repayments?.find(
+          (r) => r.status === "pending",
+        )?.amount,
       })),
     });
   } catch (error) {
@@ -350,25 +444,48 @@ exports.updateCustomerBalance = async (req, res) => {
     const { id } = req.params;
     const { amount, type, description } = req.body;
 
+    // Validate input
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: "Valid amount is required" });
+    }
+
+    if (!type || !["deposit", "withdrawal"].includes(type)) {
+      return res.status(400).json({ error: "Invalid transaction type" });
+    }
+
     const customer = await Customer.findOne({ id: id });
     if (!customer) {
       return res.status(404).json({ error: "Customer not found" });
     }
 
-    let update = {};
-    if (type === "deposit") {
-      update.cashBalance = customer.cashBalance + amount;
-    } else if (type === "withdrawal") {
-      if (customer.cashBalance < amount) {
-        return res.status(400).json({ error: "Insufficient balance" });
-      }
-      update.cashBalance = customer.cashBalance - amount;
-    } else {
-      return res.status(400).json({ error: "Invalid transaction type" });
-    }
+    const currentCashBalance =
+      customer.cashBalance !== undefined
+        ? customer.cashBalance
+        : customer.balance || 0;
 
-    // Also update the legacy balance field
-    update.balance = update.cashBalance;
+    let newCashBalance;
+    let update = {};
+
+    if (type === "deposit") {
+      newCashBalance = currentCashBalance + amount;
+      update = {
+        cashBalance: newCashBalance,
+        balance: newCashBalance, // Legacy field
+      };
+    } else if (type === "withdrawal") {
+      if (currentCashBalance < amount) {
+        return res.status(400).json({
+          error: "Insufficient balance",
+          balance: currentCashBalance,
+          required: amount,
+        });
+      }
+      newCashBalance = currentCashBalance - amount;
+      update = {
+        cashBalance: newCashBalance,
+        balance: newCashBalance, // Legacy field
+      };
+    }
 
     const updatedCustomer = await Customer.findOneAndUpdate(
       { id: id },
@@ -377,13 +494,22 @@ exports.updateCustomerBalance = async (req, res) => {
     );
 
     res.json({
+      success: true,
       message: "Balance updated successfully",
       customer: {
         id: updatedCustomer.id,
         name: updatedCustomer.name,
         cashBalance: updatedCustomer.cashBalance,
-        loanBalance: updatedCustomer.loanBalance,
-        netWorth: updatedCustomer.cashBalance - updatedCustomer.loanBalance,
+        loanBalance: updatedCustomer.loanBalance || 0,
+        netWorth:
+          (updatedCustomer.cashBalance || 0) -
+          (updatedCustomer.loanBalance || 0),
+      },
+      transaction: {
+        type,
+        amount,
+        description: description || "",
+        newBalance: newCashBalance,
       },
     });
   } catch (error) {
@@ -396,30 +522,65 @@ exports.updateCustomerBalance = async (req, res) => {
 exports.updateCustomerLoanBalance = async (req, res) => {
   try {
     const { id } = req.params;
-    const { amount, type, interestAmount } = req.body;
+    const { amount, type, interestAmount, loanId } = req.body;
+
+    // Validate input
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: "Valid amount is required" });
+    }
+
+    if (!type || !["disbursement", "repayment"].includes(type)) {
+      return res.status(400).json({ error: "Invalid loan transaction type" });
+    }
 
     const customer = await Customer.findOne({ id: id });
     if (!customer) {
       return res.status(404).json({ error: "Customer not found" });
     }
 
+    const currentLoanBalance = customer.loanBalance || 0;
+    const currentCashBalance = customer.cashBalance || 0;
     let update = {};
+    let newLoanBalance;
+    let newCashBalance = currentCashBalance;
+
     if (type === "disbursement") {
-      update.loanBalance = customer.loanBalance + amount;
-      update.totalLoanAmount = (customer.totalLoanAmount || 0) + amount;
+      newLoanBalance = currentLoanBalance + amount;
+      update = {
+        loanBalance: newLoanBalance,
+        totalLoanAmount: (customer.totalLoanAmount || 0) + amount,
+      };
+
       if (interestAmount) {
         update.totalInterestAccrued =
           (customer.totalInterestAccrued || 0) + interestAmount;
       }
     } else if (type === "repayment") {
-      if (customer.loanBalance < amount) {
-        return res
-          .status(400)
-          .json({ error: "Loan balance would become negative" });
+      if (currentLoanBalance < amount) {
+        return res.status(400).json({
+          error: "Loan balance would become negative",
+          currentLoanBalance,
+          repaymentAmount: amount,
+        });
       }
-      update.loanBalance = customer.loanBalance - amount;
-    } else {
-      return res.status(400).json({ error: "Invalid loan transaction type" });
+
+      // Check if customer has enough cash balance for repayment
+      if (currentCashBalance < amount) {
+        return res.status(400).json({
+          error: "Insufficient cash balance for loan repayment",
+          cashBalance: currentCashBalance,
+          required: amount,
+        });
+      }
+
+      newLoanBalance = currentLoanBalance - amount;
+      newCashBalance = currentCashBalance - amount;
+
+      update = {
+        loanBalance: newLoanBalance,
+        cashBalance: newCashBalance,
+        balance: newCashBalance, // Legacy field
+      };
     }
 
     const updatedCustomer = await Customer.findOneAndUpdate(
@@ -429,14 +590,27 @@ exports.updateCustomerLoanBalance = async (req, res) => {
     );
 
     res.json({
-      message: "Loan balance updated successfully",
+      success: true,
+      message:
+        type === "disbursement"
+          ? "Loan disbursed successfully"
+          : "Loan repayment recorded successfully",
       customer: {
         id: updatedCustomer.id,
         name: updatedCustomer.name,
-        cashBalance: updatedCustomer.cashBalance,
-        loanBalance: updatedCustomer.loanBalance,
-        netWorth: updatedCustomer.cashBalance - updatedCustomer.loanBalance,
-        totalLoanAmount: updatedCustomer.totalLoanAmount,
+        cashBalance: updatedCustomer.cashBalance || 0,
+        loanBalance: updatedCustomer.loanBalance || 0,
+        netWorth:
+          (updatedCustomer.cashBalance || 0) -
+          (updatedCustomer.loanBalance || 0),
+        totalLoanAmount: updatedCustomer.totalLoanAmount || 0,
+      },
+      loanTransaction: {
+        type,
+        amount,
+        interestAmount: interestAmount || 0,
+        newLoanBalance,
+        cashDeducted: type === "repayment" ? amount : 0,
       },
     });
   } catch (error) {
@@ -454,6 +628,7 @@ exports.updateCustomer = async (req, res) => {
     // Remove fields that shouldn't be updated directly
     delete updates._id;
     delete updates.id;
+    delete updates.customerId;
     delete updates.customerNumber; // Prevent customer number updates
     delete updates.addedBy;
     delete updates.createdAt;
@@ -471,15 +646,43 @@ exports.updateCustomer = async (req, res) => {
       updates.joined = parseDate(updates.joined);
     }
 
-    const customer = await Customer.findOneAndUpdate({ id: id }, updates, {
-      returnDocument: "after",
-    });
+    // Validate email if being updated
+    if (updates.email) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(updates.email)) {
+        return res.status(400).json({ error: "Invalid email format" });
+      }
+      updates.email = updates.email.toLowerCase().trim();
+
+      // Check if email is taken by another customer
+      const existingCustomer = await Customer.findOne({
+        email: updates.email,
+        id: { $ne: id },
+      });
+      if (existingCustomer) {
+        return res
+          .status(400)
+          .json({ error: "Email already in use by another customer" });
+      }
+    }
+
+    // Validate phone if being updated
+    if (updates.phone && updates.phone.length < 10) {
+      return res.status(400).json({ error: "Valid phone number is required" });
+    }
+
+    const customer = await Customer.findOneAndUpdate(
+      { id: id },
+      { $set: updates },
+      { returnDocument: "after" },
+    );
 
     if (!customer) {
       return res.status(404).json({ error: "Customer not found" });
     }
 
     res.json({
+      success: true,
       message: "Customer updated successfully",
       customer: {
         id: customer.id,
@@ -488,22 +691,36 @@ exports.updateCustomer = async (req, res) => {
         email: customer.email,
         phone: customer.phone,
         address: customer.address,
-        cashBalance: customer.cashBalance,
-        loanBalance: customer.loanBalance,
-        netWorth: customer.cashBalance - customer.loanBalance,
+        cashBalance: customer.cashBalance || 0,
+        loanBalance: customer.loanBalance || 0,
+        netWorth: (customer.cashBalance || 0) - (customer.loanBalance || 0),
         status: customer.status,
+        joined: customer.joined,
       },
     });
   } catch (error) {
     console.error("Update customer error:", error);
+
+    if (error.code === 11000) {
+      return res
+        .status(400)
+        .json({ error: "Duplicate value for unique field" });
+    }
+
     res.status(500).json({ error: error.message });
   }
 };
 
-// Delete customer (optional)
+// Delete customer
 exports.deleteCustomer = async (req, res) => {
   try {
     const { id } = req.params;
+
+    // Check if customer exists
+    const customer = await Customer.findOne({ id: id });
+    if (!customer) {
+      return res.status(404).json({ error: "Customer not found" });
+    }
 
     // Check if customer has active loans
     const Loan = require("../models/loan");
@@ -515,19 +732,35 @@ exports.deleteCustomer = async (req, res) => {
     if (activeLoans) {
       return res.status(400).json({
         error: "Cannot delete customer with active or pending loans",
+        activeLoanId: activeLoans.id,
+        activeLoanType: activeLoans.type,
       });
     }
 
-    const customer = await Customer.findOneAndDelete({ id: id });
+    // Check if customer has any pending transactions
+    const Transaction = require("../models/transaction");
+    const pendingTransactions = await Transaction.findOne({
+      customerId: id,
+      status: "pending",
+    });
 
-    if (!customer) {
-      return res.status(404).json({ error: "Customer not found" });
+    if (pendingTransactions) {
+      return res.status(400).json({
+        error: "Cannot delete customer with pending transactions",
+        pendingTransactionId: pendingTransactions.id,
+      });
     }
 
+    await Customer.findOneAndDelete({ id: id });
+
     res.json({
+      success: true,
       message: "Customer deleted successfully",
-      customerId: customer.id,
-      customerName: customer.name,
+      customer: {
+        id: customer.id,
+        name: customer.name,
+        customerNumber: customer.customerNumber,
+      },
     });
   } catch (error) {
     console.error("Delete customer error:", error);
@@ -540,8 +773,14 @@ exports.getCustomerStatistics = async (req, res) => {
   try {
     const totalCustomers = await Customer.countDocuments();
     const activeCustomers = await Customer.countDocuments({ status: "active" });
+    const inactiveCustomers = await Customer.countDocuments({
+      status: "inactive",
+    });
     const customersWithLoans = await Customer.countDocuments({
       loanBalance: { $gt: 0 },
+    });
+    const customersWithCash = await Customer.countDocuments({
+      cashBalance: { $gt: 0 },
     });
 
     const totalCashBalance = await Customer.aggregate([
@@ -555,16 +794,73 @@ exports.getCustomerStatistics = async (req, res) => {
     const totalNetWorth =
       (totalCashBalance[0]?.total || 0) - (totalLoanBalance[0]?.total || 0);
 
+    // Get average balances
+    const avgCashBalance =
+      totalCustomers > 0
+        ? (totalCashBalance[0]?.total || 0) / totalCustomers
+        : 0;
+    const avgLoanBalance =
+      totalCustomers > 0
+        ? (totalLoanBalance[0]?.total || 0) / totalCustomers
+        : 0;
+
     res.json({
-      totalCustomers,
-      activeCustomers,
-      customersWithLoans,
-      totalCashBalance: totalCashBalance[0]?.total || 0,
-      totalLoanBalance: totalLoanBalance[0]?.total || 0,
-      totalNetWorth,
+      success: true,
+      statistics: {
+        totalCustomers,
+        activeCustomers,
+        inactiveCustomers,
+        customersWithLoans,
+        customersWithCash,
+        totalCashBalance: totalCashBalance[0]?.total || 0,
+        totalLoanBalance: totalLoanBalance[0]?.total || 0,
+        totalNetWorth,
+        avgCashBalance,
+        avgLoanBalance,
+      },
     });
   } catch (error) {
     console.error("Get customer statistics error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// Search customers
+exports.searchCustomers = async (req, res) => {
+  try {
+    const { query } = req.query;
+
+    if (!query || query.trim() === "") {
+      return res.status(400).json({ error: "Search query is required" });
+    }
+
+    const searchRegex = new RegExp(query, "i");
+
+    const customers = await Customer.find({
+      $or: [
+        { name: searchRegex },
+        { email: searchRegex },
+        { phone: searchRegex },
+        { customerNumber: searchRegex },
+      ],
+    })
+      .sort({ createdAt: -1 })
+      .limit(20);
+
+    const customersWithNetWorth = customers.map((customer) => {
+      const customerObj = customer.toObject();
+      customerObj.netWorth =
+        (customer.cashBalance || 0) - (customer.loanBalance || 0);
+      return customerObj;
+    });
+
+    res.json({
+      success: true,
+      count: customers.length,
+      customers: customersWithNetWorth,
+    });
+  } catch (error) {
+    console.error("Search customers error:", error);
     res.status(500).json({ error: error.message });
   }
 };
