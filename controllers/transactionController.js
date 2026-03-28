@@ -7,7 +7,7 @@ const {
   sendCreditAlert,
   sendDebitAlert,
   sendSMS,
-} = require("../services/smsService"); // Added sendSMS
+} = require("../services/smsService");
 
 exports.getAllTransactions = async (req, res) => {
   try {
@@ -105,12 +105,19 @@ exports.updateTransactionStatus = async (req, res) => {
         return res.status(404).json({ error: "Customer not found" });
       }
 
-      if (customer.balance < netAmount) {
+      // FIX: Use cashBalance instead of balance (based on your customer model)
+      const availableBalance =
+        customer.cashBalance !== undefined
+          ? customer.cashBalance
+          : customer.balance || 0;
+
+      if (availableBalance < netAmount) {
         const rejectedTransaction = await Transaction.findOneAndUpdate(
           { id: req.params.id },
           {
             status: "rejected",
             approvedBy: "System - Insufficient Funds",
+            processedAt: new Date(),
           },
           { returnDocument: "after" },
         );
@@ -124,7 +131,7 @@ exports.updateTransactionStatus = async (req, res) => {
 
 ❌ TRANSACTION REJECTED
 Type: ${currentTransaction.type.toUpperCase()}
-Amount: ₦${currentTransaction.amount.toLocaleString()}
+Amount: ₦${(currentTransaction.amount || 0).toLocaleString()}
 ${charges > 0 ? `Charges: ₦${charges.toLocaleString()}` : ""}
 Reason: Insufficient funds
 Date: ${new Date().toLocaleString()}
@@ -146,7 +153,6 @@ Please ensure you have sufficient balance.`;
     }
 
     // ✅ Update transaction status
-    // FIX: Build update object with conditional date field
     const updateData = {
       status,
       approvedBy,
@@ -168,14 +174,20 @@ Please ensure you have sufficient balance.`;
         return res.status(404).json({ error: "Customer not found" });
       }
 
-      const oldBalance = customer.balance;
+      // FIX: Use cashBalance consistently (based on your customer model)
+      const oldBalance =
+        customer.cashBalance !== undefined
+          ? customer.cashBalance
+          : customer.balance || 0;
 
       // 💰 UPDATE BALANCE
       if (transaction.type === "deposit") {
-        customer.balance += netAmount;
+        customer.cashBalance = (customer.cashBalance || 0) + netAmount;
+        customer.balance = customer.cashBalance; // Keep legacy field in sync
         console.log(`💰 Deposit: Added ₦${netAmount} to ${customer.name}`);
       } else if (transaction.type === "withdrawal") {
-        customer.balance -= netAmount;
+        customer.cashBalance = (customer.cashBalance || 0) - netAmount;
+        customer.balance = customer.cashBalance; // Keep legacy field in sync
         console.log(
           `💰 Withdrawal: Deducted ₦${netAmount} from ${customer.name}`,
         );
@@ -184,7 +196,7 @@ Please ensure you have sufficient balance.`;
       await customer.save();
 
       console.log(
-        `✅ Customer ${customer.name} balance updated: ₦${oldBalance.toLocaleString()} → ₦${customer.balance.toLocaleString()}`,
+        `✅ Customer ${customer.name} balance updated: ₦${oldBalance.toLocaleString()} → ₦${customer.cashBalance.toLocaleString()}`,
       );
 
       // 📱 SEND SMS (NON-BLOCKING)
@@ -194,19 +206,19 @@ Please ensure you have sufficient balance.`;
             const result = await sendCreditAlert(
               customer.phone,
               netAmount,
-              customer.balance,
+              customer.cashBalance,
               transaction.id,
             );
             if (result.success) {
               console.log(`📱 Credit SMS sent to ${customer.phone}`);
             } else {
               console.log(`⚠️ Credit SMS failed: ${result.error}`);
-            } // <-- FIXED: Removed extra ) here
+            }
           } else if (transaction.type === "withdrawal") {
             const result = await sendDebitAlert(
               customer.phone,
               netAmount,
-              customer.balance,
+              customer.cashBalance,
               transaction.id,
             );
             if (result.success) {
@@ -227,24 +239,29 @@ Please ensure you have sufficient balance.`;
 
       return res.json({
         ...transaction.toObject(),
-        updatedCustomerBalance: customer.balance,
+        updatedCustomerBalance: customer.cashBalance,
         netAmount: netAmount,
         charges: charges,
         smsSent: customer.phone ? true : false,
       });
     }
 
-    // Handle rejection
+    // Handle rejection (manual rejection by staff)
     if (status === "rejected") {
       const customer = await Customer.findOne({ id: transaction.customerId });
       if (customer && customer.phone) {
         try {
+          // FIX: Use currentTransaction or check if transaction has amount
+          const amount = transaction.amount || currentTransaction.amount || 0;
+          const txnCharges =
+            transaction.charges || currentTransaction.charges || 0;
+
           const rejectionMessage = `VAULTFLOW BANKING
 
 ❌ TRANSACTION REJECTED
-Type: ${transaction.type.toUpperCase()}
-Amount: ₦${transaction.amount.toLocaleString()}
-${charges > 0 ? `Charges: ₦${charges.toLocaleString()}` : ""}
+Type: ${(transaction.type || currentTransaction.type).toUpperCase()}
+Amount: ₦${amount.toLocaleString()}
+${txnCharges > 0 ? `Charges: ₦${txnCharges.toLocaleString()}` : ""}
 Reason: ${approvedBy || "Not approved"}
 Date: ${new Date().toLocaleString()}
 Ref: ${transaction.id}
@@ -265,6 +282,7 @@ Contact support for more information.`;
     res.status(500).json({ error: error.message });
   }
 };
+
 // Optional: Add a test SMS endpoint
 exports.testSMS = async (req, res) => {
   try {
