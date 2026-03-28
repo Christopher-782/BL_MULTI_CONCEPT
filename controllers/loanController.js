@@ -227,6 +227,7 @@ exports.getLoansByCustomer = async (req, res) => {
 
 // Approve loan request
 // controllers/loanController.js - Update approveLoan function
+// Approve loan request - FIXED VERSION
 exports.approveLoan = async (req, res) => {
   try {
     const { loanId } = req.params;
@@ -251,8 +252,8 @@ exports.approveLoan = async (req, res) => {
     // Update loan status
     loan.status = "active";
     loan.approvedBy = {
-      adminId: approvedBy.id,
-      adminName: approvedBy.name,
+      adminId: approvedBy?.id || approvedBy?.staffId || "system",
+      adminName: approvedBy?.name || approvedBy?.staffName || "System",
       approvedAt: new Date(),
     };
     loan.amountDisbursed = disbursedAmount || loan.amount;
@@ -260,17 +261,22 @@ exports.approveLoan = async (req, res) => {
 
     await loan.save();
 
+    // FIX: Calculate interest properly - totalInterest doesn't exist on loan model
+    // Interest = totalPayable - original amount
+    const interestAmount = (loan.totalPayable || 0) - (loan.amount || 0);
+
     // IMPORTANT: DO NOT increase cash balance!
     // Instead, track loan balance separately
-    await Customer.findOneAndUpdate(
+    const updateResult = await Customer.findOneAndUpdate(
       { id: loan.customerId },
       {
         $inc: {
-          loanBalance: loan.amountDisbursed, // Track loan as liability
-          totalLoanAmount: loan.amountDisbursed,
-          totalInterestAccrued: loan.totalInterest,
+          loanBalance: loan.amountDisbursed || 0, // Track loan as liability
+          totalLoanAmount: loan.amountDisbursed || 0,
+          totalInterestAccrued: interestAmount || 0, // Now properly calculated
         },
       },
+      { returnDocument: "after" }, // Return updated document
     );
 
     // Create transaction record for loan disbursement (for tracking only)
@@ -279,34 +285,53 @@ exports.approveLoan = async (req, res) => {
       id: "TXN" + Date.now(),
       customerId: loan.customerId,
       customerName: loan.customerName,
-      type: "loan_disbursement", // New type for tracking
+      customerPhone: customer.phone || null,
+      type: "loan_disbursement",
       amount: loan.amountDisbursed,
       charges: 0,
       netAmount: loan.amountDisbursed,
       description: `${loan.type === "loan" ? "Loan" : "Overdraft"} disbursement - ${loan.id}`,
       status: "approved",
-      requestedBy: approvedBy.name,
-      approvedBy: approvedBy.name,
+      requestedBy: approvedBy?.name || "System",
+      approvedBy: approvedBy?.name || "System",
       date: new Date().toISOString(),
     });
 
     await transaction.save();
 
-    // Send SMS notification
-    await NotificationService.notifyLoanApproval(loan);
+    // FIX: Safely handle notification service
+    try {
+      if (
+        typeof NotificationService !== "undefined" &&
+        NotificationService.notifyLoanApproval
+      ) {
+        await NotificationService.notifyLoanApproval(loan);
+      }
+    } catch (notifyError) {
+      console.log("Notification failed (non-critical):", notifyError.message);
+    }
 
     res.json({
+      success: true,
       message: `${loan.type === "loan" ? "Loan" : "Overdraft"} approved and disbursed successfully`,
       loan,
       customer: {
-        cashBalance: customer.cashBalance,
-        loanBalance: customer.loanBalance + loan.amountDisbursed,
-        totalLoans: customer.totalLoanAmount + loan.amountDisbursed,
+        cashBalance: updateResult?.cashBalance || customer.cashBalance,
+        loanBalance: updateResult?.loanBalance || customer.loanBalance || 0,
+        totalLoans:
+          updateResult?.totalLoanAmount || customer.totalLoanAmount || 0,
+        totalInterestAccrued:
+          updateResult?.totalInterestAccrued ||
+          customer.totalInterestAccrued ||
+          0,
       },
     });
   } catch (error) {
     console.error("Approve loan error:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({
+      error: error.message,
+      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
+    });
   }
 };
 // Reject loan request
@@ -373,9 +398,12 @@ exports.recordRepayment = async (req, res) => {
     }
 
     // Check if customer has enough cash balance to repay
-    if (customer.cashBalance < repayment.amount) {
+    const availableCash = customer.cashBalance || 0;
+    const repaymentAmount = repayment.amount || 0;
+
+    if (availableCash < repaymentAmount) {
       return res.status(400).json({
-        error: `Insufficient cash balance. Available: ₦${customer.cashBalance.toLocaleString()}, Required: ₦${repayment.amount.toLocaleString()}`,
+        error: `Insufficient cash balance. Available: ₦${availableCash.toLocaleString()}, Required: ₦${repaymentAmount.toLocaleString()}`,
       });
     }
 
@@ -385,33 +413,37 @@ exports.recordRepayment = async (req, res) => {
     repayment.paidBy = paidBy;
 
     // Update loan totals
-    loan.amountRepaid += repayment.amount;
-    loan.outstandingBalance = loan.totalPayable - loan.amountRepaid;
+    loan.amountRepaid = (loan.amountRepaid || 0) + repaymentAmount;
+    loan.outstandingBalance =
+      (loan.totalPayable || 0) - (loan.amountRepaid || 0);
 
     // Check if loan is completed
     if (loan.outstandingBalance <= 0) {
       loan.status = "completed";
+      loan.completedAt = new Date();
     }
 
     await loan.save();
 
-    // Calculate interest portion for this repayment
-    const interestRatio = loan.totalInterest / loan.totalPayable;
-    const interestPortion = repayment.amount * interestRatio;
-    const principalPortion = repayment.amount - interestPortion;
+    // FIX: Calculate interest portion properly - loan.totalInterest doesn't exist!
+    // Interest = totalPayable - original amount
+    const totalInterest = (loan.totalPayable || 0) - (loan.amount || 0);
+    const interestRatio = totalInterest / (loan.totalPayable || 1); // Avoid division by zero
+    const interestPortion = repaymentAmount * interestRatio;
+    const principalPortion = repaymentAmount - interestPortion;
 
     // Update customer balances:
     // 1. DEDUCT from cash balance (actual money paid)
     // 2. REDUCE loan balance (liability decreases)
-    await Customer.findOneAndUpdate(
+    const updatedCustomer = await Customer.findOneAndUpdate(
       { id: loan.customerId },
       {
         $inc: {
-          cashBalance: -repayment.amount, // Money leaves customer's account
+          cashBalance: -repaymentAmount, // Money leaves customer's account
           loanBalance: -principalPortion, // Loan principal decreases
-          // Note: Interest is not tracked in loan balance, it's an expense
         },
       },
+      { returnDocument: "after" },
     );
 
     // Create transaction record for loan repayment
@@ -420,49 +452,65 @@ exports.recordRepayment = async (req, res) => {
       id: "TXN" + Date.now(),
       customerId: loan.customerId,
       customerName: loan.customerName,
-      type: "loan_repayment", // New type for tracking
-      amount: repayment.amount,
-      principalPortion: principalPortion, // Track breakdown
-      interestPortion: interestPortion, // Track breakdown
+      customerPhone: customer?.phone || null,
+      type: "loan_repayment",
+      amount: repaymentAmount,
+      principalPortion: principalPortion,
+      interestPortion: interestPortion,
       charges: 0,
-      netAmount: repayment.amount,
+      netAmount: repaymentAmount,
       description: `${loan.type === "loan" ? "Loan" : "Overdraft"} repayment - Installment ${repaymentIndex + 1}`,
       status: "approved",
-      requestedBy: paidBy,
-      approvedBy: paidBy,
+      requestedBy: paidBy || "Customer",
+      approvedBy: paidBy || "System",
       date: new Date().toISOString(),
     });
 
     await transaction.save();
 
-    // Send SMS notification
-    await NotificationService.notifyRepaymentReceived(
-      loan,
-      repayment,
-      repaymentIndex + 1,
-    );
+    // FIX: Safely handle notification service
+    try {
+      if (
+        typeof NotificationService !== "undefined" &&
+        NotificationService.notifyRepaymentReceived
+      ) {
+        await NotificationService.notifyRepaymentReceived(
+          loan,
+          repayment,
+          repaymentIndex + 1,
+        );
+      }
+    } catch (notifyError) {
+      console.log("Notification failed (non-critical):", notifyError.message);
+    }
 
-    // Get updated customer data
-    const updatedCustomer = await Customer.findOne({ id: loan.customerId });
+    // Get updated customer data if findOneAndUpdate didn't return it
+    const finalCustomer =
+      updatedCustomer || (await Customer.findOne({ id: loan.customerId }));
 
     res.json({
+      success: true,
       message: `Repayment recorded successfully`,
       loan,
       repayment,
       breakdown: {
-        totalPaid: repayment.amount,
+        totalPaid: repaymentAmount,
         principalPaid: principalPortion,
         interestPaid: interestPortion,
       },
       customer: {
-        cashBalance: updatedCustomer.cashBalance,
-        loanBalance: updatedCustomer.loanBalance,
-        netWorth: updatedCustomer.cashBalance - updatedCustomer.loanBalance,
+        cashBalance: finalCustomer?.cashBalance || 0,
+        loanBalance: finalCustomer?.loanBalance || 0,
+        netWorth:
+          (finalCustomer?.cashBalance || 0) - (finalCustomer?.loanBalance || 0),
       },
     });
   } catch (error) {
     console.error("Record repayment error:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({
+      error: error.message,
+      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
+    });
   }
 };
 // Get revenue reports
