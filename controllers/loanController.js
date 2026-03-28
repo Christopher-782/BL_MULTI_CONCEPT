@@ -368,6 +368,7 @@ exports.rejectLoan = async (req, res) => {
 };
 
 // Record repayment - CORRECTED WITH SMS
+// Record repayment - CORRECTED WITH SMS (DEBIT FROM CUSTOMER BALANCE)
 exports.recordRepayment = async (req, res) => {
   try {
     const { loanId, repaymentId } = req.params;
@@ -399,6 +400,17 @@ exports.recordRepayment = async (req, res) => {
 
     const repaymentAmount = paymentAmount || repayment.amount || 0;
 
+    // Check if customer has sufficient balance for repayment
+    const availableBalance = customer.cashBalance || customer.balance || 0;
+    if (repaymentAmount > availableBalance) {
+      return res.status(400).json({
+        error: "Insufficient funds for loan repayment",
+        availableBalance,
+        requestedRepayment: repaymentAmount,
+        shortfall: repaymentAmount - availableBalance,
+      });
+    }
+
     // Update repayment status
     repayment.status = "paid";
     repayment.paidDate = new Date();
@@ -426,31 +438,31 @@ exports.recordRepayment = async (req, res) => {
     const interestPortion = repaymentAmount * interestRatio;
     const principalPortion = repaymentAmount - interestPortion;
 
-    // Update customer balances
+    // ✅ FIXED: DEBIT customer balance (subtract repayment amount)
     const updatedCustomer = await Customer.findOneAndUpdate(
       { id: loan.customerId },
       {
         $inc: {
-          cashBalance: repaymentAmount,
-          balance: repaymentAmount,
-          loanBalance: -principalPortion,
+          cashBalance: -repaymentAmount, // DEBIT: Subtract from balance
+          balance: -repaymentAmount, // DEBIT: Subtract from balance
+          loanBalance: -principalPortion, // Reduce loan balance
         },
       },
       { returnDocument: "after", new: true },
     );
 
-    // Create transaction record
+    // Create transaction record (now a withdrawal/debit type)
     const transaction = new Transaction({
       id: "TXN" + Date.now(),
       customerId: loan.customerId,
       customerName: loan.customerName,
       customerPhone: customer?.phone || null,
-      type: "loan_repayment",
+      type: "loan_repayment", // This is now correctly a debit transaction
       amount: repaymentAmount,
       principalPortion: principalPortion,
       interestPortion: interestPortion,
       charges: 0,
-      netAmount: repaymentAmount,
+      netAmount: -repaymentAmount, // Negative because it's a debit
       description: `Loan repayment - Installment ${repaymentIndex + 1}/${loan.numberOfInstallments} (Principal: ₦${principalPortion.toLocaleString()}, Interest: ₦${interestPortion.toLocaleString()})`,
       status: "approved",
       requestedBy: paidBy || "Customer",
@@ -459,18 +471,15 @@ exports.recordRepayment = async (req, res) => {
     });
     await transaction.save();
 
-    // ✅ FIXED: Send SMS notification for repayment
+    // ✅ FIXED: Send SMS notification for repayment (debit alert)
     if (customer?.phone) {
       try {
-        await smsService.sendLoanRepaymentCreditAlert(
+        await smsService.sendDebitAlert(
           customer.phone,
           repaymentAmount,
-          principalPortion,
-          interestPortion,
           updatedCustomer?.cashBalance || 0,
-          loan.id,
-          repaymentIndex + 1,
-          loan.numberOfInstallments,
+          transaction.id,
+          0, // No charges for loan repayment
         );
         console.log(`✅ Loan repayment SMS sent to ${customer.phone}`);
       } catch (smsError) {
@@ -508,7 +517,7 @@ exports.recordRepayment = async (req, res) => {
       repayment: {
         installmentNumber: repaymentIndex + 1,
         amountPaid: repaymentAmount,
-        principalRestored: principalPortion,
+        principalReduced: principalPortion,
         interest: interestPortion,
         paidDate: repayment.paidDate,
       },
@@ -521,7 +530,7 @@ exports.recordRepayment = async (req, res) => {
       },
       transaction: {
         id: transaction.id,
-        amountCredited: repaymentAmount,
+        amountDebited: repaymentAmount, // Changed from amountCredited to amountDebited
       },
     });
   } catch (error) {
