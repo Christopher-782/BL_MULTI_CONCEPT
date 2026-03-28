@@ -63,10 +63,9 @@ const loanSchema = new mongoose.Schema(
     notes: { type: String },
   },
   {
-    timestamps: true, // This replaces the need for manual middleware
+    timestamps: true,
   },
 );
 
-// Export with check to prevent model overwrite
 module.exports =
   mongoose.models.Loan || mongoose.model("Loan", loanSchema, "loans");

@@ -228,10 +228,12 @@ exports.getLoansByCustomer = async (req, res) => {
 // Approve loan request
 // controllers/loanController.js - Update approveLoan function
 // Approve loan request - FIXED VERSION
+// Approve loan - SIMPLIFIED VERSION
+// Customer is DEBITED immediately (loan + interest), pays back later
 exports.approveLoan = async (req, res) => {
   try {
     const { loanId } = req.params;
-    const { approvedBy, disbursedAmount } = req.body;
+    const { approvedBy } = req.body;
 
     const loan = await Loan.findOne({ id: loanId });
     if (!loan) {
@@ -249,6 +251,23 @@ exports.approveLoan = async (req, res) => {
       return res.status(404).json({ error: "Customer not found" });
     }
 
+    // Calculate totals
+    const principal = loan.amount || 0;
+    const interest = (loan.totalPayable || 0) - principal;
+    const totalDeduction = loan.totalPayable || 0;
+
+    // Check if customer has enough balance to cover the loan + interest
+    const availableCash = customer.cashBalance || customer.balance || 0;
+
+    if (availableCash < totalDeduction) {
+      return res.status(400).json({
+        error: "Insufficient balance to secure this loan",
+        required: totalDeduction,
+        available: availableCash,
+        shortfall: totalDeduction - availableCash,
+      });
+    }
+
     // Update loan status
     loan.status = "active";
     loan.approvedBy = {
@@ -256,50 +275,49 @@ exports.approveLoan = async (req, res) => {
       adminName: approvedBy?.name || approvedBy?.staffName || "System",
       approvedAt: new Date(),
     };
-    loan.amountDisbursed = disbursedAmount || loan.amount;
-    loan.outstandingBalance = loan.totalPayable;
+    loan.amountDisbursed = principal;
+    loan.outstandingBalance = totalDeduction; // Full amount to be paid back
 
     await loan.save();
 
-    // FIX: Calculate interest properly - totalInterest doesn't exist on loan model
-    // Interest = totalPayable - original amount
-    const interestAmount = (loan.totalPayable || 0) - (loan.amount || 0);
-
-    // IMPORTANT: DO NOT increase cash balance!
-    // Instead, track loan balance separately
-    const updateResult = await Customer.findOneAndUpdate(
+    // DEDUCT full amount (principal + interest) from customer cash balance
+    // This secures the loan - customer must pay back to restore balance
+    const updatedCustomer = await Customer.findOneAndUpdate(
       { id: loan.customerId },
       {
         $inc: {
-          loanBalance: loan.amountDisbursed || 0, // Track loan as liability
-          totalLoanAmount: loan.amountDisbursed || 0,
-          totalInterestAccrued: interestAmount || 0, // Now properly calculated
+          cashBalance: -totalDeduction,
+          balance: -totalDeduction, // Legacy field
+          loanBalance: principal, // Track principal as liability
+          totalLoanAmount: principal,
+          totalInterestAccrued: interest, // Interest tracked as revenue
         },
       },
-      { returnDocument: "after" }, // Return updated document
+      { returnDocument: "after", new: true },
     );
 
-    // Create transaction record for loan disbursement (for tracking only)
+    // Create transaction for loan disbursement (debit)
     const Transaction = require("../models/transaction");
-    const transaction = new Transaction({
+    const disbursementTxn = new Transaction({
       id: "TXN" + Date.now(),
       customerId: loan.customerId,
       customerName: loan.customerName,
-      customerPhone: customer.phone || null,
+      customerPhone: customer?.phone || null,
       type: "loan_disbursement",
-      amount: loan.amountDisbursed,
+      amount: principal,
+      interestAmount: interest,
+      totalDeducted: totalDeduction,
       charges: 0,
-      netAmount: loan.amountDisbursed,
-      description: `${loan.type === "loan" ? "Loan" : "Overdraft"} disbursement - ${loan.id}`,
+      netAmount: -totalDeduction, // Negative = debit
+      description: `Loan secured - ${loan.type} #${loan.id} (Principal: ₦${principal.toLocaleString()}, Interest: ₦${interest.toLocaleString()})`,
       status: "approved",
       requestedBy: approvedBy?.name || "System",
       approvedBy: approvedBy?.name || "System",
       date: new Date().toISOString(),
     });
+    await disbursementTxn.save();
 
-    await transaction.save();
-
-    // FIX: Safely handle notification service
+    // Send notification
     try {
       if (
         typeof NotificationService !== "undefined" &&
@@ -307,23 +325,33 @@ exports.approveLoan = async (req, res) => {
       ) {
         await NotificationService.notifyLoanApproval(loan);
       }
-    } catch (notifyError) {
-      console.log("Notification failed (non-critical):", notifyError.message);
+    } catch (e) {
+      console.log("Notification skipped:", e.message);
     }
 
     res.json({
       success: true,
-      message: `${loan.type === "loan" ? "Loan" : "Overdraft"} approved and disbursed successfully`,
-      loan,
+      message: "Loan approved and secured successfully",
+      loan: {
+        id: loan.id,
+        type: loan.type,
+        principal: principal,
+        interest: interest,
+        totalPayable: totalDeduction,
+        status: "active",
+        outstandingBalance: totalDeduction,
+      },
       customer: {
-        cashBalance: updateResult?.cashBalance || customer.cashBalance,
-        loanBalance: updateResult?.loanBalance || customer.loanBalance || 0,
-        totalLoans:
-          updateResult?.totalLoanAmount || customer.totalLoanAmount || 0,
-        totalInterestAccrued:
-          updateResult?.totalInterestAccrued ||
-          customer.totalInterestAccrued ||
-          0,
+        name: updatedCustomer?.name,
+        previousBalance: availableCash,
+        newCashBalance: updatedCustomer?.cashBalance || 0,
+        loanBalance: updatedCustomer?.loanBalance || 0,
+        totalInterestAccrued: updatedCustomer?.totalInterestAccrued || 0,
+      },
+      transaction: {
+        id: disbursementTxn.id,
+        type: "loan_disbursement",
+        amountDeducted: totalDeduction,
       },
     });
   } catch (error) {
@@ -366,6 +394,8 @@ exports.rejectLoan = async (req, res) => {
 
 // Record repayment
 // controllers/loanController.js - Update recordRepayment function
+// Record repayment - SIMPLIFIED VERSION
+// Customer pays back to restore their cash balance
 exports.recordRepayment = async (req, res) => {
   try {
     const { loanId, repaymentId } = req.params;
@@ -397,25 +427,22 @@ exports.recordRepayment = async (req, res) => {
       return res.status(404).json({ error: "Customer not found" });
     }
 
-    // Check if customer has enough cash balance to repay
-    const availableCash = customer.cashBalance || 0;
-    const repaymentAmount = repayment.amount || 0;
+    // For cash payments, we don't check cashBalance - we ADD to it
+    // For transfer deductions, check if they have enough
+    const repaymentAmount = paymentAmount || repayment.amount || 0;
 
-    if (availableCash < repaymentAmount) {
-      return res.status(400).json({
-        error: `Insufficient cash balance. Available: ₦${availableCash.toLocaleString()}, Required: ₦${repaymentAmount.toLocaleString()}`,
-      });
-    }
-
-    // Update repayment
+    // Update repayment status
     repayment.status = "paid";
     repayment.paidDate = new Date();
-    repayment.paidBy = paidBy;
+    repayment.paidBy = paidBy || "Customer";
+    repayment.paidAmount = repaymentAmount;
 
     // Update loan totals
     loan.amountRepaid = (loan.amountRepaid || 0) + repaymentAmount;
-    loan.outstandingBalance =
-      (loan.totalPayable || 0) - (loan.amountRepaid || 0);
+    loan.outstandingBalance = Math.max(
+      0,
+      (loan.totalPayable || 0) - (loan.amountRepaid || 0),
+    );
 
     // Check if loan is completed
     if (loan.outstandingBalance <= 0) {
@@ -425,28 +452,27 @@ exports.recordRepayment = async (req, res) => {
 
     await loan.save();
 
-    // FIX: Calculate interest portion properly - loan.totalInterest doesn't exist!
-    // Interest = totalPayable - original amount
+    // Calculate principal vs interest for this payment
     const totalInterest = (loan.totalPayable || 0) - (loan.amount || 0);
-    const interestRatio = totalInterest / (loan.totalPayable || 1); // Avoid division by zero
+    const interestRatio = totalInterest / (loan.totalPayable || 1);
     const interestPortion = repaymentAmount * interestRatio;
     const principalPortion = repaymentAmount - interestPortion;
 
-    // Update customer balances:
-    // 1. DEDUCT from cash balance (actual money paid)
-    // 2. REDUCE loan balance (liability decreases)
+    // ADD payment to customer's cash balance (they're getting money back)
+    // REDUCE loan balance
     const updatedCustomer = await Customer.findOneAndUpdate(
       { id: loan.customerId },
       {
         $inc: {
-          cashBalance: -repaymentAmount, // Money leaves customer's account
-          loanBalance: -principalPortion, // Loan principal decreases
+          cashBalance: repaymentAmount, // Money ADDED to account
+          balance: repaymentAmount, // Legacy field
+          loanBalance: -principalPortion, // Loan liability decreases
         },
       },
-      { returnDocument: "after" },
+      { returnDocument: "after", new: true },
     );
 
-    // Create transaction record for loan repayment
+    // Create transaction record
     const Transaction = require("../models/transaction");
     const transaction = new Transaction({
       id: "TXN" + Date.now(),
@@ -458,17 +484,16 @@ exports.recordRepayment = async (req, res) => {
       principalPortion: principalPortion,
       interestPortion: interestPortion,
       charges: 0,
-      netAmount: repaymentAmount,
-      description: `${loan.type === "loan" ? "Loan" : "Overdraft"} repayment - Installment ${repaymentIndex + 1}`,
+      netAmount: repaymentAmount, // Positive = credit
+      description: `Loan repayment - Installment ${repaymentIndex + 1}/${loan.numberOfInstallments} (Principal: ₦${principalPortion.toLocaleString()}, Interest: ₦${interestPortion.toLocaleString()})`,
       status: "approved",
       requestedBy: paidBy || "Customer",
       approvedBy: paidBy || "System",
       date: new Date().toISOString(),
     });
-
     await transaction.save();
 
-    // FIX: Safely handle notification service
+    // Send notification
     try {
       if (
         typeof NotificationService !== "undefined" &&
@@ -480,29 +505,38 @@ exports.recordRepayment = async (req, res) => {
           repaymentIndex + 1,
         );
       }
-    } catch (notifyError) {
-      console.log("Notification failed (non-critical):", notifyError.message);
+    } catch (e) {
+      console.log("Notification skipped:", e.message);
     }
-
-    // Get updated customer data if findOneAndUpdate didn't return it
-    const finalCustomer =
-      updatedCustomer || (await Customer.findOne({ id: loan.customerId }));
 
     res.json({
       success: true,
-      message: `Repayment recorded successfully`,
-      loan,
-      repayment,
-      breakdown: {
-        totalPaid: repaymentAmount,
-        principalPaid: principalPortion,
-        interestPaid: interestPortion,
+      message: "Repayment recorded successfully",
+      loan: {
+        id: loan.id,
+        status: loan.status,
+        outstandingBalance: loan.outstandingBalance,
+        amountRepaid: loan.amountRepaid,
+        progress:
+          Math.round((loan.amountRepaid / loan.totalPayable) * 100) + "%",
+      },
+      repayment: {
+        installmentNumber: repaymentIndex + 1,
+        amountPaid: repaymentAmount,
+        principalRestored: principalPortion,
+        interest: interestPortion,
+        paidDate: repayment.paidDate,
       },
       customer: {
-        cashBalance: finalCustomer?.cashBalance || 0,
-        loanBalance: finalCustomer?.loanBalance || 0,
+        cashBalance: updatedCustomer?.cashBalance || 0,
+        loanBalance: updatedCustomer?.loanBalance || 0,
         netWorth:
-          (finalCustomer?.cashBalance || 0) - (finalCustomer?.loanBalance || 0),
+          (updatedCustomer?.cashBalance || 0) -
+          (updatedCustomer?.loanBalance || 0),
+      },
+      transaction: {
+        id: transaction.id,
+        amountCredited: repaymentAmount,
       },
     });
   } catch (error) {
@@ -514,108 +548,150 @@ exports.recordRepayment = async (req, res) => {
   }
 };
 // Get revenue reports
+// Get revenue reports - INTEREST SHOWS AS REVENUE
 exports.getRevenueReports = async (req, res) => {
   try {
-    const { period } = req.query; // daily, weekly, monthly, yearly
+    const { period, type } = req.query; // period: daily, weekly, monthly, yearly, all
+    // type: 'interest', 'charges', 'all'
 
     let startDate = new Date();
+    let matchStage = {};
     let groupFormat = {};
 
+    // Set date range
     switch (period) {
       case "daily":
         startDate.setHours(0, 0, 0, 0);
-        groupFormat = {
-          year: { $year: "$date" },
-          month: { $month: "$date" },
-          day: { $dayOfMonth: "$date" },
-        };
         break;
       case "weekly":
         startDate.setDate(startDate.getDate() - 7);
-        groupFormat = {
-          year: { $year: "$date" },
-          week: { $week: "$date" },
-        };
         break;
       case "monthly":
         startDate.setMonth(startDate.getMonth() - 1);
-        groupFormat = {
-          year: { $year: "$date" },
-          month: { $month: "$date" },
-        };
         break;
       case "yearly":
         startDate.setFullYear(startDate.getFullYear() - 1);
-        groupFormat = {
-          year: { $year: "$date" },
-        };
         break;
       default:
         startDate = new Date(0); // all time
     }
 
-    // Get loan interest revenue
-    const completedLoans = await Loan.aggregate([
-      {
-        $match: {
-          status: "completed",
-          ...(period !== "all" ? { createdAt: { $gte: startDate } } : {}),
-        },
-      },
-      {
-        $group: {
-          _id: groupFormat,
-          totalInterest: { $sum: { $subtract: ["$totalPayable", "$amount"] } },
-          totalLoans: { $sum: 1 },
-          totalDisbursed: { $sum: "$amount" },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
+    // Build match stage for date filtering
+    if (period && period !== "all") {
+      matchStage.createdAt = { $gte: startDate };
+    }
 
-    // Get transaction charges revenue
-    const Transaction = require("../models/transaction");
-    const transactionCharges = await Transaction.aggregate([
-      {
-        $match: {
-          status: "approved",
-          ...(period !== "all"
-            ? { date: { $gte: startDate.toISOString() } }
-            : {}),
+    // Get INTEREST REVENUE from approved loans
+    let interestRevenue = [];
+    if (!type || type === "all" || type === "interest") {
+      interestRevenue = await Loan.aggregate([
+        {
+          $match: {
+            status: { $in: ["active", "completed"] },
+            ...matchStage,
+          },
         },
-      },
-      {
-        $group: {
-          _id: groupFormat,
-          totalCharges: { $sum: "$charges" },
-          totalTransactions: { $sum: 1 },
+        {
+          $project: {
+            interestAmount: { $subtract: ["$totalPayable", "$amount"] },
+            amountRepaid: 1,
+            totalPayable: 1,
+            createdAt: 1,
+            date: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+            month: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+            year: { $year: "$createdAt" },
+          },
         },
-      },
-      { $sort: { _id: 1 } },
-    ]);
+        {
+          $group: {
+            _id:
+              period === "daily"
+                ? "$date"
+                : period === "monthly"
+                  ? "$month"
+                  : period === "yearly"
+                    ? "$year"
+                    : null,
+            totalInterest: { $sum: "$interestAmount" },
+            totalLoans: { $sum: 1 },
+            totalPrincipal: { $sum: "$amount" },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]);
+    }
+
+    // Get TRANSACTION CHARGES revenue
+    let transactionCharges = [];
+    if (!type || type === "all" || type === "charges") {
+      const Transaction = require("../models/transaction");
+      transactionCharges = await Transaction.aggregate([
+        {
+          $match: {
+            status: "approved",
+            ...(period && period !== "all"
+              ? {
+                  createdAt: { $gte: startDate },
+                }
+              : {}),
+          },
+        },
+        {
+          $project: {
+            charges: 1,
+            createdAt: 1,
+            date: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+            month: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+            year: { $year: "$createdAt" },
+          },
+        },
+        {
+          $group: {
+            _id:
+              period === "daily"
+                ? "$date"
+                : period === "monthly"
+                  ? "$month"
+                  : period === "yearly"
+                    ? "$year"
+                    : null,
+            totalCharges: { $sum: "$charges" },
+            totalTransactions: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]);
+    }
 
     // Calculate totals
-    let totalInterest = 0;
-    let totalCharges = 0;
-
-    completedLoans.forEach((loan) => {
-      totalInterest += loan.totalInterest;
-    });
-
-    transactionCharges.forEach((charge) => {
-      totalCharges += charge.totalCharges;
-    });
+    const totalInterest = interestRevenue.reduce(
+      (sum, item) => sum + (item.totalInterest || 0),
+      0,
+    );
+    const totalCharges = transactionCharges.reduce(
+      (sum, item) => sum + (item.totalCharges || 0),
+      0,
+    );
+    const totalRevenue = totalInterest + totalCharges;
 
     res.json({
-      period,
-      totalRevenue: totalInterest + totalCharges,
-      breakdown: {
+      success: true,
+      period: period || "all",
+      totalRevenue: totalRevenue,
+      summary: {
         interestRevenue: totalInterest,
         transactionCharges: totalCharges,
       },
-      details: {
-        loans: completedLoans,
-        transactions: transactionCharges,
+      breakdown: {
+        interest: interestRevenue,
+        charges: transactionCharges,
+      },
+      // For dashboard widgets
+      dashboard: {
+        totalInterestEarned: totalInterest,
+        totalChargesEarned: totalCharges,
+        activeLoansCount: await Loan.countDocuments({ status: "active" }),
+        completedLoansCount: await Loan.countDocuments({ status: "completed" }),
       },
     });
   } catch (error) {
@@ -817,6 +893,114 @@ exports.getCustomerLoanSummary = async (req, res) => {
     });
   } catch (error) {
     console.error("Get customer loan summary error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+// Get dashboard summary with interest revenue
+exports.getDashboardSummary = async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const thisMonth = new Date();
+    thisMonth.setDate(1);
+    thisMonth.setHours(0, 0, 0, 0);
+
+    // Today's interest revenue
+    const todayRevenue = await Loan.aggregate([
+      {
+        $match: {
+          status: { $in: ["active", "completed"] },
+          createdAt: { $gte: today },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          interest: { $sum: { $subtract: ["$totalPayable", "$amount"] } },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // This month's interest revenue
+    const monthRevenue = await Loan.aggregate([
+      {
+        $match: {
+          status: { $in: ["active", "completed"] },
+          createdAt: { $gte: thisMonth },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          interest: { $sum: { $subtract: ["$totalPayable", "$amount"] } },
+          principal: { $sum: "$amount" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // All-time totals
+    const allTime = await Loan.aggregate([
+      {
+        $match: { status: { $in: ["active", "completed"] } },
+      },
+      {
+        $group: {
+          _id: null,
+          totalInterest: { $sum: { $subtract: ["$totalPayable", "$amount"] } },
+          totalPrincipal: { $sum: "$amount" },
+          totalLoans: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // Transaction charges
+    const Transaction = require("../models/transaction");
+    const chargesToday = await Transaction.aggregate([
+      { $match: { status: "approved", createdAt: { $gte: today } } },
+      { $group: { _id: null, total: { $sum: "$charges" } } },
+    ]);
+
+    const chargesMonth = await Transaction.aggregate([
+      { $match: { status: "approved", createdAt: { $gte: thisMonth } } },
+      { $group: { _id: null, total: { $sum: "$charges" } } },
+    ]);
+
+    res.json({
+      success: true,
+      today: {
+        interestRevenue: todayRevenue[0]?.interest || 0,
+        transactionCharges: chargesToday[0]?.total || 0,
+        newLoans: todayRevenue[0]?.count || 0,
+      },
+      thisMonth: {
+        interestRevenue: monthRevenue[0]?.interest || 0,
+        principalDisbursed: monthRevenue[0]?.principal || 0,
+        transactionCharges: chargesMonth[0]?.total || 0,
+        newLoans: monthRevenue[0]?.count || 0,
+      },
+      allTime: {
+        totalInterestRevenue: allTime[0]?.totalInterest || 0,
+        totalPrincipalDisbursed: allTime[0]?.totalPrincipal || 0,
+        totalLoans: allTime[0]?.totalLoans || 0,
+      },
+      currentStatus: {
+        activeLoans: await Loan.countDocuments({ status: "active" }),
+        pendingLoans: await Loan.countDocuments({ status: "pending" }),
+        completedLoans: await Loan.countDocuments({ status: "completed" }),
+        totalOutstanding:
+          (
+            await Loan.aggregate([
+              { $match: { status: "active" } },
+              { $group: { _id: null, total: { $sum: "$outstandingBalance" } } },
+            ])
+          )[0]?.total || 0,
+      },
+    });
+  } catch (error) {
+    console.error("Get dashboard summary error:", error);
     res.status(500).json({ error: error.message });
   }
 };

@@ -573,7 +573,7 @@ function navigate(view) {
 function renderDashboard(container) {
   // Calculate statistics with separate balances
   const totalCashBalance = state.customers.reduce(
-    (sum, c) => sum + (c.cashBalance || c.balance || 0), // Fallback for old data
+    (sum, c) => sum + (c.cashBalance || c.balance || 0),
     0,
   );
   const totalLoanBalance = state.customers.reduce(
@@ -591,6 +591,15 @@ function renderDashboard(container) {
     (sum, t) => sum + (t.charges || 0),
     0,
   );
+
+  // Calculate total interest revenue from approved loans
+  const totalInterestRevenue =
+    state.loans?.reduce((sum, l) => {
+      if (l.status === "active" || l.status === "completed") {
+        return sum + ((l.totalPayable || 0) - (l.amount || 0));
+      }
+      return sum;
+    }, 0) || 0;
 
   let stats = [];
 
@@ -636,6 +645,17 @@ function renderDashboard(container) {
         trend: "Revenue",
         detail: "From transactions",
       },
+      {
+        label: "Interest Revenue",
+        value: "₦" + totalInterestRevenue.toLocaleString(),
+        icon: "fa-chart-line",
+        color: "green",
+        trend: "From loans",
+        detail:
+          state.loans?.filter(
+            (l) => l.status === "active" || l.status === "completed",
+          ).length + " active/completed loans",
+      },
     ];
   } else {
     const myCustomers = state.customers.filter(
@@ -659,6 +679,17 @@ function renderDashboard(container) {
       state.loans?.filter(
         (l) => l.requestedBy?.staffId === state.currentUser?.id,
       ) || [];
+
+    const myInterestRevenue =
+      state.loans?.reduce((sum, l) => {
+        if (
+          (l.status === "active" || l.status === "completed") &&
+          l.requestedBy?.staffId === state.currentUser?.id
+        ) {
+          return sum + ((l.totalPayable || 0) - (l.amount || 0));
+        }
+        return sum;
+      }, 0) || 0;
 
     stats = [
       {
@@ -693,13 +724,21 @@ function renderDashboard(container) {
         trend: "Awaiting approval",
         detail: "Needs admin review",
       },
+      {
+        label: "My Interest Revenue",
+        value: "₦" + myInterestRevenue.toLocaleString(),
+        icon: "fa-chart-line",
+        color: "green",
+        trend: "From my loans",
+        detail: `${myLoans.filter((l) => l.status === "active" || l.status === "completed").length} approved loans`,
+      },
     ];
   }
 
   const recentTransactions = state.transactions.slice(0, 5);
 
   let html = `
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6 sm:mb-8 animate-fade-in">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 sm:gap-6 mb-6 sm:mb-8 animate-fade-in">
       ${stats
         .map(
           (stat) => `
@@ -863,6 +902,10 @@ function renderDashboard(container) {
               <span class="${netWorth >= 0 ? "text-green-400" : "text-red-400"}">₦${netWorth.toLocaleString()}</span>
             </div>
             <div class="flex justify-between text-xs sm:text-sm">
+              <span class="text-gray-400">Interest Revenue</span>
+              <span class="text-green-400">₦${totalInterestRevenue.toLocaleString()}</span>
+            </div>
+            <div class="flex justify-between text-xs sm:text-sm">
               <span class="text-gray-400">Database</span>
               <span class="text-green-400 flex items-center gap-1">
                 <span class="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-green-400 rounded-full animate-pulse"></span>
@@ -876,6 +919,7 @@ function renderDashboard(container) {
   `;
   container.innerHTML = html;
 }
+
 // ==================== CUSTOMERS VIEW ====================
 
 function renderCustomers(container) {
@@ -891,9 +935,6 @@ function renderCustomers(container) {
               ? `
             <button onclick="showAddCustomerModal()" class="flex-1 sm:flex-none px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm transition-colors">
               <i class="fas fa-plus mr-2"></i>Add Customer
-            </button>
-            <button onclick="showLoanSummaryModal()" class="flex-1 sm:flex-none px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-sm transition-colors">
-              <i class="fas fa-chart-line mr-2"></i>Loan Summary
             </button>
           `
               : `
@@ -922,7 +963,6 @@ function renderCustomers(container) {
           <select id="balanceTypeFilter" onchange="filterCustomersByBalance()" class="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:border-blue-500">
             <option value="all">All Customers</option>
             <option value="positive-cash">Positive Cash Balance</option>
-            <option value="negative-cash">Negative Cash Balance</option>
             <option value="has-loan">Has Active Loan</option>
             <option value="no-loan">No Active Loan</option>
           </select>
@@ -946,7 +986,7 @@ function renderCustomers(container) {
                 <th class="pb-4 px-4 sm:px-0 hidden lg:table-cell">Status</th>
                 ${state.role === "admin" ? '<th class="pb-4 px-4 sm:px-0 hidden lg:table-cell">Added By</th>' : ""}
                 <th class="pb-4 px-4 sm:px-0">Actions</th>
-              </tr>
+               </tr>
             </thead>
             <tbody id="customerTableBody" class="divide-y divide-gray-800">
               ${displayedCustomers
@@ -963,7 +1003,7 @@ function renderCustomers(container) {
                         <span class="font-mono text-xs sm:text-sm ${customer.customerNumber ? "text-blue-400" : "text-gray-500"}">
                           ${customer.customerNumber ? "#" + customer.customerNumber : "---"}
                         </span>
-                      </td>
+                       </td>
                       <td class="py-4 px-4 sm:px-0">
                         <div class="flex items-center gap-2 sm:gap-3">
                           <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-blue-400 to-cyan-500 flex items-center justify-center font-bold text-xs sm:text-sm flex-shrink-0">
@@ -983,17 +1023,17 @@ function renderCustomers(container) {
                             ${hasActiveLoan ? '<span class="ml-2 text-xs bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded-full">Loan Active</span>' : ""}
                           </div>
                         </div>
-                      </td>
+                       </td>
                       <td class="py-4 px-4 sm:px-0">
                         <div class="text-xs sm:text-sm break-words max-w-[150px] sm:max-w-none">${customer.email}</div>
-                      </td>
+                       </td>
                       <td class="py-4 px-4 sm:px-0 hidden sm:table-cell">
                         <div class="text-xs sm:text-sm">
                           <i class="fas fa-phone-alt text-green-400 mr-1"></i>
                           ${customer.phone || "N/A"}
                           ${customer.phone ? '<span class="text-xs text-green-400 ml-1">✓ SMS</span>' : '<span class="text-xs text-red-400 ml-1">⚠️ No SMS</span>'}
                         </div>
-                      </td>
+                       </td>
                       <td class="py-4 px-4 sm:px-0">
                         <div>
                           <span class="text-sm sm:text-base font-mono ${cashBalance >= 0 ? "text-green-400" : "text-red-400"}">
@@ -1001,7 +1041,7 @@ function renderCustomers(container) {
                           </span>
                           ${cashBalance === 0 ? '<p class="text-xs text-gray-500">No funds</p>' : ""}
                         </div>
-                      </td>
+                       </td>
                       <td class="py-4 px-4 sm:px-0">
                         <div>
                           <span class="text-sm sm:text-base font-mono ${loanBalance > 0 ? "text-orange-400" : "text-gray-500"}">
@@ -1009,7 +1049,7 @@ function renderCustomers(container) {
                           </span>
                           ${loanBalance > 0 ? `<p class="text-xs text-orange-400">${((loanBalance / (customer.totalLoanAmount || 1)) * 100).toFixed(0)}% outstanding</p>` : ""}
                         </div>
-                      </td>
+                       </td>
                       <td class="py-4 px-4 sm:px-0 hidden md:table-cell">
                         <div>
                           <span class="text-sm sm:text-base font-mono ${netWorth >= 0 ? "text-blue-400" : "text-red-400"}">
@@ -1017,18 +1057,18 @@ function renderCustomers(container) {
                           </span>
                           <p class="text-xs text-gray-500">Cash - Loans</p>
                         </div>
-                      </td>
+                       </td>
                       <td class="py-4 px-4 sm:px-0 hidden lg:table-cell">
                         <span class="px-2 py-1 rounded text-xs ${customer.status === "active" ? "bg-green-500/20 text-green-400" : "bg-gray-500/20 text-gray-400"}">
                           ${customer.status}
                         </span>
-                      </td>
+                       </td>
                       ${
                         state.role === "admin"
                           ? `
                         <td class="py-4 px-4 sm:px-0 hidden lg:table-cell">
                           ${customer.addedBy ? `<div class="text-xs sm:text-sm"><div>${customer.addedBy.staffName}</div><div class="text-xs text-gray-500">${customer.addedBy.staffEmail}</div></div>` : '<span class="text-xs text-gray-500">System</span>'}
-                        </td>
+                         </td>
                       `
                           : ""
                       }
@@ -1053,14 +1093,14 @@ function renderCustomers(container) {
                             <i class="fas fa-edit text-sm sm:text-base"></i>
                           </button>
                         </div>
-                      </td>
-                    </tr>
+                       </td>
+                     </tr>
                   `;
                 })
                 .join("")}
               ${displayedCustomers.length === 0 ? '<tr><td colspan="9" class="text-center text-gray-400 py-8">No customers found</td></tr>' : ""}
             </tbody>
-          </table>
+           </table>
         </div>
       </div>
       
@@ -1090,7 +1130,7 @@ function renderCustomers(container) {
   container.innerHTML = html;
 }
 
-// Additional helper function for filtering by balance
+// Filter customers by balance
 function filterCustomersByBalance() {
   const filterType = document.getElementById("balanceTypeFilter")?.value;
   const rows = document.querySelectorAll("#customerTableBody tr");
@@ -1109,9 +1149,6 @@ function filterCustomersByBalance() {
       case "positive-cash":
         show = cashBalance > 0;
         break;
-      case "negative-cash":
-        show = cashBalance < 0;
-        break;
       case "has-loan":
         show = loanBalance > 0;
         break;
@@ -1126,7 +1163,7 @@ function filterCustomersByBalance() {
   });
 }
 
-// Function to view customer loans
+// View customer loans
 function viewCustomerLoans(customerId) {
   const customer = state.customers.find((c) => c.id === customerId);
   const customerLoans =
@@ -1227,10 +1264,6 @@ function closeCustomerLoansModal() {
   if (modal) modal.remove();
 }
 
-// Add to window object for global access
-window.viewCustomerLoans = viewCustomerLoans;
-window.closeCustomerLoansModal = closeCustomerLoansModal;
-window.filterCustomersByBalance = filterCustomersByBalance;
 function filterCustomers() {
   const search =
     document.getElementById("customerSearch")?.value.toLowerCase() || "";
@@ -1242,7 +1275,7 @@ function filterCustomers() {
     const matchesSearch = text.includes(search);
 
     if (staffFilter && state.role === "admin") {
-      const staffCell = row.querySelector("td:nth-child(6)")?.textContent || "";
+      const staffCell = row.querySelector("td:nth-child(7)")?.textContent || "";
       const matchesStaff = staffCell.includes(
         state.staff.find((s) => s.id === staffFilter)?.name || "",
       );
@@ -1315,7 +1348,8 @@ async function handleAddCustomer(e) {
     email: formData.get("email"),
     phone: formData.get("phone"),
     address: formData.get("address"),
-    balance: 0,
+    cashBalance: 0,
+    loanBalance: 0,
     staffId: currentStaff?.id,
     staffName: currentStaff?.name,
     staffEmail: currentStaff?.email,
@@ -1405,7 +1439,8 @@ async function handleNewCustomer(e) {
     name: formData.get("fullName"),
     email: formData.get("email"),
     phone: formData.get("phone"),
-    balance: parseFloat(formData.get("initialDeposit")) || 0,
+    cashBalance: parseFloat(formData.get("initialDeposit")) || 0,
+    loanBalance: 0,
     address: formData.get("address"),
     staffId: currentStaff?.id,
     staffName: currentStaff?.name,
@@ -1484,7 +1519,7 @@ function renderNewTransaction(container) {
 
           <div id="customerBalanceDisplay" class="hidden p-4 bg-green-500/10 border border-green-500/20 rounded-xl">
             <div class="flex justify-between items-center">
-              <span class="text-xs sm:text-sm text-gray-300">Current Balance:</span>
+              <span class="text-xs sm:text-sm text-gray-300">Current Cash Balance:</span>
               <span class="text-base sm:text-lg font-bold text-green-400" id="currentBalanceAmount">₦0</span>
             </div>
           </div>
@@ -1617,12 +1652,12 @@ function initTransactionSearch(customersData) {
         const numberDisplay = customer.customerNumber
           ? `<span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-mono font-bold mr-2">#${customer.customerNumber}</span>`
           : "";
-        return `<div class="p-3 hover:bg-gray-700 cursor-pointer transition-colors" onclick="window.selectCustomer('${customer.id}', '${customer.name.replace(/'/g, "\\'")}', ${customer.balance || 0}, '${customer.phone || ""}', '${customer.customerNumber || ""}')">
+        return `<div class="p-3 hover:bg-gray-700 cursor-pointer transition-colors" onclick="window.selectCustomer('${customer.id}', '${customer.name.replace(/'/g, "\\'")}', ${customer.cashBalance || customer.balance || 0}, '${customer.phone || ""}', '${customer.customerNumber || ""}')">
         <div class="flex justify-between items-start">
           <div>
             <div class="flex items-center gap-2 flex-wrap">${numberDisplay}<p class="font-medium text-sm sm:text-base">${customer.name}</p></div>
             <p class="text-xs text-gray-400">${customer.email}</p>
-            <p class="text-xs text-gray-500 mt-1">${customer.phone || "No phone"} | Balance: ₦${(customer.balance || 0).toLocaleString()}</p>
+            <p class="text-xs text-gray-500 mt-1">${customer.phone || "No phone"} | Cash: ₦${(customer.cashBalance || customer.balance || 0).toLocaleString()}</p>
           </div>
           <i class="fas fa-chevron-right text-gray-500 text-sm"></i>
         </div>
@@ -1647,13 +1682,18 @@ function initTransactionSearch(customersData) {
     document
       .getElementById("selectedCustomerDisplay")
       .classList.remove("hidden");
+
+    const customer = state.customers.find((c) => c.id === id);
+    const cashBalance =
+      customer?.cashBalance || customer?.balance || balance || 0;
+
     document.getElementById("currentBalanceAmount").textContent =
-      "₦" + balance.toLocaleString();
+      "₦" + cashBalance.toLocaleString();
     document
       .getElementById("customerBalanceDisplay")
       .classList.remove("hidden");
 
-    window.selectedCustomerBalance = balance;
+    window.selectedCustomerBalance = cashBalance;
     window.selectedCustomerId = id;
     window.selectedCustomerName = name;
     window.selectedCustomerNumber = customerNumber;
@@ -1780,9 +1820,11 @@ async function handleNewTransaction(e) {
     showNotification("Charges cannot be greater than the amount!", "error");
     return;
   }
-  if (type === "withdrawal" && netAmount > customer.balance) {
+
+  const availableBalance = customer.cashBalance || customer.balance || 0;
+  if (type === "withdrawal" && netAmount > availableBalance) {
     showNotification(
-      `Insufficient funds! Customer balance: ₦${customer.balance.toLocaleString()}. Required: ₦${netAmount.toLocaleString()}`,
+      `Insufficient funds! Customer balance: ₦${availableBalance.toLocaleString()}. Required: ₦${netAmount.toLocaleString()}`,
       "error",
     );
     return;
@@ -1818,6 +1860,7 @@ async function handleNewTransaction(e) {
     );
   }
 }
+
 async function processTransaction(
   txnId,
   action,
@@ -1981,7 +2024,11 @@ function viewCustomer(id) {
               <span class="text-xs sm:text-sm bg-purple-500/20 text-purple-400 px-2 sm:px-3 py-1 rounded-full"><i class="fas fa-calendar mr-1"></i>Joined: ${formatSimpleDate(customer.joined)}</span>
             </div>
           </div>
-          <div class="text-left sm:text-right mt-4 sm:mt-0"><p class="text-xs sm:text-sm text-gray-400">Current Balance</p><p class="text-2xl sm:text-3xl font-bold text-green-400">₦${(customer.balance || 0).toLocaleString()}</p></div>
+          <div class="text-left sm:text-right mt-4 sm:mt-0">
+            <p class="text-xs sm:text-sm text-gray-400">Cash Balance</p>
+            <p class="text-2xl sm:text-3xl font-bold text-green-400">₦${(customer.cashBalance || customer.balance || 0).toLocaleString()}</p>
+            ${customer.loanBalance > 0 ? `<p class="text-xs text-orange-400">Loan: ₦${customer.loanBalance.toLocaleString()}</p>` : ""}
+          </div>
         </div>
       </div>
 
@@ -2006,18 +2053,18 @@ function viewCustomer(id) {
                   .map((txn) => {
                     const charges = txn.charges || 0;
                     const netAmount = txn.amount - charges;
-                    return `<tr class="hover:bg-gray-800/30 transition-colors"><td class="py-3 px-4 sm:px-0"><div class="flex items-center gap-1 text-xs sm:text-sm"><i class="fas fa-calendar-alt text-gray-500 text-xs"></i>${formatDate(txn.date)}</div> </td>
-                  <td class="py-3 px-4 sm:px-0"><span class="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm"><i class="fas fa-arrow-${txn.type === "deposit" ? "down text-green-400" : "up text-orange-400"}"></i>${txn.type}</span> </td>
-                  <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">${txn.type === "deposit" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()} </td>
-                  <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-red-400 hidden sm:table-cell">-₦${charges.toLocaleString()} </td>
-                  <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-blue-400">₦${netAmount.toLocaleString()} </td>
-                  <td class="py-3 px-4 sm:px-0"><span class="px-2 py-1 rounded text-xs ${getStatusStyle(txn.status)}">${txn.status}</span> </td>
-                  <td class="py-3 px-4 sm:px-0 hidden md:table-cell"><p class="text-xs sm:text-sm text-gray-300 truncate max-w-[150px]" title="${txn.description || ""}">${txn.description || "-"}</p> </td>
-                  <td class="py-3 px-4 sm:px-0 hidden lg:table-cell text-xs sm:text-sm text-gray-400">${txn.approvedBy || "-"} </td> </tr>`;
+                    return `<tr class="hover:bg-gray-800/30 transition-colors"><td class="py-3 px-4 sm:px-0"><div class="flex items-center gap-1 text-xs sm:text-sm"><i class="fas fa-calendar-alt text-gray-500 text-xs"></i>${formatDate(txn.date)}</div>  </div>
+                  <td class="py-3 px-4 sm:px-0"><span class="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm"><i class="fas fa-arrow-${txn.type === "deposit" ? "down text-green-400" : "up text-orange-400"}"></i>${txn.type}</span>  </div>
+                  <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">${txn.type === "deposit" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()}  </div>
+                  <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-red-400 hidden sm:table-cell">-₦${charges.toLocaleString()}  </div>
+                  <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-blue-400">₦${netAmount.toLocaleString()}  </div>
+                  <td class="py-3 px-4 sm:px-0"><span class="px-2 py-1 rounded text-xs ${getStatusStyle(txn.status)}">${txn.status}</span>  </div>
+                  <td class="py-3 px-4 sm:px-0 hidden md:table-cell"><p class="text-xs sm:text-sm text-gray-300 truncate max-w-[150px]" title="${txn.description || ""}">${txn.description || "-"}</p>  </div>
+                  <td class="py-3 px-4 sm:px-0 hidden lg:table-cell text-xs sm:text-sm text-gray-400">${txn.approvedBy || "-"}  </div>  </tr>`;
                   })
                   .join("")}
-                ${sortedTransactions.length === 0 ? ' <tr><td colspan="8" class="py-8 text-center text-gray-400">No transactions found for this customer</td></tr>' : ""}
-                ${sortedTransactions.length > 50 ? ' <tr><td colspan="8" class="py-4 text-center text-gray-500 text-xs sm:text-sm">Showing first 50 transactions. Use period filters to see more.</td></tr>' : ""}
+                ${sortedTransactions.length === 0 ? '  <tr><td colspan="8" class="py-8 text-center text-gray-400">No transactions found for this customer</td></tr>' : ""}
+                ${sortedTransactions.length > 50 ? '  <tr><td colspan="8" class="py-4 text-center text-gray-500 text-xs sm:text-sm">Showing first 50 transactions. Use period filters to see more.</td></tr>' : ""}
               </tbody>
             </table>
           </div>
@@ -2149,7 +2196,7 @@ function renderCustomerTransactions(container, customerId, period = "all") {
           <div class="flex-1"><h2 class="text-xl sm:text-2xl font-bold break-words">${customer.name}</h2><p class="text-xs sm:text-sm text-gray-400 break-words">${customer.email} • ${customer.phone || "No phone"}</p>
             <div class="flex flex-wrap items-center gap-2 sm:gap-4 mt-2"><span class="text-xs sm:text-sm bg-blue-500/20 text-blue-400 px-2 sm:px-3 py-1 rounded-full"><i class="fas fa-id-card mr-1"></i>${customer.id.substring(0, 8)}...</span><span class="text-xs sm:text-sm ${customer.status === "active" ? "bg-green-500/20 text-green-400" : "bg-gray-500/20 text-gray-400"} px-2 sm:px-3 py-1 rounded-full"><i class="fas fa-circle mr-1"></i>${customer.status}</span><span class="text-xs sm:text-sm bg-purple-500/20 text-purple-400 px-2 sm:px-3 py-1 rounded-full"><i class="fas fa-calendar mr-1"></i>Joined: ${formatSimpleDate(customer.joined)}</span></div>
           </div>
-          <div class="text-left sm:text-right mt-4 sm:mt-0"><p class="text-xs sm:text-sm text-gray-400">Current Balance</p><p class="text-2xl sm:text-3xl font-bold text-green-400">₦${(customer.balance || 0).toLocaleString()}</p></div>
+          <div class="text-left sm:text-right mt-4 sm:mt-0"><p class="text-xs sm:text-sm text-gray-400">Cash Balance</p><p class="text-2xl sm:text-3xl font-bold text-green-400">₦${(customer.cashBalance || customer.balance || 0).toLocaleString()}</p></div>
         </div>
       </div>
 
@@ -2165,18 +2212,18 @@ function renderCustomerTransactions(container, customerId, period = "all") {
         .map((txn) => {
           const charges = txn.charges || 0;
           const netAmount = txn.amount - charges;
-          return `<tr class="hover:bg-gray-800/30 transition-colors"><td class="py-3 px-4 sm:px-0"><div class="flex items-center gap-1 text-xs sm:text-sm"><i class="fas fa-calendar-alt text-gray-500 text-xs"></i>${formatDate(txn.date)}</div> </td>
-    <td class="py-3 px-4 sm:px-0"><span class="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm"><i class="fas fa-arrow-${txn.type === "deposit" ? "down text-green-400" : "up text-orange-400"}"></i>${txn.type}</span> </td>
-    <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">${txn.type === "deposit" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()} </td>
-    <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-red-400 hidden sm:table-cell">-₦${charges.toLocaleString()} </td>
-    <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-blue-400">₦${netAmount.toLocaleString()} </td>
-    <td class="py-3 px-4 sm:px-0"><span class="px-2 py-1 rounded text-xs ${getStatusStyle(txn.status)}">${txn.status}</span> </td>
-    <td class="py-3 px-4 sm:px-0 hidden md:table-cell"><p class="text-xs sm:text-sm text-gray-300 truncate max-w-[150px]" title="${txn.description || ""}">${txn.description || "-"}</p> </td>
-    <td class="py-3 px-4 sm:px-0 hidden lg:table-cell text-xs sm:text-sm text-gray-400">${txn.approvedBy || "-"} </td> </tr>`;
+          return `<tr class="hover:bg-gray-800/30 transition-colors"><td class="py-3 px-4 sm:px-0"><div class="flex items-center gap-1 text-xs sm:text-sm"><i class="fas fa-calendar-alt text-gray-500 text-xs"></i>${formatDate(txn.date)}</div>  </div>
+    <td class="py-3 px-4 sm:px-0"><span class="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm"><i class="fas fa-arrow-${txn.type === "deposit" ? "down text-green-400" : "up text-orange-400"}"></i>${txn.type}</span>  </div>
+    <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">${txn.type === "deposit" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()}  </div>
+    <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-red-400 hidden sm:table-cell">-₦${charges.toLocaleString()}  </div>
+    <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-blue-400">₦${netAmount.toLocaleString()}  </div>
+    <td class="py-3 px-4 sm:px-0"><span class="px-2 py-1 rounded text-xs ${getStatusStyle(txn.status)}">${txn.status}</span>  </div>
+    <td class="py-3 px-4 sm:px-0 hidden md:table-cell"><p class="text-xs sm:text-sm text-gray-300 truncate max-w-[150px]" title="${txn.description || ""}">${txn.description || "-"}</p>  </div>
+    <td class="py-3 px-4 sm:px-0 hidden lg:table-cell text-xs sm:text-sm text-gray-400">${txn.approvedBy || "-"}  </div>   </div>`;
         })
         .join(
           "",
-        )}${sortedTransactions.length === 0 ? ' <tr><td colspan="8" class="text-center text-gray-400 py-8">No transactions found for this period</td></tr>' : ""}</tbody> </table></div></div>
+        )}${sortedTransactions.length === 0 ? '   \\<td colspan="8" class="text-center text-gray-400 py-8">No transactions found for this period</td>' : ""}</tbody>  </div></div>
     </div>
   `;
 
@@ -2211,7 +2258,7 @@ function renderCustomerSummary(container, customerId) {
           .substring(0, 2)
           .toUpperCase()}</div>
         <div><h2 class="text-xl sm:text-2xl font-bold break-words">${customer.name} - Summary Report</h2><p class="text-xs sm:text-sm text-gray-400 break-words">${customer.email} • ${customer.phone || "No phone"}</p></div>
-        <div class="ml-auto text-left sm:text-right mt-4 sm:mt-0"><p class="text-xs sm:text-sm text-gray-400">Current Balance</p><p class="text-2xl font-bold text-green-400">₦${(customer.balance || 0).toLocaleString()}</p></div></div>
+        <div class="ml-auto text-left sm:text-right mt-4 sm:mt-0"><p class="text-xs sm:text-sm text-gray-400">Cash Balance</p><p class="text-2xl font-bold text-green-400">₦${(customer.cashBalance || customer.balance || 0).toLocaleString()}</p></div></div>
       </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">${[
@@ -2237,9 +2284,9 @@ function renderCustomerSummary(container, customerId) {
         .map((period) => {
           const data = stats[period];
           if (!data) return "";
-          return `<tr class="hover:bg-gray-800/30"><td class="py-3 px-4 sm:px-0 capitalize text-xs sm:text-sm">${period} </td><td class="py-3 px-4 sm:px-0 text-green-400 text-xs sm:text-sm">₦${data.stats.deposits.net.toLocaleString()} </td><td class="py-3 px-4 sm:px-0 text-orange-400 text-xs sm:text-sm">₦${data.stats.withdrawals.net.toLocaleString()} </td><td class="py-3 px-4 sm:px-0 text-red-400 text-xs sm:text-sm">₦${data.stats.totalCharges.toLocaleString()} </td><td class="py-3 px-4 sm:px-0 ${data.stats.netBalance >= 0 ? "text-green-400" : "text-red-400"} text-xs sm:text-sm">₦${data.stats.netBalance.toLocaleString()} </td><td class="py-3 px-4 sm:px-0 text-xs sm:text-sm">${data.stats.totalTransactions} </td> </tr>`;
+          return `<tr class="hover:bg-gray-800/30"><td class="py-3 px-4 sm:px-0 capitalize text-xs sm:text-sm">${period}  </div><td class="py-3 px-4 sm:px-0 text-green-400 text-xs sm:text-sm">₦${data.stats.deposits.net.toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 text-orange-400 text-xs sm:text-sm">₦${data.stats.withdrawals.net.toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 text-red-400 text-xs sm:text-sm">₦${data.stats.totalCharges.toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 ${data.stats.netBalance >= 0 ? "text-green-400" : "text-red-400"} text-xs sm:text-sm">₦${data.stats.netBalance.toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 text-xs sm:text-sm">${data.stats.totalTransactions}  </div>   </div>`;
         })
-        .join("")}</tbody> </table></div></div></div>
+        .join("")}</tbody>   </div></div></div>
     </div>
   `;
 
@@ -2264,7 +2311,9 @@ function exportCustomerData(customerId) {
   csv += `Customer,${customer.name}\n`;
   csv += `Email,${customer.email}\n`;
   csv += `Phone,${customer.phone || "N/A"}\n`;
-  csv += `Current Balance,${customer.balance}\n`;
+  csv += `Cash Balance,${customer.cashBalance || customer.balance || 0}\n`;
+  csv += `Loan Balance,${customer.loanBalance || 0}\n`;
+  csv += `Net Worth,${((customer.cashBalance || customer.balance || 0) - (customer.loanBalance || 0)).toLocaleString()}\n`;
   csv += `Net Deposits,${data.deposits.net}\n`;
   csv += `Net Withdrawals,${data.withdrawals.net}\n`;
   csv += `Total Charges,${data.totalCharges}\n`;
@@ -2314,7 +2363,7 @@ function renderCustomerReports(container) {
         <div class="glass-panel p-4 sm:p-6 rounded-2xl"><h3 class="text-xs sm:text-sm text-gray-400 mb-1 sm:mb-2">Total Charges</h3><p class="text-xl sm:text-3xl font-bold text-red-400">₦${totalCharges.toLocaleString()}</p><p class="text-xs text-gray-400 mt-1 hidden sm:block">Revenue</p></div>
       </div>
 
-      <div class="glass-panel rounded-2xl p-4 sm:p-6"><h3 class="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Customer Statistics</h3><div class="overflow-x-auto -mx-4 sm:mx-0"><div class="inline-block min-w-full align-middle"><table class="min-w-full divide-y divide-gray-700"><thead><tr class="text-left text-gray-400 text-xs sm:text-sm"><th class="pb-3 px-4 sm:px-0">Customer</th><th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Phone</th><th class="pb-3 px-4 sm:px-0">Balance</th><th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Net Deposits</th><th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Net Withdrawals</th><th class="pb-3 px-4 sm:px-0">Charges</th><th class="pb-3 px-4 sm:px-0 hidden lg:table-cell">Net Change</th><th class="pb-3 px-4 sm:px-0">Actions</th> </thead><tbody class="divide-y divide-gray-800">${customersWithStats
+      <div class="glass-panel rounded-2xl p-4 sm:p-6"><h3 class="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Customer Statistics</h3><div class="overflow-x-auto -mx-4 sm:mx-0"><div class="inline-block min-w-full align-middle"><table class="min-w-full divide-y divide-gray-700"><thead><tr class="text-left text-gray-400 text-xs sm:text-sm"><th class="pb-3 px-4 sm:px-0">Customer</th><th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Phone</th><th class="pb-3 px-4 sm:px-0">Cash Balance</th><th class="pb-3 px-4 sm:px-0">Loan Balance</th><th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Net Deposits</th><th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Net Withdrawals</th><th class="pb-3 px-4 sm:px-0">Charges</th><th class="pb-3 px-4 sm:px-0">Actions</th> </thead><tbody class="divide-y divide-gray-800">${customersWithStats
         .map(
           (c) =>
             `<tr class="hover:bg-gray-800/30"><td class="py-3 px-4 sm:px-0"><div class="flex items-center gap-2"><div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-xs font-bold flex-shrink-0">${c.name
@@ -2322,9 +2371,9 @@ function renderCustomerReports(container) {
               .map((n) => n[0])
               .join("")
               .substring(0, 2)
-              .toUpperCase()}</div><div><p class="font-medium text-xs sm:text-sm">${c.name}</p><p class="text-xs text-gray-400 hidden sm:block">${c.email}</p></div></div>  </div><td class="py-3 px-4 sm:px-0 hidden sm:table-cell"><span class="text-xs ${c.phone ? "text-green-400" : "text-gray-500"}">${c.phone || "No SMS"}</span>  </div><td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm">₦${(c.balance || 0).toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 text-green-400 text-xs sm:text-sm hidden md:table-cell">₦${(c.stats?.deposits.net || 0).toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 text-orange-400 text-xs sm:text-sm hidden md:table-cell">₦${(c.stats?.withdrawals.net || 0).toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 text-red-400 text-xs sm:text-sm">₦${(c.stats?.totalCharges || 0).toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 ${(c.stats?.netBalance || 0) >= 0 ? "text-green-400" : "text-red-400"} text-xs sm:text-sm hidden lg:table-cell">₦${(c.stats?.netBalance || 0).toLocaleString()}  </div><td class="py-3 px-4 sm:px-0"><div class="flex gap-2"><button onclick="viewCustomer('${c.id}')" class="text-blue-400 hover:text-blue-300 p-1" title="View Details"><i class="fas fa-eye text-xs sm:text-sm"></i></button><button onclick="renderCustomerSummary(document.getElementById('contentArea'), '${c.id}')" class="text-green-400 hover:text-green-300 p-1" title="View Summary"><i class="fas fa-chart-bar text-xs sm:text-sm"></i></button></div>  </div>  </tr>`,
+              .toUpperCase()}</div><div><p class="font-medium text-xs sm:text-sm">${c.name}</p><p class="text-xs text-gray-400 hidden sm:block">${c.email}</p></div></div>  </div><td class="py-3 px-4 sm:px-0 hidden sm:table-cell"><span class="text-xs ${c.phone ? "text-green-400" : "text-gray-500"}">${c.phone || "No SMS"}</span>  </div><td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-green-400">₦${(c.cashBalance || c.balance || 0).toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm ${c.loanBalance > 0 ? "text-orange-400" : "text-gray-500"}">${c.loanBalance > 0 ? "₦" + c.loanBalance.toLocaleString() : "—"}  </div><td class="py-3 px-4 sm:px-0 text-green-400 text-xs sm:text-sm hidden md:table-cell">₦${(c.stats?.deposits.net || 0).toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 text-orange-400 text-xs sm:text-sm hidden md:table-cell">₦${(c.stats?.withdrawals.net || 0).toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 text-red-400 text-xs sm:text-sm">₦${(c.stats?.totalCharges || 0).toLocaleString()}  </div><td class="py-3 px-4 sm:px-0"><div class="flex gap-2"><button onclick="viewCustomer('${c.id}')" class="text-blue-400 hover:text-blue-300 p-1" title="View Details"><i class="fas fa-eye text-xs sm:text-sm"></i></button><button onclick="renderCustomerSummary(document.getElementById('contentArea'), '${c.id}')" class="text-green-400 hover:text-green-300 p-1" title="View Summary"><i class="fas fa-chart-bar text-xs sm:text-sm"></i></button></div>  </div>   </div>`,
         )
-        .join("")}</tbody>  </table></div></div></div>
+        .join("")}</tbody>   </div></div></div>
     </div>
   `;
 
@@ -2350,7 +2399,7 @@ function renderNewLoanRequest(container) {
 
           <div id="searchResults" class="hidden glass-panel rounded-xl border border-gray-700 max-h-64 overflow-y-auto"><div id="searchResultsList" class="divide-y divide-gray-700"></div></div>
 
-          <div id="selectedCustomer" class="hidden p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl"><div class="flex justify-between items-center"><div><p class="text-sm text-gray-300">Selected Customer:</p><div class="flex items-center gap-2 mt-1"><span class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded font-mono text-sm" id="selectedCustomerNumber">-</span><p class="text-base font-semibold text-white" id="selectedCustomerName">-</p></div><p class="text-xs text-gray-400 mt-1" id="selectedCustomerPhone"></p><p class="text-xs text-green-400 mt-1">Balance: <span id="selectedCustomerBalance">₦0</span></p></div><button type="button" onclick="clearSelectedCustomerForLoan()" class="text-red-400 hover:text-red-300"><i class="fas fa-times"></i></button></div></div>
+          <div id="selectedCustomer" class="hidden p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl"><div class="flex justify-between items-center"><div><p class="text-sm text-gray-300">Selected Customer:</p><div class="flex items-center gap-2 mt-1"><span class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded font-mono text-sm" id="selectedCustomerNumber">-</span><p class="text-base font-semibold text-white" id="selectedCustomerName">-</p></div><p class="text-xs text-gray-400 mt-1" id="selectedCustomerPhone"></p><p class="text-xs text-green-400 mt-1">Cash Balance: <span id="selectedCustomerBalance">₦0</span></p></div><button type="button" onclick="clearSelectedCustomerForLoan()" class="text-red-400 hover:text-red-300"><i class="fas fa-times"></i></button></div></div>
 
           <input type="hidden" id="selectedCustomerId" value="">
 
@@ -2423,7 +2472,7 @@ function searchCustomersForLoan(searchTerm) {
     resultsList.innerHTML = filtered
       .map(
         (c) =>
-          `<div class="p-3 hover:bg-gray-700 cursor-pointer transition-colors" onclick="selectCustomerForLoan('${c.id}', '${c.name.replace(/'/g, "\\'")}', ${c.balance || 0}, '${c.phone || ""}', '${c.customerNumber || ""}')"><div class="flex justify-between items-start"><div><div class="flex items-center gap-2"><span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-mono">#${c.customerNumber || "---"}</span><p class="font-medium">${c.name}</p></div><p class="text-xs text-gray-400">${c.email}</p><p class="text-xs text-gray-500 mt-1">Balance: ₦${(c.balance || 0).toLocaleString()}</p></div><i class="fas fa-chevron-right text-gray-500"></i></div></div>`,
+          `<div class="p-3 hover:bg-gray-700 cursor-pointer transition-colors" onclick="selectCustomerForLoan('${c.id}', '${c.name.replace(/'/g, "\\'")}', ${c.cashBalance || c.balance || 0}, '${c.phone || ""}', '${c.customerNumber || ""}')"><div class="flex justify-between items-start"><div><div class="flex items-center gap-2"><span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-mono">#${c.customerNumber || "---"}</span><p class="font-medium">${c.name}</p></div><p class="text-xs text-gray-400">${c.email}</p><p class="text-xs text-gray-500 mt-1">Cash: ₦${(c.cashBalance || c.balance || 0).toLocaleString()}</p></div><i class="fas fa-chevron-right text-gray-500"></i></div></div>`,
       )
       .join("");
     resultsDiv.classList.remove("hidden");
@@ -2509,7 +2558,6 @@ async function handleLoanRequest(e) {
     return;
   }
 
-  // Make sure requestedBy has the correct structure
   const loanData = {
     customerId: customerId,
     customerName: window.selectedCustomerForLoan.name,
@@ -2524,12 +2572,12 @@ async function handleLoanRequest(e) {
     purpose: purpose,
     notes: notes,
     requestedBy: {
-      staffId: state.currentUser?.id || "system", // Add fallback
-      staffName: state.currentUser?.name || "System", // Add fallback
+      staffId: state.currentUser?.id || "system",
+      staffName: state.currentUser?.name || "System",
     },
   };
 
-  console.log("Sending loan data:", loanData); // Debug log
+  console.log("Sending loan data:", loanData);
 
   try {
     const response = await api.post("/loans", loanData);
@@ -2547,6 +2595,7 @@ async function handleLoanRequest(e) {
     showNotification(errorMessage, "error");
   }
 }
+
 // ==================== ADMIN LOANS VIEW ====================
 
 function renderAdminLoans(container) {
@@ -2555,18 +2604,199 @@ function renderAdminLoans(container) {
   const completedLoans =
     state.loans?.filter((l) => l.status === "completed") || [];
 
+  const totalInterestRevenue =
+    state.loans?.reduce((sum, l) => {
+      if (l.status === "active" || l.status === "completed") {
+        const interest = (l.totalPayable || 0) - (l.amount || 0);
+        return sum + interest;
+      }
+      return sum;
+    }, 0) || 0;
+
   const html = `
     <div class="space-y-6 animate-fade-in px-4 sm:px-0">
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div class="glass-panel p-4 rounded-xl"><div class="flex items-center justify-between mb-2"><span class="text-gray-400">Pending Approvals</span><i class="fas fa-clock text-yellow-400"></i></div><p class="text-2xl font-bold text-yellow-400">${pendingLoans.length}</p></div>
-        <div class="glass-panel p-4 rounded-xl"><div class="flex items-center justify-between mb-2"><span class="text-gray-400">Active Loans</span><i class="fas fa-hand-holding-usd text-green-400"></i></div><p class="text-2xl font-bold text-green-400">${activeLoans.length}</p></div>
-        <div class="glass-panel p-4 rounded-xl"><div class="flex items-center justify-between mb-2"><span class="text-gray-400">Completed</span><i class="fas fa-check-circle text-blue-400"></i></div><p class="text-2xl font-bold text-blue-400">${completedLoans.length}</p></div>
-        <div class="glass-panel p-4 rounded-xl"><div class="flex items-center justify-between mb-2"><span class="text-gray-400">Total Disbursed</span><i class="fas fa-money-bill-wave text-purple-400"></i></div><p class="text-2xl font-bold text-purple-400">₦${state.loans?.reduce((sum, l) => sum + (l.amountDisbursed || 0), 0).toLocaleString() || 0}</p></div>
+        <div class="glass-panel p-4 rounded-xl">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-gray-400">Pending Approvals</span>
+            <i class="fas fa-clock text-yellow-400"></i>
+          </div>
+          <p class="text-2xl font-bold text-yellow-400">${pendingLoans.length}</p>
+        </div>
+        <div class="glass-panel p-4 rounded-xl">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-gray-400">Active Loans</span>
+            <i class="fas fa-hand-holding-usd text-green-400"></i>
+          </div>
+          <p class="text-2xl font-bold text-green-400">${activeLoans.length}</p>
+        </div>
+        <div class="glass-panel p-4 rounded-xl">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-gray-400">Completed</span>
+            <i class="fas fa-check-circle text-blue-400"></i>
+          </div>
+          <p class="text-2xl font-bold text-blue-400">${completedLoans.length}</p>
+        </div>
+        <div class="glass-panel p-4 rounded-xl border border-green-500/30">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-gray-400">Interest Revenue</span>
+            <i class="fas fa-chart-line text-green-400"></i>
+          </div>
+          <p class="text-2xl font-bold text-green-400">₦${totalInterestRevenue.toLocaleString()}</p>
+          <p class="text-xs text-gray-400">From approved loans</p>
+        </div>
       </div>
       
-      ${pendingLoans.length > 0 ? `<div class="glass-panel rounded-2xl p-6"><h3 class="text-lg font-semibold mb-4 flex items-center gap-2"><i class="fas fa-clock text-yellow-400"></i>Pending Loan/Overdraft Requests</h3><div class="space-y-4">${pendingLoans.map((loan) => `<div class="bg-gray-800/50 p-4 rounded-xl border border-gray-700"><div class="flex flex-wrap justify-between items-start gap-4"><div class="flex-1"><div class="flex items-center gap-3 mb-2"><span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">${loan.type.toUpperCase()}</span><span class="text-sm text-gray-400">Requested by: ${loan.requestedBy?.staffName || "Staff"}</span></div><p class="font-semibold text-lg">${loan.customerName}</p><p class="text-sm text-gray-400">#${loan.customerNumber || "---"} • ${loan.phone || "No phone"}</p><div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm"><div><p class="text-gray-400">Amount</p><p class="font-mono font-bold text-green-400">₦${loan.amount.toLocaleString()}</p></div><div><p class="text-gray-400">Interest</p><p class="font-mono">${loan.interestRate}%</p></div><div><p class="text-gray-400">Total Payable</p><p class="font-mono text-blue-400">₦${loan.totalPayable.toLocaleString()}</p></div><div><p class="text-gray-400">Installments</p><p class="font-mono">${loan.numberOfInstallments} (${loan.repaymentPeriod})</p></div></div>${loan.purpose ? `<p class="text-sm text-gray-300 mt-2">Purpose: ${loan.purpose}</p>` : ""}</div><div class="flex gap-2"><button onclick="showApproveLoanModal('${loan.id}')" class="px-4 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-sm"><i class="fas fa-check mr-1"></i>Approve</button><button onclick="rejectLoan('${loan.id}')" class="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm"><i class="fas fa-times mr-1"></i>Reject</button></div></div></div>`).join("")}</div></div>` : ""}
+      ${
+        pendingLoans.length > 0
+          ? `
+        <div class="glass-panel rounded-2xl p-6">
+          <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+            <i class="fas fa-clock text-yellow-400"></i>
+            Pending Loan/Overdraft Requests
+          </h3>
+          <div class="space-y-4">
+            ${pendingLoans
+              .map((loan) => {
+                const interest = (loan.totalPayable || 0) - (loan.amount || 0);
+                const customer = state.customers.find(
+                  (c) => c.id === loan.customerId,
+                );
+                const customerCash =
+                  customer?.cashBalance || customer?.balance || 0;
+                return `
+                <div class="bg-gray-800/50 p-4 rounded-xl border border-gray-700">
+                  <div class="flex flex-wrap justify-between items-start gap-4">
+                    <div class="flex-1">
+                      <div class="flex items-center gap-3 mb-2">
+                        <span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
+                          ${loan.type.toUpperCase()}
+                        </span>
+                        <span class="text-sm text-gray-400">Requested by: ${loan.requestedBy?.staffName || "Staff"}</span>
+                      </div>
+                      <p class="font-semibold text-lg">${loan.customerName}</p>
+                      <p class="text-sm text-gray-400">#${loan.customerNumber || "---"} • ${loan.phone || "No phone"}</p>
+                      
+                      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
+                        <div>
+                          <p class="text-gray-400">Principal</p>
+                          <p class="font-mono font-bold text-green-400">₦${(loan.amount || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p class="text-gray-400">Interest (${loan.interestRate}%)</p>
+                          <p class="font-mono text-yellow-400">₦${interest.toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p class="text-gray-400">Total to Deduct</p>
+                          <p class="font-mono text-red-400 font-bold">₦${(loan.totalPayable || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p class="text-gray-400">Installments</p>
+                          <p class="font-mono">${loan.numberOfInstallments} (${loan.repaymentPeriod})</p>
+                        </div>
+                      </div>
+                      
+                      <div class="mt-2 p-2 ${customerCash >= (loan.totalPayable || 0) ? "bg-green-500/10 border-green-500/20" : "bg-red-500/10 border-red-500/20"} rounded-lg">
+                        <p class="text-xs ${customerCash >= (loan.totalPayable || 0) ? "text-green-300" : "text-red-300"}">
+                          <i class="fas fa-info-circle mr-1"></i>
+                          Customer Cash Balance: ₦${customerCash.toLocaleString()}
+                          ${customerCash >= (loan.totalPayable || 0) ? "✓ Sufficient funds" : `⚠️ Shortfall: ₦${((loan.totalPayable || 0) - customerCash).toLocaleString()}`}
+                        </p>
+                      </div>
+                      
+                      ${loan.purpose ? `<p class="text-sm text-gray-300 mt-2">Purpose: ${loan.purpose}</p>` : ""}
+                    </div>
+                    <div class="flex gap-2">
+                      <button onclick="showApproveLoanModal('${loan.id}')" class="px-4 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-sm">
+                        <i class="fas fa-check mr-1"></i>Approve & Debit
+                      </button>
+                      <button onclick="rejectLoan('${loan.id}')" class="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm">
+                        <i class="fas fa-times mr-1"></i>Reject
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              `;
+              })
+              .join("")}
+          </div>
+        </div>
+      `
+          : ""
+      }
       
-      ${activeLoans.length > 0 ? `<div class="glass-panel rounded-2xl p-6"><h3 class="text-lg font-semibold mb-4 flex items-center gap-2"><i class="fas fa-hand-holding-usd text-green-400"></i>Active Loans & Overdrafts</h3><div class="space-y-4">${activeLoans.map((loan) => `<div class="bg-gray-800/50 p-4 rounded-xl border border-gray-700"><div class="flex flex-wrap justify-between items-start gap-4"><div class="flex-1"><div class="flex items-center gap-3 mb-2"><span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">${loan.type.toUpperCase()}</span><span class="text-xs text-gray-400">Started: ${new Date(loan.approvedBy?.approvedAt).toLocaleDateString()}</span></div><p class="font-semibold">${loan.customerName}</p><div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm"><div><p class="text-gray-400">Total Payable</p><p class="font-mono">₦${loan.totalPayable.toLocaleString()}</p></div><div><p class="text-gray-400">Repaid</p><p class="font-mono text-green-400">₦${loan.amountRepaid.toLocaleString()}</p></div><div><p class="text-gray-400">Outstanding</p><p class="font-mono text-red-400">₦${loan.outstandingBalance.toLocaleString()}</p></div><div><p class="text-gray-400">Installments</p><p class="font-mono">${loan.repayments.filter((r) => r.status === "paid").length}/${loan.numberOfInstallments} paid</p></div></div><button onclick="viewLoanDetails('${loan.id}')" class="mt-2 text-blue-400 hover:text-blue-300 text-sm"><i class="fas fa-eye mr-1"></i>View Repayment Schedule</button></div></div></div>`).join("")}</div></div>` : ""}
+      ${
+        activeLoans.length > 0
+          ? `
+        <div class="glass-panel rounded-2xl p-6">
+          <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+            <i class="fas fa-hand-holding-usd text-green-400"></i>
+            Active Loans & Overdrafts
+          </h3>
+          <div class="space-y-4">
+            ${activeLoans
+              .map((loan) => {
+                const interest = (loan.totalPayable || 0) - (loan.amount || 0);
+                const progress =
+                  ((loan.amountRepaid || 0) / (loan.totalPayable || 1)) * 100;
+                return `
+                <div class="bg-gray-800/50 p-4 rounded-xl border border-gray-700">
+                  <div class="flex flex-wrap justify-between items-start gap-4">
+                    <div class="flex-1">
+                      <div class="flex items-center gap-3 mb-2">
+                        <span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
+                          ${loan.type.toUpperCase()}
+                        </span>
+                        <span class="text-xs text-gray-400">Started: ${loan.approvedBy?.approvedAt ? new Date(loan.approvedBy.approvedAt).toLocaleDateString() : "Unknown"}</span>
+                      </div>
+                      <p class="font-semibold">${loan.customerName}</p>
+                      
+                      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
+                        <div>
+                          <p class="text-gray-400">Total Payable</p>
+                          <p class="font-mono">₦${(loan.totalPayable || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p class="text-gray-400">Repaid</p>
+                          <p class="font-mono text-green-400">₦${(loan.amountRepaid || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p class="text-gray-400">Outstanding</p>
+                          <p class="font-mono text-red-400">₦${(loan.outstandingBalance || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p class="text-gray-400">Interest Earned</p>
+                          <p class="font-mono text-yellow-400">₦${interest.toLocaleString()}</p>
+                        </div>
+                      </div>
+                      
+                      <div class="mt-3">
+                        <div class="flex justify-between text-xs mb-1">
+                          <span>Repayment Progress</span>
+                          <span>${progress.toFixed(1)}%</span>
+                        </div>
+                        <div class="w-full bg-gray-700 rounded-full h-2">
+                          <div class="bg-green-500 h-2 rounded-full" style="width: ${progress}%"></div>
+                        </div>
+                        <p class="text-xs text-gray-400 mt-1">
+                          ${(loan.repayments || []).filter((r) => r.status === "paid").length}/${loan.numberOfInstallments} installments paid
+                        </p>
+                      </div>
+                      
+                      <button onclick="viewLoanRepaymentSchedule('${loan.id}')" class="mt-3 text-blue-400 hover:text-blue-300 text-sm">
+                        <i class="fas fa-eye mr-1"></i>View Repayment Schedule & Record Payment
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              `;
+              })
+              .join("")}
+          </div>
+        </div>
+      `
+          : ""
+      }
     </div>
   `;
   container.innerHTML = html;
@@ -2575,7 +2805,93 @@ function renderAdminLoans(container) {
 function showApproveLoanModal(loanId) {
   const loan = state.loans?.find((l) => l.id === loanId);
   if (!loan) return;
-  const modalHtml = `<div id="approveLoanModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"><div class="bg-gray-900 rounded-2xl p-4 sm:p-8 max-w-md w-full mx-auto animate-slideIn"><div class="flex justify-between items-center mb-4 sm:mb-6"><h3 class="text-lg sm:text-xl font-semibold">Approve ${loan.type === "loan" ? "Loan" : "Overdraft"}</h3><button onclick="closeApproveLoanModal()" class="text-gray-400 hover:text-white p-2"><i class="fas fa-times text-lg"></i></button></div><div class="space-y-4"><div class="bg-gray-800/50 p-3 rounded-lg"><p class="text-sm text-gray-400">Customer</p><p class="font-semibold">${loan.customerName}</p><p class="text-xs text-gray-400">#${loan.customerNumber || "---"} • ${loan.phone || "No phone"}</p></div><div class="bg-gray-800/50 p-3 rounded-lg"><p class="text-sm text-gray-400">Request Details</p><div class="grid grid-cols-2 gap-2 mt-2 text-sm"><div>Amount: <span class="font-mono text-green-400">₦${loan.amount.toLocaleString()}</span></div><div>Interest: <span class="font-mono">${loan.interestRate}%</span></div><div>Total Payable: <span class="font-mono text-blue-400">₦${loan.totalPayable.toLocaleString()}</span></div><div>Installments: <span class="font-mono">${loan.numberOfInstallments} (${loan.repaymentPeriod})</span></div></div></div><div><label class="block text-sm font-medium text-gray-300 mb-2">Disbursement Amount (₦)</label><input type="number" id="disbursedAmount" value="${loan.amount}" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white"><p class="text-xs text-gray-400 mt-1">Can be less than requested amount</p></div><div class="flex gap-4 pt-4"><button onclick="closeApproveLoanModal()" class="flex-1 px-6 py-3 border border-gray-600 rounded-xl hover:bg-gray-800">Cancel</button><button onclick="approveLoan('${loan.id}')" class="flex-1 px-6 py-3 bg-green-600 hover:bg-green-500 rounded-xl">Approve & Disburse</button></div></div></div></div>`;
+
+  const interest = (loan.totalPayable || 0) - (loan.amount || 0);
+  const customer = state.customers.find((c) => c.id === loan.customerId);
+  const customerBalance = customer?.cashBalance || customer?.balance || 0;
+  const canAfford = customerBalance >= (loan.totalPayable || 0);
+
+  const modalHtml = `
+    <div id="approveLoanModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+      <div class="bg-gray-900 rounded-2xl p-4 sm:p-8 max-w-md w-full mx-auto animate-slideIn">
+        <div class="flex justify-between items-center mb-4 sm:mb-6">
+          <h3 class="text-lg sm:text-xl font-semibold text-yellow-400">
+            <i class="fas fa-exclamation-triangle mr-2"></i>
+            Approve & Secure Loan
+          </h3>
+          <button onclick="closeApproveLoanModal()" class="text-gray-400 hover:text-white p-2">
+            <i class="fas fa-times text-lg"></i>
+          </button>
+        </div>
+        
+        <div class="space-y-4">
+          <div class="bg-gray-800/50 p-3 rounded-lg">
+            <p class="text-sm text-gray-400">Customer</p>
+            <p class="font-semibold">${loan.customerName}</p>
+            <p class="text-xs text-gray-400">#${loan.customerNumber || "---"} • ${loan.phone || "No phone"}</p>
+          </div>
+          
+          <div class="bg-gray-800/50 p-3 rounded-lg">
+            <p class="text-sm text-gray-400 mb-2">Deduction Breakdown</p>
+            <div class="space-y-1 text-sm">
+              <div class="flex justify-between">
+                <span>Principal:</span>
+                <span class="font-mono text-green-400">₦${(loan.amount || 0).toLocaleString()}</span>
+              </div>
+              <div class="flex justify-between">
+                <span>Interest (${loan.interestRate}%):</span>
+                <span class="font-mono text-yellow-400">₦${interest.toLocaleString()}</span>
+              </div>
+              <div class="flex justify-between pt-2 border-t border-gray-700 font-bold">
+                <span class="text-red-300">TOTAL TO DEDUCT:</span>
+                <span class="font-mono text-red-400">₦${(loan.totalPayable || 0).toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+          
+          <div class="bg-gray-800/50 p-3 rounded-lg">
+            <p class="text-sm text-gray-400 mb-1">Customer Cash Balance</p>
+            <p class="font-mono text-lg ${canAfford ? "text-green-400" : "text-red-400"}">
+              ₦${customerBalance.toLocaleString()}
+            </p>
+            ${
+              !canAfford
+                ? `
+              <p class="text-xs text-red-400 mt-1">
+                <i class="fas fa-exclamation-circle mr-1"></i>
+                Insufficient balance! Shortfall: ₦${((loan.totalPayable || 0) - customerBalance).toLocaleString()}
+              </p>
+            `
+                : `
+              <p class="text-xs text-green-400 mt-1">
+                <i class="fas fa-check-circle mr-1"></i>
+                Sufficient balance available
+              </p>
+            `
+            }
+          </div>
+          
+          <div class="bg-yellow-500/10 border border-yellow-500/30 p-3 rounded-lg">
+            <p class="text-xs text-yellow-300">
+              <i class="fas fa-info-circle mr-1"></i>
+              <strong>Important:</strong> This will immediately debit ₦${(loan.totalPayable || 0).toLocaleString()} from the customer's account. 
+              Interest (₦${interest.toLocaleString()}) will be recorded as revenue.
+            </p>
+          </div>
+          
+          <div class="flex gap-4 pt-4">
+            <button onclick="closeApproveLoanModal()" class="flex-1 px-6 py-3 border border-gray-600 rounded-xl hover:bg-gray-800">
+              Cancel
+            </button>
+            <button onclick="approveLoan('${loan.id}')" ${!canAfford ? 'disabled class="flex-1 px-6 py-3 bg-gray-600 rounded-xl cursor-not-allowed opacity-50"' : 'class="flex-1 px-6 py-3 bg-green-600 hover:bg-green-500 rounded-xl"'}>
+              ${canAfford ? "Approve & Debit" : "Cannot Approve"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
   const modalContainer = document.createElement("div");
   modalContainer.innerHTML = modalHtml;
   document.body.appendChild(modalContainer);
@@ -2587,15 +2903,18 @@ function closeApproveLoanModal() {
 }
 
 async function approveLoan(loanId) {
-  const disbursedAmount = parseFloat(
-    document.getElementById("disbursedAmount").value,
-  );
   try {
-    await api.patch(`/loans/${loanId}/approve`, {
-      approvedBy: { id: state.currentUser.id, name: state.currentUser.name },
-      disbursedAmount,
+    const response = await api.patch(`/loans/${loanId}/approve`, {
+      approvedBy: {
+        id: state.currentUser.id,
+        name: state.currentUser.name,
+      },
     });
-    showNotification("Loan approved and disbursed successfully!", "success");
+
+    showNotification(
+      "Loan approved! Customer debited and interest recorded as revenue.",
+      "success",
+    );
     closeApproveLoanModal();
     await loadAllData();
     navigate("loans");
@@ -2627,6 +2946,157 @@ async function rejectLoan(loanId) {
   }
 }
 
+function viewLoanRepaymentSchedule(loanId) {
+  const loan = state.loans?.find((l) => l.id === loanId);
+  if (!loan) return;
+
+  const pendingRepayments = (loan.repayments || []).filter(
+    (r) => r.status === "pending",
+  );
+  const paidRepayments = (loan.repayments || []).filter(
+    (r) => r.status === "paid",
+  );
+
+  const modalHtml = `
+    <div id="repaymentScheduleModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+      <div class="bg-gray-900 rounded-2xl p-4 sm:p-8 max-w-2xl w-full mx-auto max-h-[90vh] overflow-y-auto animate-slideIn">
+        <div class="flex justify-between items-center mb-4 sm:mb-6">
+          <div>
+            <h3 class="text-lg sm:text-xl font-semibold">Repayment Schedule</h3>
+            <p class="text-xs sm:text-sm text-gray-400">${loan.customerName} - ${loan.type.toUpperCase()}</p>
+          </div>
+          <button onclick="closeRepaymentScheduleModal()" class="text-gray-400 hover:text-white p-2">
+            <i class="fas fa-times text-lg"></i>
+          </button>
+        </div>
+        
+        <div class="mb-6">
+          <div class="grid grid-cols-3 gap-4 text-center">
+            <div class="bg-gray-800/50 p-3 rounded-lg">
+              <p class="text-xs text-gray-400">Total Payable</p>
+              <p class="font-mono text-green-400">₦${(loan.totalPayable || 0).toLocaleString()}</p>
+            </div>
+            <div class="bg-gray-800/50 p-3 rounded-lg">
+              <p class="text-xs text-gray-400">Repaid</p>
+              <p class="font-mono text-blue-400">₦${(loan.amountRepaid || 0).toLocaleString()}</p>
+            </div>
+            <div class="bg-gray-800/50 p-3 rounded-lg">
+              <p class="text-xs text-gray-400">Outstanding</p>
+              <p class="font-mono text-red-400">₦${(loan.outstandingBalance || 0).toLocaleString()}</p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="space-y-3">
+          <h4 class="text-sm font-semibold mb-3">Pending Installments</h4>
+          ${
+            pendingRepayments.length > 0
+              ? pendingRepayments
+                  .map(
+                    (repayment, index) => `
+            <div class="bg-gray-800/50 p-4 rounded-xl border border-gray-700 flex justify-between items-center">
+              <div>
+                <p class="font-medium">Installment ${(loan.repayments || []).findIndex((r) => r.id === repayment.id) + 1}</p>
+                <p class="text-xs text-gray-400">Due: ${formatSimpleDate(repayment.dueDate)}</p>
+                <p class="text-sm font-mono text-green-400 mt-1">₦${(repayment.amount || 0).toLocaleString()}</p>
+              </div>
+              <button onclick="recordRepayment('${loan.id}', '${repayment.id}')" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm">
+                <i class="fas fa-plus-circle mr-1"></i>Record Payment
+              </button>
+            </div>
+          `,
+                  )
+                  .join("")
+              : `
+            <div class="text-center py-8 text-gray-400">
+              <i class="fas fa-check-circle text-4xl mb-3 text-green-400"></i>
+              <p>No pending installments</p>
+            </div>
+          `
+          }
+        </div>
+        
+        ${
+          paidRepayments.length > 0
+            ? `
+          <div class="mt-6">
+            <h4 class="text-sm font-semibold mb-3 text-green-400">
+              <i class="fas fa-check-circle mr-1"></i>Paid Installments (${paidRepayments.length})
+            </h4>
+            <div class="space-y-2">
+              ${paidRepayments
+                .map(
+                  (repayment) => `
+                <div class="bg-green-500/10 p-3 rounded-lg border border-green-500/20 flex justify-between items-center">
+                  <div>
+                    <p class="text-sm">Installment ${(loan.repayments || []).findIndex((r) => r.id === repayment.id) + 1}</p>
+                    <p class="text-xs text-gray-400">Paid: ${formatDate(repayment.paidDate)}</p>
+                  </div>
+                  <div class="text-right">
+                    <p class="font-mono text-green-400">₦${(repayment.amount || 0).toLocaleString()}</p>
+                    <span class="text-xs text-green-400">✓ Paid</span>
+                  </div>
+                </div>
+              `,
+                )
+                .join("")}
+            </div>
+          </div>
+        `
+            : ""
+        }
+        
+        <div class="flex justify-end mt-6 pt-4 border-t border-gray-700">
+          <button onclick="closeRepaymentScheduleModal()" class="px-6 py-2 border border-gray-600 rounded-lg hover:bg-gray-800">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const modalContainer = document.createElement("div");
+  modalContainer.innerHTML = modalHtml;
+  document.body.appendChild(modalContainer);
+}
+
+function closeRepaymentScheduleModal() {
+  const modal = document.getElementById("repaymentScheduleModal");
+  if (modal) modal.remove();
+}
+
+async function recordRepayment(loanId, repaymentId) {
+  if (
+    !confirm(
+      "Record this repayment? This will deduct from the customer's cash balance.",
+    )
+  )
+    return;
+
+  try {
+    const response = await api.patch(
+      `/loans/${loanId}/repayments/${repaymentId}`,
+      {
+        paidBy: state.currentUser.name,
+      },
+    );
+
+    showNotification(
+      "Repayment recorded successfully! Customer balance updated.",
+      "success",
+    );
+    closeRepaymentScheduleModal();
+    await loadAllData();
+    navigate("loans");
+  } catch (error) {
+    console.error("Record repayment error:", error);
+    showNotification(
+      error.response?.data?.error || "Failed to record repayment",
+      "error",
+    );
+  }
+}
+
 // ==================== MY LOANS VIEW ====================
 
 function renderMyLoans(container) {
@@ -2642,13 +3112,9 @@ function renderMyLoans(container) {
 
 async function renderRevenueReports(container) {
   try {
-    // FRONTEND WORKAROUND: Calculate revenue from local state.transactions
-    // This bypasses the backend API which is returning 0
-
-    const calculateRevenueFromTransactions = (period) => {
+    const calculateTransactionRevenue = (period) => {
       const now = new Date();
       let startDate;
-
       switch (period) {
         case "daily":
           startDate = new Date(
@@ -2671,56 +3137,75 @@ async function renderRevenueReports(container) {
           startDate = new Date(0);
       }
 
-      // Filter approved transactions with charges in the period
-      const filteredTransactions = state.transactions.filter((t) => {
-        const txnDate = new Date(t.date);
-        return (
+      const filtered = state.transactions.filter(
+        (t) =>
           t.status === "approved" &&
           t.charges > 0 &&
-          txnDate >= startDate &&
-          txnDate <= now
-        );
-      });
-
-      const totalCharges = filteredTransactions.reduce(
-        (sum, t) => sum + (t.charges || 0),
-        0,
-      );
-      const totalAmount = filteredTransactions.reduce(
-        (sum, t) => sum + (t.amount || 0),
-        0,
+          new Date(t.date) >= startDate,
       );
 
       return {
-        totalRevenue: totalCharges,
-        breakdown: {
-          transactionCharges: totalCharges,
-          interestRevenue: 0,
-          totalTransactionAmount: totalAmount,
-        },
-        summary: {
-          totalTransactions: filteredTransactions.length,
-          totalLoans: 0,
-        },
-        transactions: filteredTransactions,
+        charges: filtered.reduce((sum, t) => sum + (t.charges || 0), 0),
+        count: filtered.length,
       };
     };
 
-    // Calculate all periods from local data
-    const daily = calculateRevenueFromTransactions("daily");
-    const weekly = calculateRevenueFromTransactions("weekly");
-    const monthly = calculateRevenueFromTransactions("monthly");
-    const yearly = calculateRevenueFromTransactions("yearly");
-    const allTime = calculateRevenueFromTransactions("all");
+    const calculateLoanRevenue = (period) => {
+      const now = new Date();
+      let startDate;
+      switch (period) {
+        case "daily":
+          startDate = new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate(),
+          );
+          break;
+        case "weekly":
+          startDate = new Date(now);
+          startDate.setDate(now.getDate() - 7);
+          break;
+        case "monthly":
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          break;
+        case "yearly":
+          startDate = new Date(now.getFullYear(), 0, 1);
+          break;
+        default:
+          startDate = new Date(0);
+      }
 
-    const formatNumber = (num) => {
-      if (num === undefined || num === null || isNaN(num)) return "0";
-      return num.toLocaleString();
+      const filtered = (state.loans || []).filter(
+        (l) =>
+          (l.status === "active" || l.status === "completed") &&
+          new Date(l.approvedBy?.approvedAt || l.createdAt) >= startDate,
+      );
+
+      return {
+        interest: filtered.reduce(
+          (sum, l) => sum + ((l.totalPayable || 0) - (l.amount || 0)),
+          0,
+        ),
+        count: filtered.length,
+      };
     };
 
-    const transactionsWithCharges = state.transactions
-      .filter((t) => t.status === "approved" && t.charges > 0)
-      .sort((a, b) => new Date(b.date) - new Date(a.date));
+    const dailyTxn = calculateTransactionRevenue("daily");
+    const weeklyTxn = calculateTransactionRevenue("weekly");
+    const monthlyTxn = calculateTransactionRevenue("monthly");
+    const yearlyTxn = calculateTransactionRevenue("yearly");
+
+    const dailyLoan = calculateLoanRevenue("daily");
+    const weeklyLoan = calculateLoanRevenue("weekly");
+    const monthlyLoan = calculateLoanRevenue("monthly");
+    const yearlyLoan = calculateLoanRevenue("yearly");
+
+    const totalRevenue = {
+      daily: dailyTxn.charges + dailyLoan.interest,
+      weekly: weeklyTxn.charges + weeklyLoan.interest,
+      monthly: monthlyTxn.charges + monthlyLoan.interest,
+      yearly: yearlyTxn.charges + yearlyLoan.interest,
+    };
 
     const html = `
       <div class="space-y-6 animate-fade-in px-4 sm:px-0">
@@ -2732,100 +3217,147 @@ async function renderRevenueReports(container) {
               <span class="text-gray-400">Today's Revenue</span>
               <i class="fas fa-calendar-day text-blue-400 text-xl"></i>
             </div>
-            <p class="text-2xl font-bold text-green-400">₦${formatNumber(daily.totalRevenue)}</p>
-            <p class="text-xs text-gray-400 mt-1">${formatNumber(daily.summary.totalTransactions)} transactions</p>
+            <p class="text-2xl font-bold text-green-400">₦${totalRevenue.daily.toLocaleString()}</p>
+            <div class="text-xs text-gray-400 mt-1">
+              Charges: ₦${dailyTxn.charges.toLocaleString()} | 
+              Interest: ₦${dailyLoan.interest.toLocaleString()}
+            </div>
           </div>
           
           <div class="glass-panel p-6 rounded-xl">
             <div class="flex items-center justify-between mb-2">
-              <span class="text-gray-400">This Week's Revenue</span>
+              <span class="text-gray-400">This Week</span>
               <i class="fas fa-calendar-week text-green-400 text-xl"></i>
             </div>
-            <p class="text-2xl font-bold text-green-400">₦${formatNumber(weekly.totalRevenue)}</p>
-            <p class="text-xs text-gray-400 mt-1">${formatNumber(weekly.summary.totalTransactions)} transactions</p>
+            <p class="text-2xl font-bold text-green-400">₦${totalRevenue.weekly.toLocaleString()}</p>
+            <div class="text-xs text-gray-400 mt-1">
+              Charges: ₦${weeklyTxn.charges.toLocaleString()} | 
+              Interest: ₦${weeklyLoan.interest.toLocaleString()}
+            </div>
           </div>
           
           <div class="glass-panel p-6 rounded-xl">
             <div class="flex items-center justify-between mb-2">
-              <span class="text-gray-400">This Month's Revenue</span>
+              <span class="text-gray-400">This Month</span>
               <i class="fas fa-calendar-alt text-yellow-400 text-xl"></i>
             </div>
-            <p class="text-2xl font-bold text-green-400">₦${formatNumber(monthly.totalRevenue)}</p>
-            <p class="text-xs text-gray-400 mt-1">${formatNumber(monthly.summary.totalTransactions)} transactions</p>
+            <p class="text-2xl font-bold text-green-400">₦${totalRevenue.monthly.toLocaleString()}</p>
+            <div class="text-xs text-gray-400 mt-1">
+              Charges: ₦${monthlyTxn.charges.toLocaleString()} | 
+              Interest: ₦${monthlyLoan.interest.toLocaleString()}
+            </div>
           </div>
           
           <div class="glass-panel p-6 rounded-xl">
             <div class="flex items-center justify-between mb-2">
-              <span class="text-gray-400">This Year's Revenue</span>
+              <span class="text-gray-400">This Year</span>
               <i class="fas fa-calendar text-purple-400 text-xl"></i>
             </div>
-            <p class="text-2xl font-bold text-green-400">₦${formatNumber(yearly.totalRevenue)}</p>
-            <p class="text-xs text-gray-400 mt-1">${formatNumber(yearly.summary.totalTransactions)} transactions</p>
+            <p class="text-2xl font-bold text-green-400">₦${totalRevenue.yearly.toLocaleString()}</p>
+            <div class="text-xs text-gray-400 mt-1">
+              Charges: ₦${yearlyTxn.charges.toLocaleString()} | 
+              Interest: ₦${yearlyLoan.interest.toLocaleString()}
+            </div>
           </div>
         </div>
         
         <div class="glass-panel rounded-2xl p-6">
-          <h3 class="text-lg font-semibold mb-4">Revenue Sources</h3>
+          <h3 class="text-lg font-semibold mb-4">Revenue Breakdown</h3>
+          
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div class="bg-gray-800/30 p-4 rounded-xl text-center">
-              <h4 class="text-sm font-medium text-gray-400 mb-2">Transaction Charges</h4>
-              <p class="text-3xl font-bold text-green-400">₦${formatNumber(allTime.totalRevenue)}</p>
-              <p class="text-xs text-gray-500 mt-1">From ${formatNumber(allTime.summary.totalTransactions)} transactions</p>
+            <div class="bg-gray-800/30 p-4 rounded-xl">
+              <h4 class="text-sm font-medium text-gray-400 mb-3">
+                <i class="fas fa-percent text-blue-400 mr-2"></i>
+                Transaction Charges
+              </h4>
+              <p class="text-3xl font-bold text-blue-400">₦${yearlyTxn.charges.toLocaleString()}</p>
+              <p class="text-xs text-gray-500 mt-1">From ${yearlyTxn.count} transactions</p>
             </div>
-            <div class="bg-gray-800/30 p-4 rounded-xl text-center">
-              <h4 class="text-sm font-medium text-gray-400 mb-2">Loan Interest</h4>
-              <p class="text-3xl font-bold text-blue-400">₦0</p>
-              <p class="text-xs text-gray-500 mt-1">From 0 loans</p>
+            
+            <div class="bg-gray-800/30 p-4 rounded-xl">
+              <h4 class="text-sm font-medium text-gray-400 mb-3">
+                <i class="fas fa-chart-line text-green-400 mr-2"></i>
+                Loan Interest Revenue
+              </h4>
+              <p class="text-3xl font-bold text-green-400">₦${yearlyLoan.interest.toLocaleString()}</p>
+              <p class="text-xs text-gray-500 mt-1">From ${yearlyLoan.count} approved loans</p>
             </div>
           </div>
           
           <div class="mt-6">
             <div class="flex justify-between text-sm mb-2">
-              <span>Transaction Charges (100%)</span>
-              <span>Loan Interest (0%)</span>
+              <span>Transaction Charges (${((yearlyTxn.charges / (totalRevenue.yearly || 1)) * 100).toFixed(1)}%)</span>
+              <span>Loan Interest (${((yearlyLoan.interest / (totalRevenue.yearly || 1)) * 100).toFixed(1)}%)</span>
             </div>
-            <div class="w-full bg-gray-700 rounded-full h-4 overflow-hidden">
-              <div class="flex h-full">
-                <div class="bg-green-500 h-full" style="width: 100%"></div>
-                <div class="bg-blue-500 h-full" style="width: 0%"></div>
-              </div>
+            <div class="w-full bg-gray-700 rounded-full h-4 overflow-hidden flex">
+              <div class="bg-blue-500 h-full" style="width: ${(yearlyTxn.charges / (totalRevenue.yearly || 1)) * 100}%"></div>
+              <div class="bg-green-500 h-full" style="width: ${(yearlyLoan.interest / (totalRevenue.yearly || 1)) * 100}%"></div>
+            </div>
+            <div class="flex gap-4 mt-2 text-xs">
+              <div class="flex items-center gap-1"><div class="w-3 h-3 bg-blue-500 rounded"></div><span>Charges</span></div>
+              <div class="flex items-center gap-1"><div class="w-3 h-3 bg-green-500 rounded"></div><span>Interest</span></div>
             </div>
           </div>
         </div>
         
         <div class="glass-panel rounded-2xl p-6">
-          <h3 class="text-lg font-semibold mb-4">Recent Transactions with Charges</h3>
+          <h3 class="text-lg font-semibold mb-4">Active Loans Summary</h3>
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-700">
               <thead>
                 <tr class="text-left text-gray-400 text-sm">
-                  <th class="pb-3">Date</th>
                   <th class="pb-3">Customer</th>
                   <th class="pb-3">Type</th>
-                  <th class="pb-3">Amount</th>
-                  <th class="pb-3">Charges</th>
-                  <th class="pb-3">Net</th>
-                </tr>
+                  <th class="pb-3">Principal</th>
+                  <th class="pb-3">Interest</th>
+                  <th class="pb-3">Status</th>
+                  <th class="pb-3">Approved Date</th>
+                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-800">
+                ${(state.loans || [])
+                  .filter(
+                    (l) => l.status === "active" || l.status === "completed",
+                  )
+                  .sort(
+                    (a, b) =>
+                      new Date(b.approvedBy?.approvedAt || 0) -
+                      new Date(a.approvedBy?.approvedAt || 0),
+                  )
+                  .slice(0, 10)
+                  .map((loan) => {
+                    const interest =
+                      (loan.totalPayable || 0) - (loan.amount || 0);
+                    return `
+                      <tr class="hover:bg-gray-800/30">
+                        <td class="py-3 text-sm">${loan.customerName}</td>
+                        <td class="py-3">
+                          <span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
+                            ${loan.type}
+                          </span>
+                        </td>
+                        <td class="py-3 font-mono">₦${(loan.amount || 0).toLocaleString()}</td>
+                        <td class="py-3 font-mono text-green-400">₦${interest.toLocaleString()}</td>
+                        <td class="py-3">
+                          <span class="px-2 py-1 rounded text-xs ${getStatusStyle(loan.status)}">
+                            ${loan.status}
+                          </span>
+                        </td>
+                        <td class="py-3 text-xs text-gray-400">
+                          ${loan.approvedBy?.approvedAt ? formatDate(loan.approvedBy.approvedAt) : "N/A"}
+                        </td>
+                       </tr>
+                    `;
+                  })
+                  .join("")}
                 ${
-                  transactionsWithCharges.length > 0
-                    ? transactionsWithCharges
-                        .slice(0, 10)
-                        .map(
-                          (txn) => `
-                    <tr class="hover:bg-gray-800/30">
-                      <td class="py-3 text-sm">${formatDate(txn.date)}</td>
-                      <td class="py-3">${txn.customerName}</td>
-                      <td class="py-3 capitalize ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">${txn.type}</td>
-                      <td class="py-3 font-mono">₦${formatNumber(txn.amount)}</td>
-                      <td class="py-3 font-mono text-red-400 font-bold">₦${formatNumber(txn.charges)}</td>
-                      <td class="py-3 font-mono text-blue-400">₦${formatNumber(txn.netAmount || txn.amount - txn.charges)}</td>
-                    </tr>
-                  `,
-                        )
-                        .join("")
-                    : `<tr><td colspan="6" class="py-8 text-center text-gray-400">No transactions with charges found</td></tr>`
+                  (state.loans || []).filter(
+                    (l) => l.status === "active" || l.status === "completed",
+                  ).length === 0
+                    ? `
+                  <tr><td colspan="6" class="py-8 text-center text-gray-400">No approved loans yet</td></tr>
+                `
+                    : ""
                 }
               </tbody>
             </table>
@@ -2841,14 +3373,15 @@ async function renderRevenueReports(container) {
       <div class="text-center text-red-400 py-8">
         <i class="fas fa-exclamation-circle text-4xl mb-3"></i>
         <p>Failed to load revenue reports</p>
-        <p class="text-xs text-gray-500 mt-2">${error.message}</p>
-        <button onclick="renderRevenueReports(document.getElementById('contentArea'))" class="mt-4 px-4 py-2 bg-blue-600 rounded-lg text-sm hover:bg-blue-500 transition-colors">
+        <button onclick="renderRevenueReports(document.getElementById('contentArea'))" class="mt-4 px-4 py-2 bg-blue-600 rounded-lg text-sm hover:bg-blue-500">
           <i class="fas fa-sync-alt mr-2"></i>Retry
         </button>
       </div>
     `;
   }
-} // ==================== DORMANT CUSTOMERS SECTION ====================
+}
+
+// ==================== DORMANT CUSTOMERS SECTION ====================
 
 function renderDormantCustomers(container) {
   const thirtyDaysAgo = new Date();
@@ -2899,7 +3432,7 @@ function renderDormantCustomers(container) {
         : 0;
   const html = `<div class="space-y-4 sm:space-y-6 animate-fade-in px-4 sm:px-0"><div class="glass-panel rounded-2xl p-4 sm:p-6"><div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4 sm:mb-6"><div><h3 class="text-base sm:text-lg font-semibold">Dormant Customers</h3><p class="text-xs sm:text-sm text-gray-400">Customers with no transactions in the last 30 days</p></div><div class="flex gap-2 w-full sm:w-auto"><button onclick="sendBulkSMSToDormantCustomers()" class="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-xs sm:text-sm transition-colors flex items-center justify-center gap-2" ${dormantCount === 0 ? 'disabled style="opacity:0.5; cursor:not-allowed"' : ""}><i class="fas fa-envelope text-xs sm:text-sm"></i>SMS (${dormantCount})</button><button onclick="exportDormantCustomers()" class="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-xs sm:text-sm transition-colors flex items-center justify-center gap-2" ${dormantCount === 0 ? 'disabled style="opacity:0.5; cursor:not-allowed"' : ""}><i class="fas fa-download text-xs sm:text-sm"></i>Export</button></div></div><div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4 sm:mb-6"><div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700"><div class="flex items-center justify-between mb-2"><span class="text-xs sm:text-sm text-gray-400">Total Customers</span><i class="fas fa-users text-blue-400 text-sm sm:text-base"></i></div><p class="text-xl sm:text-2xl font-bold">${totalCustomers}</p></div><div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700"><div class="flex items-center justify-between mb-2"><span class="text-xs sm:text-sm text-gray-400">Active Customers</span><i class="fas fa-user-check text-green-400 text-sm sm:text-base"></i></div><p class="text-xl sm:text-2xl font-bold text-green-400">${activeCount}</p><p class="text-xs text-gray-400">Active in last 30 days</p></div><div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700"><div class="flex items-center justify-between mb-2"><span class="text-xs sm:text-sm text-gray-400">Dormant Customers</span><i class="fas fa-user-clock text-yellow-400 text-sm sm:text-base"></i></div><p class="text-xl sm:text-2xl font-bold text-yellow-400">${dormantCount}</p><p class="text-xs text-gray-400">No activity in 30+ days</p></div><div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700"><div class="flex items-center justify-between mb-2"><span class="text-xs sm:text-sm text-gray-400">Dormancy Rate</span><i class="fas fa-chart-line text-purple-400 text-sm sm:text-base"></i></div><p class="text-xl sm:text-2xl font-bold text-purple-400">${dormantPercentage}%</p><p class="text-xs text-gray-400">of total customers</p></div></div>${
     dormantCount > 0
-      ? `<div class="overflow-x-auto -mx-4 sm:mx-0"><div class="inline-block min-w-full align-middle"><table class="min-w-full divide-y divide-gray-700"><thead><tr class="text-left text-gray-400 text-xs sm:text-sm"><th class="pb-3 px-4 sm:px-0">Customer</th><th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Contact</th><th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Phone</th><th class="pb-3 px-4 sm:px-0">Balance</th><th class="pb-3 px-4 sm:px-0 hidden lg:table-cell">Last Transaction</th><th class="pb-3 px-4 sm:px-0">Days</th><th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Total Txns</th><th class="pb-3 px-4 sm:px-0">Actions</th> </thead><tbody class="divide-y divide-gray-800">${dormantCustomers
+      ? `<div class="overflow-x-auto -mx-4 sm:mx-0"><div class="inline-block min-w-full align-middle"><table class="min-w-full divide-y divide-gray-700"><thead><tr class="text-left text-gray-400 text-xs sm:text-sm"><th class="pb-3 px-4 sm:px-0">Customer</th><th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Contact</th><th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Phone</th><th class="pb-3 px-4 sm:px-0">Cash Balance</th><th class="pb-3 px-4 sm:px-0 hidden lg:table-cell">Last Transaction</th><th class="pb-3 px-4 sm:px-0">Days</th><th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Total Txns</th><th class="pb-3 px-4 sm:px-0">Actions</th> </thead><tbody class="divide-y divide-gray-800">${dormantCustomers
           .map(
             (customer) =>
               `<tr class="hover:bg-gray-800/30 transition-colors"><td class="py-3 px-4 sm:px-0"><div class="flex items-center gap-2 sm:gap-3"><div class="w-8 h-8 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center text-xs font-bold flex-shrink-0">${customer.name
@@ -2907,9 +3440,9 @@ function renderDormantCustomers(container) {
                 .map((n) => n[0])
                 .join("")
                 .substring(0, 2)
-                .toUpperCase()}</div><div><p class="font-medium text-xs sm:text-sm">${customer.name}</p><p class="text-xs text-gray-400 hidden sm:block">${customer.email}</p></div></div>  </div><td class="py-3 px-4 sm:px-0 hidden sm:table-cell"><div class="text-xs"><div class="flex items-center gap-1"><i class="fas fa-envelope text-gray-500 text-xs"></i><span class="break-words">${customer.email}</span></div></div>  </div><td class="py-3 px-4 sm:px-0 hidden md:table-cell"><div class="text-xs"><div class="flex items-center gap-1"><i class="fas fa-phone-alt text-gray-500 text-xs"></i><span>${customer.phone || "N/A"}</span></div></div>  </div><td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm">₦${(customer.balance || 0).toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 hidden lg:table-cell">${customer.lastTransactionDate ? `<div class="text-xs"><div>${formatDate(customer.lastTransactionDate)}</div><div class="text-gray-400 capitalize">${customer.lastTransactionType} of ₦${(customer.lastTransactionAmount || 0).toLocaleString()}</div></div>` : '<span class="text-xs text-gray-500">Never</span>'}  </div><td class="py-3 px-4 sm:px-0"><span class="px-2 py-1 rounded text-xs ${customer.daysSinceLastTransaction > 90 ? "bg-red-500/20 text-red-400" : customer.daysSinceLastTransaction > 60 ? "bg-orange-500/20 text-orange-400" : "bg-yellow-500/20 text-yellow-400"}">${customer.daysSinceLastTransaction ? `${customer.daysSinceLastTransaction}d` : "Never"}</span>  </div><td class="py-3 px-4 sm:px-0 hidden md:table-cell text-xs">${customer.totalTransactions}  </div><td class="py-3 px-4 sm:px-0"><div class="flex gap-2"><button onclick="viewCustomer('${customer.id}')" class="text-blue-400 hover:text-blue-300 p-1" title="View Details"><i class="fas fa-eye text-xs sm:text-sm"></i></button>${customer.phone ? `<button onclick="sendSMSReminder('${customer.id}')" class="text-green-400 hover:text-green-300 p-1" title="Send SMS Reminder"><i class="fas fa-envelope text-xs sm:text-sm"></i></button>` : ""}<button onclick="reactivateCustomer('${customer.id}')" class="text-purple-400 hover:text-purple-300 p-1" title="Mark as Reactivated"><i class="fas fa-user-check text-xs sm:text-sm"></i></button></div>  </div>  </tr>`,
+                .toUpperCase()}</div><div><p class="font-medium text-xs sm:text-sm">${customer.name}</p><p class="text-xs text-gray-400 hidden sm:block">${customer.email}</p></div></div>  </div><td class="py-3 px-4 sm:px-0 hidden sm:table-cell"><div class="text-xs"><div class="flex items-center gap-1"><i class="fas fa-envelope text-gray-500 text-xs"></i><span class="break-words">${customer.email}</span></div></div>  </div><td class="py-3 px-4 sm:px-0 hidden md:table-cell"><div class="text-xs"><div class="flex items-center gap-1"><i class="fas fa-phone-alt text-gray-500 text-xs"></i><span>${customer.phone || "N/A"}</span></div></div>  </div><td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm">₦${(customer.cashBalance || customer.balance || 0).toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 hidden lg:table-cell">${customer.lastTransactionDate ? `<div class="text-xs"><div>${formatDate(customer.lastTransactionDate)}</div><div class="text-gray-400 capitalize">${customer.lastTransactionType} of ₦${(customer.lastTransactionAmount || 0).toLocaleString()}</div></div>` : '<span class="text-xs text-gray-500">Never</span>'}  </div><td class="py-3 px-4 sm:px-0"><span class="px-2 py-1 rounded text-xs ${customer.daysSinceLastTransaction > 90 ? "bg-red-500/20 text-red-400" : customer.daysSinceLastTransaction > 60 ? "bg-orange-500/20 text-orange-400" : "bg-yellow-500/20 text-yellow-400"}">${customer.daysSinceLastTransaction ? `${customer.daysSinceLastTransaction}d` : "Never"}</span>  </div><td class="py-3 px-4 sm:px-0 hidden md:table-cell text-xs">${customer.totalTransactions}  </div><td class="py-3 px-4 sm:px-0"><div class="flex gap-2"><button onclick="viewCustomer('${customer.id}')" class="text-blue-400 hover:text-blue-300 p-1" title="View Details"><i class="fas fa-eye text-xs sm:text-sm"></i></button>${customer.phone ? `<button onclick="sendSMSReminder('${customer.id}')" class="text-green-400 hover:text-green-300 p-1" title="Send SMS Reminder"><i class="fas fa-envelope text-xs sm:text-sm"></i></button>` : ""}<button onclick="reactivateCustomer('${customer.id}')" class="text-purple-400 hover:text-purple-300 p-1" title="Mark as Reactivated"><i class="fas fa-user-check text-xs sm:text-sm"></i></button></div>  </div>   </div>`,
           )
-          .join("")}</tbody>   </table></div></div>`
+          .join("")}</tbody>   </div></div>`
       : `<div class="text-center py-8 sm:py-12 bg-gray-800/30 rounded-xl"><div class="w-12 h-12 sm:w-16 sm:h-16 mx-auto bg-green-500/20 rounded-full flex items-center justify-center mb-3 sm:mb-4"><i class="fas fa-check-circle text-green-400 text-xl sm:text-2xl"></i></div><h3 class="text-base sm:text-lg font-semibold mb-2">No Dormant Customers</h3><p class="text-xs sm:text-sm text-gray-400">All customers have been active in the last 30 days</p></div>`
   }</div>${dormantCount > 0 ? `<div class="glass-panel rounded-2xl p-4 sm:p-6"><h3 class="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Reactivation Suggestions</h3><div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4"><div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700"><i class="fas fa-gift text-purple-400 text-xl sm:text-2xl mb-2"></i><h4 class="font-medium text-sm sm:text-base mb-1">Offer Incentives</h4><p class="text-xs text-gray-400">Consider offering bonuses or reduced fees to dormant customers</p></div><div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700"><i class="fas fa-envelope text-blue-400 text-xl sm:text-2xl mb-2"></i><h4 class="font-medium text-sm sm:text-base mb-1">Send Reminders</h4><p class="text-xs text-gray-400">Send personalized SMS or email reminders to encourage activity</p></div><div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700"><i class="fas fa-chart-line text-green-400 text-xl sm:text-2xl mb-2"></i><h4 class="font-medium text-sm sm:text-base mb-1">Track Engagement</h4><p class="text-xs text-gray-400">Monitor reactivation rates and adjust strategies accordingly</p></div></div></div>` : ""}</div>`;
   container.innerHTML = html;
@@ -3008,7 +3541,8 @@ function exportDormantCustomers() {
           Name: customer.name,
           Email: customer.email,
           Phone: customer.phone || "N/A",
-          Balance: customer.balance,
+          CashBalance: customer.cashBalance || customer.balance || 0,
+          LoanBalance: customer.loanBalance || 0,
           "Last Transaction Date": lastTransactionDate
             ? formatDate(lastTransactionDate)
             : "Never",
@@ -3234,11 +3768,10 @@ function renderAdminTransactions(container) {
 }
 
 // ==================== HELPER FUNCTIONS ====================
-// Add a helper function to format dates safely
+
 function formatTransactionDate(dateValue) {
   if (!dateValue) return "N/A";
   try {
-    // Handle both Date objects and string dates
     const date = new Date(dateValue);
     if (isNaN(date.getTime())) return dateValue;
     return date
@@ -3523,6 +4056,14 @@ function checkAuth() {
       });
   }
 }
+
+// Make functions available globally
+window.viewLoanRepaymentSchedule = viewLoanRepaymentSchedule;
+window.closeRepaymentScheduleModal = closeRepaymentScheduleModal;
+window.recordRepayment = recordRepayment;
+window.filterCustomersByBalance = filterCustomersByBalance;
+window.viewCustomerLoans = viewCustomerLoans;
+window.closeCustomerLoansModal = closeCustomerLoansModal;
 
 // Initialize
 window.onload = () => {
