@@ -13,6 +13,12 @@ const transactionSchema = new mongoose.Schema({
     enum: ["pending", "approved", "rejected"],
     default: "pending",
   },
+  // In your transaction schema, update the type enum
+  type: {
+    type: String,
+    enum: ["deposit", "withdrawal", "loan_disbursement", "loan_repayment"],
+    required: true,
+  },
   // Change from String to Date
   date: { type: Date, default: Date.now },
   approvedBy: String,

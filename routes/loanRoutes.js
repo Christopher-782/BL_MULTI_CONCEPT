@@ -10,6 +10,7 @@ const {
   recordRepayment,
   getRevenueReports,
   getLoanSummary,
+  getCustomerLoanSummary,
 } = require("../controllers/loanController");
 
 router.post("/loans", createLoanRequest);
@@ -21,5 +22,6 @@ router.patch("/loans/:loanId/reject", rejectLoan);
 router.post("/loans/:loanId/repayments/:repaymentId", recordRepayment);
 router.get("/reports/revenue", getRevenueReports);
 router.get("/loans/summary", getLoanSummary);
+router.get("/loans/customer/:customerId/summary", getCustomerLoanSummary);
 
 module.exports = router;
