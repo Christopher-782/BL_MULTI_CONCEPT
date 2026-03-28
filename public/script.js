@@ -570,8 +570,6 @@ function navigate(view) {
 
 // ==================== DASHBOARD VIEW ====================
 
-// ==================== DASHBOARD VIEW ====================
-
 function renderDashboard(container) {
   // Calculate statistics with separate balances
   const totalCashBalance = state.customers.reduce(
@@ -2099,8 +2097,6 @@ function startClock() {
 
 // ==================== CUSTOMER TRANSACTION HISTORY FUNCTIONS ====================
 
-// ==================== CUSTOMER TRANSACTION HISTORY FUNCTIONS ====================
-
 function viewCustomer(id) {
   const customer = state.customers.find((c) => c.id === id);
   if (!customer) {
@@ -2235,6 +2231,22 @@ function viewCustomer(id) {
                     const loanDeduction = txn.loanDeduction || 0;
                     const finalAvailable = netAmount - loanDeduction;
 
+                    // Determine if transaction is money IN or OUT
+                    const isMoneyIn =
+                      txn.type === "deposit" || txn.type === "loan_repayment";
+                    const isMoneyOut =
+                      txn.type === "withdrawal" ||
+                      txn.type === "loan_disbursement";
+
+                    // Determine colors and arrows
+                    const amountColor = isMoneyIn
+                      ? "text-green-400"
+                      : isMoneyOut
+                        ? "text-orange-400"
+                        : "text-blue-400";
+                    const arrowDirection = isMoneyIn ? "down" : "up";
+                    const amountSign = isMoneyIn ? "+" : "-";
+
                     // Determine loan badge
                     const loanIndicator =
                       loanDeduction > 0
@@ -2254,13 +2266,13 @@ function viewCustomer(id) {
                         </td>
                         <td class="py-3 px-4 sm:px-0">
                           <span class="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm flex-wrap">
-                            <i class="fas fa-arrow-${txn.type === "deposit" ? "down text-green-400" : "up text-orange-400"}"></i>
+                            <i class="fas fa-arrow-${arrowDirection} ${amountColor}"></i>
                             ${txn.type}
                             ${loanIndicator}
                           </span>
                         </td>
-                        <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">
-                          ${txn.type === "deposit" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()}
+                        <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm ${amountColor}">
+                          ${amountSign}₦${(txn.amount || 0).toLocaleString()}
                         </td>
                         <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-red-400 hidden sm:table-cell">
                           ${charges > 0 ? `-₦${charges.toLocaleString()}` : "-"}
@@ -4055,8 +4067,26 @@ function getTransactionDisplayHTML(txn, idx = 0) {
   const loanDeduction = txn.loanDeduction || 0;
   const availableToCustomer = netAmount - loanDeduction;
 
-  const isLoanRelated =
-    txn.type === "loan_disbursement" || txn.type === "loan_repayment";
+  // Determine if transaction is money IN or OUT
+  const isMoneyIn = txn.type === "deposit" || txn.type === "loan_repayment";
+  const isMoneyOut =
+    txn.type === "withdrawal" || txn.type === "loan_disbursement";
+
+  // Determine colors, arrows, and signs
+  const amountColor = isMoneyIn
+    ? "text-green-400"
+    : isMoneyOut
+      ? "text-orange-400"
+      : "text-blue-400";
+  const bgColor = isMoneyIn
+    ? "bg-green-500/20"
+    : isMoneyOut
+      ? "bg-orange-500/20"
+      : txn.type === "loan_disbursement"
+        ? "bg-blue-500/20"
+        : "bg-purple-500/20";
+  const arrowDirection = isMoneyIn ? "down" : "up";
+  const amountSign = isMoneyIn ? "+" : "-";
 
   let loanBadge = "";
   if (loanDeduction > 0) {
@@ -4066,16 +4096,8 @@ function getTransactionDisplayHTML(txn, idx = 0) {
   return `
     <div class="transaction-card flex flex-col sm:flex-row sm:items-center justify-between p-3 sm:p-4 bg-gray-800/50 rounded-xl border border-gray-700/50" style="animation-delay: ${idx * 0.1}s">
       <div class="flex items-center gap-3 sm:gap-4 mb-2 sm:mb-0">
-        <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-full ${
-          txn.type === "deposit"
-            ? "bg-green-500/20 text-green-400"
-            : txn.type === "withdrawal"
-              ? "bg-orange-500/20 text-orange-400"
-              : txn.type === "loan_disbursement"
-                ? "bg-blue-500/20 text-blue-400"
-                : "bg-purple-500/20 text-purple-400"
-        } flex items-center justify-center flex-shrink-0">
-          <i class="fas fa-arrow-${txn.type === "deposit" ? "down" : txn.type === "withdrawal" ? "up" : "exchange-alt"} text-sm sm:text-base"></i>
+        <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-full ${bgColor} ${amountColor} flex items-center justify-center flex-shrink-0">
+          <i class="fas fa-arrow-${arrowDirection} text-sm sm:text-base"></i>
         </div>
         <div>
           <p class="font-medium text-sm sm:text-base flex items-center flex-wrap gap-2">
@@ -4086,19 +4108,12 @@ function getTransactionDisplayHTML(txn, idx = 0) {
             <i class="fas fa-calendar-alt"></i>
             <span>${formatDate(txn.date)}</span>
           </div>
-          ${isLoanRelated ? `<p class="text-xs text-blue-400 mt-1">${txn.type === "loan_disbursement" ? "Loan Disbursement" : "Loan Repayment"}</p>` : ""}
           ${txn.loanDeduction > 0 ? `<p class="text-xs text-purple-400 mt-1"><i class="fas fa-info-circle mr-1"></i>Auto-deducted for loan</p>` : ""}
         </div>
       </div>
       <div class="text-left sm:text-right pl-11 sm:pl-0">
-        <p class="font-bold text-sm sm:text-base ${
-          txn.type === "deposit" || txn.type === "loan_disbursement"
-            ? "text-green-400"
-            : txn.type === "withdrawal" || txn.type === "loan_repayment"
-              ? "text-orange-400"
-              : "text-blue-400"
-        }">
-          ${txn.type === "deposit" || txn.type === "loan_disbursement" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()}
+        <p class="font-bold text-sm sm:text-base ${amountColor}">
+          ${amountSign}₦${(txn.amount || 0).toLocaleString()}
         </p>
         ${charges > 0 ? `<p class="text-xs text-red-400">Charge: -₦${charges.toLocaleString()}</p>` : ""}
         ${loanDeduction > 0 ? `<p class="text-xs text-purple-400">Loan Deduction: -₦${loanDeduction.toLocaleString()}</p>` : ""}

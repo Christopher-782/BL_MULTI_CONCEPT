@@ -226,6 +226,7 @@ exports.getLoansByCustomer = async (req, res) => {
 };
 
 // Approve loan - CORRECTED VERSION WITH SMS
+// Approve loan - CORRECTED VERSION WITH SMS
 exports.approveLoan = async (req, res) => {
   try {
     const { loanId } = req.params;
@@ -262,7 +263,7 @@ exports.approveLoan = async (req, res) => {
 
     await loan.save();
 
-    // Create disbursement transaction
+    // CREATE DISBURSEMENT TRANSACTION - MAKE SURE netAmount is POSITIVE
     const disbursementTransaction = new Transaction({
       id: "TXN" + Date.now() + Math.random(),
       customerId: loan.customerId,
@@ -270,7 +271,7 @@ exports.approveLoan = async (req, res) => {
       type: "loan_disbursement",
       amount: loan.amount,
       charges: 0,
-      netAmount: loan.amount,
+      netAmount: loan.amount, // KEEP POSITIVE - THIS IS A CREDIT
       description: `Loan disbursement - ${loan.id}`,
       status: "approved",
       requestedBy: approvedBy.name,
@@ -279,7 +280,7 @@ exports.approveLoan = async (req, res) => {
     });
     await disbursementTransaction.save();
 
-    // Credit customer's account
+    // Credit customer's account - ADD the money
     const newCashBalance = (customer.cashBalance || 0) + loan.amount;
     await Customer.findOneAndUpdate(
       { id: loan.customerId },
@@ -296,7 +297,7 @@ exports.approveLoan = async (req, res) => {
       },
     );
 
-    // ✅ FIXED: Send SMS notification using proper service
+    // Send SMS notification
     if (customer.phone) {
       try {
         await smsService.sendLoanDisbursementAlert(
@@ -310,10 +311,8 @@ exports.approveLoan = async (req, res) => {
           loan.repaymentPeriod,
           loan.installmentAmount,
         );
-        console.log(`✅ Loan disbursement SMS sent to ${customer.phone}`);
       } catch (smsError) {
-        console.error("❌ Failed to send loan SMS:", smsError.message);
-        // Don't fail the loan approval if SMS fails
+        console.error("SMS failed:", smsError.message);
       }
     }
 
@@ -338,7 +337,6 @@ exports.approveLoan = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-
 // Reject loan request
 exports.rejectLoan = async (req, res) => {
   try {
