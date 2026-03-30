@@ -79,7 +79,7 @@ const loanSchema = new mongoose.Schema(
   },
 );
 
-// 🔴 NEW: Index for revenue reporting queries
+// NEW: Index for revenue reporting queries
 loanSchema.index({ status: 1, "repayments.status": 1 });
 loanSchema.index({ interestEarnedToDate: 1 });
 

@@ -3442,46 +3442,32 @@ async function renderRevenueReports(container) {
       };
     };
 
-    const calculateLoanRevenue = (period) => {
-      const now = new Date();
-      let startDate;
-      switch (period) {
-        case "daily":
-          startDate = new Date(
-            now.getFullYear(),
-            now.getMonth(),
-            now.getDate(),
-          );
-          break;
-        case "weekly":
-          startDate = new Date(now);
-          startDate.setDate(now.getDate() - 7);
-          break;
-        case "monthly":
-          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-          break;
-        case "yearly":
-          startDate = new Date(now.getFullYear(), 0, 1);
-          break;
-        default:
-          startDate = new Date(0);
+    // Replace your entire calculateLoanRevenue with this:
+
+    async function renderRevenueReports(container) {
+      try {
+        // Fetch from your backend API (already correct!)
+        const [dailyRes, weeklyRes, monthlyRes, yearlyRes] = await Promise.all([
+          api.get("/revenue?period=daily"),
+          api.get("/revenue?period=weekly"),
+          api.get("/revenue?period=monthly"),
+          api.get("/revenue?period=yearly"),
+        ]);
+
+        const daily = dailyRes.data;
+        const weekly = weeklyRes.data;
+        const monthly = monthlyRes.data;
+        const yearly = yearlyRes.data;
+
+        // Use interestFromRepayments (actual paid interest, not expected)
+        const dailyInterest = daily.interestFromRepayments || 0;
+        const weeklyInterest = weekly.interestFromRepayments || 0;
+
+        // ... rest of your rendering logic
+      } catch (error) {
+        showNotification("Failed to load revenue data", "error");
       }
-
-      const filtered = (state.loans || []).filter(
-        (l) =>
-          (l.status === "active" || l.status === "completed") &&
-          new Date(l.approvedBy?.approvedAt || l.createdAt) >= startDate,
-      );
-
-      return {
-        interest: filtered.reduce(
-          (sum, l) => sum + ((l.totalPayable || 0) - (l.amount || 0)),
-          0,
-        ),
-        count: filtered.length,
-      };
-    };
-
+    }
     const dailyTxn = calculateTransactionRevenue("daily");
     const weeklyTxn = calculateTransactionRevenue("weekly");
     const monthlyTxn = calculateTransactionRevenue("monthly");

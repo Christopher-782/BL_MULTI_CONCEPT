@@ -2,15 +2,14 @@ const Loan = require("../models/loan");
 const Transaction = require("../models/transaction");
 
 // Get revenue reports - NO AGGREGATION, just simple find()
-exports.getRevenueReports = async (req, res) => {
+// Get revenue by repayment date (when money was actually collected)
+exports.getRevenueByRepaymentDate = async (req, res) => {
   try {
     const { period } = req.query;
-    console.log("Revenue report requested for period:", period);
 
     let startDate = new Date();
     let endDate = new Date();
 
-    // Set date range based on period
     switch (period) {
       case "daily":
         startDate.setHours(0, 0, 0, 0);
@@ -18,83 +17,49 @@ exports.getRevenueReports = async (req, res) => {
         break;
       case "weekly":
         startDate.setDate(startDate.getDate() - 7);
-        startDate.setHours(0, 0, 0, 0);
         break;
       case "monthly":
         startDate.setMonth(startDate.getMonth() - 1);
-        startDate.setHours(0, 0, 0, 0);
         break;
       case "yearly":
         startDate.setFullYear(startDate.getFullYear() - 1);
-        startDate.setHours(0, 0, 0, 0);
         break;
       default:
         startDate = new Date(0);
-        endDate = new Date();
     }
 
-    console.log(`Date range: ${startDate} to ${endDate}`);
+    // Find loans with repayments paid in this period
+    const loans = await Loan.find({
+      status: { $in: ["active", "completed"] },
+      "repayments.status": "paid",
+      "repayments.paidDate": { $gte: startDate, $lte: endDate },
+    });
 
-    // Build query for transactions - use createdAt field
-    let transactionQuery = {
-      status: "approved",
-      charges: { $gt: 0 },
-    };
+    let totalInterest = 0;
+    let totalPrincipal = 0;
 
-    if (period && period !== "all") {
-      transactionQuery.createdAt = { $gte: startDate };
-      if (period === "daily") {
-        transactionQuery.createdAt.$lte = endDate;
-      }
-    }
-
-    // SIMPLE FIND - NO AGGREGATION
-    const transactions = await Transaction.find(transactionQuery);
-    const totalCharges = transactions.reduce(
-      (sum, t) => sum + (t.charges || 0),
-      0,
-    );
-
-    console.log(
-      `Found ${transactions.length} transactions with charges: ₦${totalCharges}`,
-    );
-
-    // Build query for loans - use createdAt field
-    let loanQuery = { status: "completed" };
-
-    if (period && period !== "all") {
-      loanQuery.createdAt = { $gte: startDate };
-      if (period === "daily") {
-        loanQuery.createdAt.$lte = endDate;
-      }
-    }
-
-    // SIMPLE FIND - NO AGGREGATION
-    const loans = await Loan.find(loanQuery);
-    const totalInterest = loans.reduce((sum, l) => {
-      const interest = (l.totalPayable || l.amount) - (l.amount || 0);
-      return sum + (interest > 0 ? interest : 0);
-    }, 0);
-
-    console.log(`Found ${loans.length} completed loans: ₦${totalInterest}`);
+    // Sum up interest from repayments paid in this period
+    loans.forEach((loan) => {
+      loan.repayments.forEach((repayment) => {
+        if (
+          repayment.status === "paid" &&
+          repayment.paidDate >= startDate &&
+          repayment.paidDate <= endDate
+        ) {
+          totalInterest += repayment.interestPortion || 0;
+          totalPrincipal += repayment.principalPortion || 0;
+        }
+      });
+    });
 
     res.json({
       success: true,
       period: period || "all",
-      totalRevenue: totalInterest + totalCharges,
-      breakdown: {
-        interestRevenue: totalInterest,
-        transactionCharges: totalCharges,
-      },
-      summary: {
-        totalLoans: loans.length,
-        totalTransactions: transactions.length,
-        totalDisbursed: loans.reduce((sum, l) => sum + (l.amount || 0), 0),
-        totalRepaid: loans.reduce((sum, l) => sum + (l.amountRepaid || 0), 0),
-      },
+      interestFromRepayments: totalInterest,
+      principalFromRepayments: totalPrincipal,
+      totalCollected: totalInterest + totalPrincipal,
     });
   } catch (error) {
-    console.error("Get revenue reports error:", error);
     res.status(500).json({ error: error.message });
   }
 };
