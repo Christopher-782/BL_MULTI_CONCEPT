@@ -2,6 +2,7 @@ const Loan = require("../models/loan");
 const Customer = require("../models/customer");
 const Transaction = require("../models/transaction");
 const smsService = require("../services/smsService"); // ADDED: Import SMS service
+const mongoose = require("mongoose");
 
 // Generate unique ID
 function generateId() {
@@ -226,7 +227,7 @@ exports.getLoansByCustomer = async (req, res) => {
 };
 
 // Approve loan - CORRECTED VERSION WITH SMS
-// Approve loan - CORRECTED VERSION WITH SMS
+
 exports.approveLoan = async (req, res) => {
   try {
     const { loanId } = req.params;
@@ -367,15 +368,19 @@ exports.rejectLoan = async (req, res) => {
   }
 };
 
-// Record repayment - CORRECTED WITH SMS
-// Record repayment - CORRECTED WITH SMS (DEBIT FROM CUSTOMER BALANCE)
+// Record repayment - ATOMIC VERSION with immediate balance deduction
 exports.recordRepayment = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
   try {
     const { loanId, repaymentId } = req.params;
     const { paidBy, paymentAmount } = req.body;
 
-    const loan = await Loan.findOne({ id: loanId });
+    // Find loan within transaction
+    const loan = await Loan.findOne({ id: loanId }).session(session);
     if (!loan) {
+      await session.abortTransaction();
       return res.status(404).json({ error: "Loan not found" });
     }
 
@@ -383,26 +388,35 @@ exports.recordRepayment = async (req, res) => {
       (r) => r.id === repaymentId,
     );
     if (repaymentIndex === -1) {
+      await session.abortTransaction();
       return res.status(404).json({ error: "Repayment schedule not found" });
     }
 
     const repayment = loan.repayments[repaymentIndex];
     if (repayment.status === "paid") {
-      return res
-        .status(400)
-        .json({ error: "This installment has already been paid" });
+      await session.abortTransaction();
+      return res.status(400).json({
+        error: "This installment has already been paid",
+        paidDate: repayment.paidDate,
+      });
     }
 
-    const customer = await Customer.findOne({ id: loan.customerId });
+    // Get customer within transaction
+    const customer = await Customer.findOne({ id: loan.customerId })
+      .session(session)
+      .lean(); // Use lean for faster read
+
     if (!customer) {
+      await session.abortTransaction();
       return res.status(404).json({ error: "Customer not found" });
     }
 
     const repaymentAmount = paymentAmount || repayment.amount || 0;
 
-    // Check if customer has sufficient balance for repayment
+    // 🔴 CRITICAL: Verify sufficient balance BEFORE any updates
     const availableBalance = customer.cashBalance || customer.balance || 0;
     if (repaymentAmount > availableBalance) {
+      await session.abortTransaction();
       return res.status(400).json({
         error: "Insufficient funds for loan repayment",
         availableBalance,
@@ -411,138 +425,171 @@ exports.recordRepayment = async (req, res) => {
       });
     }
 
-    // Update repayment status
-    repayment.status = "paid";
-    repayment.paidDate = new Date();
-    repayment.paidBy = paidBy || "Customer";
-    repayment.paidAmount = repaymentAmount;
-
-    // Update loan totals
-    loan.amountRepaid = (loan.amountRepaid || 0) + repaymentAmount;
-    loan.outstandingBalance = Math.max(
-      0,
-      (loan.totalPayable || 0) - (loan.amountRepaid || 0),
-    );
-
-    // Check if loan is completed
-    if (loan.outstandingBalance <= 0) {
-      loan.status = "completed";
-      loan.completedAt = new Date();
-    }
-
-    await loan.save();
-
-    // Calculate principal vs interest for this payment
+    // Calculate principal vs interest
     const totalInterest = (loan.totalPayable || 0) - (loan.amount || 0);
     const interestRatio = totalInterest / (loan.totalPayable || 1);
     const interestPortion = repaymentAmount * interestRatio;
     const principalPortion = repaymentAmount - interestPortion;
 
-    // ✅ FIXED: DEBIT customer balance (subtract repayment amount)
+    // 🔴 ATOMIC BALANCE DEDUCTION - Both operations succeed or fail together
     const updatedCustomer = await Customer.findOneAndUpdate(
       { id: loan.customerId },
       {
         $inc: {
-          cashBalance: -repaymentAmount, // DEBIT: Subtract from balance
-          balance: -repaymentAmount, // DEBIT: Subtract from balance
-          loanBalance: -principalPortion, // Reduce loan balance
+          cashBalance: -repaymentAmount,
+          balance: -repaymentAmount,
+          loanBalance: -principalPortion,
+          totalRepaid: repaymentAmount,
         },
       },
-      { returnDocument: "after", new: true },
+      {
+        new: true,
+        session, // Include in transaction
+        runValidators: true,
+      },
     );
 
-    // Create transaction record (now a withdrawal/debit type)
+    if (!updatedCustomer) {
+      throw new Error("Failed to update customer balance");
+    }
+
+    // Update repayment record
+    repayment.status = "paid";
+    repayment.paidDate = new Date();
+    repayment.paidBy = paidBy || "Customer";
+    repayment.paidAmount = repaymentAmount;
+    repayment.principalPortion = principalPortion;
+    repayment.interestPortion = interestPortion;
+
+    // Update loan totals
+    loan.amountRepaid = (loan.amountRepaid || 0) + repaymentAmount;
+    loan.outstandingBalance = Math.max(
+      0,
+      (loan.totalPayable || 0) - loan.amountRepaid,
+    );
+
+    // Check completion
+    const wasCompleted = loan.status === "completed";
+    if (
+      loan.outstandingBalance <= 0 ||
+      loan.amountRepaid >= loan.totalPayable
+    ) {
+      loan.status = "completed";
+      loan.completedAt = new Date();
+      loan.outstandingBalance = 0;
+    }
+
+    // Save loan within transaction
+    await loan.save({ session });
+
+    // Create transaction record within transaction
     const transaction = new Transaction({
-      id: "TXN" + Date.now(),
+      id: "TXN" + Date.now() + Math.random().toString(36).substr(2, 4),
       customerId: loan.customerId,
       customerName: loan.customerName,
-      customerPhone: customer?.phone || null,
-      type: "loan_repayment", // This is now correctly a debit transaction
+      customerPhone: customer.phone || null,
+      type: "loan_repayment",
       amount: repaymentAmount,
-      principalPortion: principalPortion,
-      interestPortion: interestPortion,
+      principalPortion,
+      interestPortion,
       charges: 0,
-      netAmount: -repaymentAmount, // Negative because it's a debit
-      description: `Loan repayment - Installment ${repaymentIndex + 1}/${loan.numberOfInstallments} (Principal: ₦${principalPortion.toLocaleString()}, Interest: ₦${interestPortion.toLocaleString()})`,
+      netAmount: -repaymentAmount,
+      description: `Loan repayment - Installment ${repaymentIndex + 1}/${loan.numberOfInstallments}`,
       status: "approved",
       requestedBy: paidBy || "Customer",
       approvedBy: paidBy || "System",
       date: new Date().toISOString(),
+      loanId: loan.id,
+      repaymentId,
+      previousBalance: availableBalance,
+      newBalance: updatedCustomer.cashBalance,
     });
-    await transaction.save();
+    await transaction.save({ session });
 
-    // ✅ FIXED: Send SMS notification for repayment (debit alert)
-    if (customer?.phone) {
+    // 🔴 COMMIT TRANSACTION - All changes applied atomically
+    await session.commitTransaction();
+
+    // Send SMS (outside transaction - non-critical)
+    let smsSent = false;
+    let completionSmsSent = false;
+
+    if (customer.phone) {
       try {
         await smsService.sendDebitAlert(
           customer.phone,
           repaymentAmount,
-          updatedCustomer?.cashBalance || 0,
+          updatedCustomer.cashBalance,
           transaction.id,
-          0, // No charges for loan repayment
+          0,
         );
-        console.log(`✅ Loan repayment SMS sent to ${customer.phone}`);
+        smsSent = true;
       } catch (smsError) {
-        console.error("❌ Failed to send repayment SMS:", smsError.message);
+        console.error("SMS failed:", smsError.message);
       }
-    }
 
-    // ✅ Send loan completed SMS if fully paid
-    if (loan.status === "completed" && customer?.phone) {
-      try {
-        await smsService.sendLoanCompletedAlert(
-          customer.phone,
-          customer.name,
-          loan.id,
-          loan.amountRepaid,
-          totalInterest,
-        );
-        console.log(`✅ Loan completion SMS sent to ${customer.phone}`);
-      } catch (smsError) {
-        console.error("❌ Failed to send completion SMS:", smsError.message);
+      if (loan.status === "completed" && !wasCompleted) {
+        try {
+          await smsService.sendLoanCompletedAlert(
+            customer.phone,
+            customer.name,
+            loan.id,
+            loan.amountRepaid,
+            totalInterest,
+          );
+          completionSmsSent = true;
+        } catch (smsError) {
+          console.error("Completion SMS failed:", smsError.message);
+        }
       }
     }
 
     res.json({
       success: true,
-      message: "Repayment recorded successfully",
+      message:
+        loan.status === "completed"
+          ? "🎉 Loan fully repaid!"
+          : "Repayment recorded",
       loan: {
         id: loan.id,
         status: loan.status,
         outstandingBalance: loan.outstandingBalance,
         amountRepaid: loan.amountRepaid,
-        progress:
-          Math.round((loan.amountRepaid / loan.totalPayable) * 100) + "%",
+        progress: Math.round((loan.amountRepaid / loan.totalPayable) * 100),
+        isFullyPaid: loan.status === "completed",
       },
       repayment: {
         installmentNumber: repaymentIndex + 1,
         amountPaid: repaymentAmount,
         principalReduced: principalPortion,
-        interest: interestPortion,
-        paidDate: repayment.paidDate,
+        interestPaid: interestPortion,
+        remainingInstallments: loan.repayments.filter(
+          (r) => r.status === "pending",
+        ).length,
       },
       customer: {
-        cashBalance: updatedCustomer?.cashBalance || 0,
-        loanBalance: updatedCustomer?.loanBalance || 0,
-        netWorth:
-          (updatedCustomer?.cashBalance || 0) -
-          (updatedCustomer?.loanBalance || 0),
+        id: customer.id,
+        previousBalance: availableBalance,
+        newCashBalance: updatedCustomer.cashBalance,
+        loanBalance: updatedCustomer.loanBalance,
+        amountDeducted: repaymentAmount,
       },
       transaction: {
         id: transaction.id,
-        amountDebited: repaymentAmount, // Changed from amountCredited to amountDebited
+        amountDebited: repaymentAmount,
       },
+      notifications: { smsSent, completionSmsSent },
     });
   } catch (error) {
+    await session.abortTransaction();
     console.error("Record repayment error:", error);
     res.status(500).json({
       error: error.message,
       stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
     });
+  } finally {
+    session.endSession();
   }
-};
-
-// Get revenue reports
+}; // Get revenue reports
 exports.getRevenueReports = async (req, res) => {
   try {
     const { period, type } = req.query;

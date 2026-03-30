@@ -3333,34 +3333,59 @@ function closeRepaymentScheduleModal() {
 }
 
 async function recordRepayment(loanId, repaymentId) {
-  if (
-    !confirm(
-      "Record this repayment? This will deduct from the customer's cash balance.",
-    )
-  )
+  const loan = state.loans?.find((l) => l.id === loanId);
+  const repayment = loan?.repayments?.find((r) => r.id === repaymentId);
+  const amount = repayment?.amount || 0;
+
+  const customer = state.customers?.find((c) => c.id === loan?.customerId);
+  const balance = customer?.cashBalance || 0;
+
+  // Show confirmation with specific amounts
+  const confirmMessage =
+    balance >= amount
+      ? `Record repayment of ₦${amount.toLocaleString()}?\n\nThis will immediately deduct ₦${amount.toLocaleString()} from ${customer?.name}'s cash balance (Current: ₦${balance.toLocaleString()} → New: ₦${(balance - amount).toLocaleString()}).`
+      : `⚠️ INSUFFICIENT FUNDS!\n\nCustomer has ₦${balance.toLocaleString()} but needs ₦${amount.toLocaleString()}.\nShortfall: ₦${(amount - balance).toLocaleString()}`;
+
+  if (balance < amount) {
+    showNotification(confirmMessage, "error");
     return;
+  }
+
+  if (!confirm(confirmMessage)) return;
 
   try {
     const response = await api.patch(
       `/loans/${loanId}/repayments/${repaymentId}`,
-      {
-        paidBy: state.currentUser.name,
-      },
+      { paidBy: state.currentUser.name },
     );
 
-    showNotification(
-      "Repayment recorded successfully! Customer balance updated.",
-      "success",
-    );
+    const { customer: updatedCustomer, loan: updatedLoan } = response.data;
+
+    // Build detailed message
+    let message = `✅ ₦${amount.toLocaleString()} deducted from ${customer?.name}'s balance.`;
+    message += ` New balance: ₦${updatedCustomer.newCashBalance.toLocaleString()}.`;
+
+    if (updatedLoan.isFullyPaid) {
+      message += ` 🎉 Loan FULLY PAID!`;
+    }
+
+    showNotification(message, "success");
     closeRepaymentScheduleModal();
     await loadAllData();
     navigate("loans");
   } catch (error) {
-    console.error("Record repayment error:", error);
-    showNotification(
-      error.response?.data?.error || "Failed to record repayment",
-      "error",
-    );
+    console.error("Repayment error:", error);
+    const msg = error.response?.data?.error || "Failed to record repayment";
+    showNotification(msg, "error");
+
+    // If insufficient funds, show details
+    if (error.response?.data?.shortfall) {
+      const { availableBalance, shortfall } = error.response.data;
+      showNotification(
+        `Customer lacks ₦${shortfall.toLocaleString()} (has ₦${availableBalance.toLocaleString()})`,
+        "error",
+      );
+    }
   }
 }
 
