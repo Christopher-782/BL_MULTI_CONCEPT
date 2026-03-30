@@ -1,7 +1,7 @@
 const Loan = require("../models/loan");
 const Customer = require("../models/customer");
 const Transaction = require("../models/transaction");
-const smsService = require("../services/smsService"); // ADDED: Import SMS service
+const smsService = require("../services/smsService");
 const mongoose = require("mongoose");
 
 // Generate unique ID
@@ -226,8 +226,7 @@ exports.getLoansByCustomer = async (req, res) => {
   }
 };
 
-// Approve loan - CORRECTED VERSION WITH SMS
-
+// Approve loan with SMS notification
 exports.approveLoan = async (req, res) => {
   try {
     const { loanId } = req.params;
@@ -264,7 +263,7 @@ exports.approveLoan = async (req, res) => {
 
     await loan.save();
 
-    // CREATE DISBURSEMENT TRANSACTION - MAKE SURE netAmount is POSITIVE
+    // Create disbursement transaction
     const disbursementTransaction = new Transaction({
       id: "TXN" + Date.now() + Math.random(),
       customerId: loan.customerId,
@@ -272,7 +271,7 @@ exports.approveLoan = async (req, res) => {
       type: "loan_disbursement",
       amount: loan.amount,
       charges: 0,
-      netAmount: loan.amount, // KEEP POSITIVE - THIS IS A CREDIT
+      netAmount: loan.amount,
       description: `Loan disbursement - ${loan.id}`,
       status: "approved",
       requestedBy: approvedBy.name,
@@ -281,7 +280,7 @@ exports.approveLoan = async (req, res) => {
     });
     await disbursementTransaction.save();
 
-    // Credit customer's account - ADD the money
+    // Credit customer's account
     const newCashBalance = (customer.cashBalance || 0) + loan.amount;
     await Customer.findOneAndUpdate(
       { id: loan.customerId },
@@ -338,7 +337,8 @@ exports.approveLoan = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-// Reject loan request
+
+// Reject loan request with SMS notification
 exports.rejectLoan = async (req, res) => {
   try {
     const { loanId } = req.params;
@@ -354,13 +354,36 @@ exports.rejectLoan = async (req, res) => {
     }
 
     loan.status = "rejected";
-    loan.notes = reason;
+    loan.rejectedBy = {
+      adminId: rejectedBy?.id,
+      adminName: rejectedBy?.name,
+      rejectedAt: new Date(),
+    };
+    loan.notes = reason || loan.notes;
 
     await loan.save();
 
+    // Send SMS notification for rejection
+    const customer = await Customer.findOne({ id: loan.customerId });
+    if (customer?.phone) {
+      try {
+        await smsService.sendSMS({
+          to: customer.phone,
+          message: `VaultFlow: Dear ${customer.name}, your ${loan.type} request of ₦${loan.amount.toLocaleString()} has been declined. Reason: ${reason || "Does not meet criteria"}. Contact us for more info.`,
+        });
+      } catch (smsError) {
+        console.error("SMS failed:", smsError.message);
+      }
+    }
+
     res.json({
+      success: true,
       message: `${loan.type === "loan" ? "Loan" : "Overdraft"} request rejected`,
-      loan,
+      loan: {
+        id: loan.id,
+        status: loan.status,
+        rejectedBy: loan.rejectedBy,
+      },
     });
   } catch (error) {
     console.error("Reject loan error:", error);
@@ -368,8 +391,7 @@ exports.rejectLoan = async (req, res) => {
   }
 };
 
-// Record repayment - ATOMIC VERSION with immediate balance deduction
-// Record repayment - INTEREST REVENUE RECOGNIZED ON PAYMENT (not disbursement)
+// Record repayment with interest revenue tracking
 exports.recordRepayment = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -422,7 +444,7 @@ exports.recordRepayment = async (req, res) => {
       });
     }
 
-    // 🔴 KEY CHANGE: Calculate interest revenue for THIS installment only
+    // Calculate interest revenue for THIS installment only
     const totalInterest = loan.totalPayable - loan.amount;
     const interestRatio = totalInterest / loan.totalPayable;
 
@@ -437,7 +459,7 @@ exports.recordRepayment = async (req, res) => {
     repayment.paidAmount = repaymentAmount;
     repayment.principalPortion = principalPortion;
     repayment.interestPortion = interestPortion;
-    repayment.interestRevenue = interestPortion; // 💰 REVENUE RECOGNIZED NOW!
+    repayment.interestRevenue = interestPortion;
 
     // Update loan totals
     loan.amountRepaid = (loan.amountRepaid || 0) + repaymentAmount;
@@ -446,7 +468,7 @@ exports.recordRepayment = async (req, res) => {
       loan.totalPayable - loan.amountRepaid,
     );
 
-    // 🔴 KEY CHANGE: Track cumulative principal and interest separately
+    // Track cumulative principal and interest separately
     loan.principalRepaidToDate =
       (loan.principalRepaidToDate || 0) + principalPortion;
     loan.interestEarnedToDate =
@@ -463,7 +485,7 @@ exports.recordRepayment = async (req, res) => {
       loan.outstandingBalance = 0;
     }
 
-    // Deduct from customer balance
+    // Deduct from customer balance - FIXED: use returnDocument instead of new
     const updatedCustomer = await Customer.findOneAndUpdate(
       { id: loan.customerId },
       {
@@ -474,12 +496,12 @@ exports.recordRepayment = async (req, res) => {
           totalRepaid: repaymentAmount,
         },
       },
-      { new: true, session },
+      { returnDocument: "after", session },
     );
 
     await loan.save({ session });
 
-    // Create transaction record
+    // Create loan repayment transaction
     const transaction = new Transaction({
       id: "TXN" + Date.now() + Math.random().toString(36).substr(2, 4),
       customerId: loan.customerId,
@@ -489,7 +511,7 @@ exports.recordRepayment = async (req, res) => {
       amount: repaymentAmount,
       principalPortion: principalPortion,
       interestPortion: interestPortion,
-      interestRevenue: interestPortion, // Track revenue in transaction too
+      interestRevenue: interestPortion,
       charges: 0,
       netAmount: -repaymentAmount,
       description: `Loan repayment #${repaymentIndex + 1}/${loan.numberOfInstallments} (Principal: ₦${principalPortion.toLocaleString()}, Interest: ₦${interestPortion.toLocaleString()})`,
@@ -502,31 +524,32 @@ exports.recordRepayment = async (req, res) => {
     });
     await transaction.save({ session });
 
-    // 🔴 KEY CHANGE: Record interest revenue transaction for accounting
+    // Record interest revenue transaction for accounting
     if (interestPortion > 0) {
       const revenueTransaction = new Transaction({
         id: "REV" + Date.now() + Math.random().toString(36).substr(2, 4),
         customerId: loan.customerId,
         customerName: loan.customerName,
-        type: "interest_revenue", // New type for revenue tracking
+        type: "interest_revenue",
         amount: interestPortion,
-        netAmount: interestPortion, // Positive = revenue to company
+        netAmount: interestPortion,
         description: `Interest revenue from loan ${loan.id} - Installment ${repaymentIndex + 1}`,
         status: "approved",
         approvedBy: "System",
         date: new Date().toISOString(),
         loanId: loan.id,
         repaymentId: repaymentId,
-        isRevenue: true, // Flag for revenue reports
+        isRevenue: true,
       });
       await revenueTransaction.save({ session });
     }
 
     await session.commitTransaction();
 
-    // Send SMS
+    // Send SMS notifications
     if (customer.phone) {
       try {
+        // Debit alert for repayment
         await smsService.sendDebitAlert(
           customer.phone,
           repaymentAmount,
@@ -535,14 +558,12 @@ exports.recordRepayment = async (req, res) => {
           0,
         );
 
+        // Loan completion notification
         if (loan.status === "completed" && !wasCompleted) {
-          await smsService.sendLoanCompletedAlert(
-            customer.phone,
-            customer.name,
-            loan.id,
-            loan.amountRepaid,
-            totalInterest,
-          );
+          await smsService.sendSMS({
+            to: customer.phone,
+            message: `VaultFlow: Congratulations ${customer.name}! Your loan ${loan.id} has been fully repaid. Total paid: ₦${loan.amountRepaid.toLocaleString()}. Thank you for banking with us!`,
+          });
         }
       } catch (smsError) {
         console.error("SMS failed:", smsError.message);
@@ -554,22 +575,22 @@ exports.recordRepayment = async (req, res) => {
       message:
         loan.status === "completed"
           ? "🎉 Loan fully repaid!"
-          : "Repayment recorded",
+          : "Repayment recorded successfully",
       loan: {
         id: loan.id,
         status: loan.status,
         outstandingBalance: loan.outstandingBalance,
         amountRepaid: loan.amountRepaid,
         principalRepaidToDate: loan.principalRepaidToDate,
-        interestEarnedToDate: loan.interestEarnedToDate, // 💰 Total interest actually earned
+        interestEarnedToDate: loan.interestEarnedToDate,
         progress: Math.round((loan.amountRepaid / loan.totalPayable) * 100),
       },
       thisRepayment: {
         installmentNumber: repaymentIndex + 1,
         totalPaid: repaymentAmount,
         principalPortion: principalPortion,
-        interestPortion: interestPortion, // 💰 This installment's interest
-        interestRevenue: interestPortion, // 💰 Revenue recognized now
+        interestPortion: interestPortion,
+        interestRevenue: interestPortion,
       },
       customer: {
         newCashBalance: updatedCustomer.cashBalance,
@@ -584,7 +605,9 @@ exports.recordRepayment = async (req, res) => {
   } finally {
     session.endSession();
   }
-}; // Get revenue reports
+};
+
+// Get revenue reports
 exports.getRevenueReports = async (req, res) => {
   try {
     const { period, type } = req.query;
@@ -597,21 +620,18 @@ exports.getRevenueReports = async (req, res) => {
       startDate.setFullYear(startDate.getFullYear() - 1);
     else startDate = new Date(0);
 
-    // 🔴 KEY CHANGE: Calculate interest from ACTUAL PAYMENTS, not total expected
+    // Calculate interest from ACTUAL PAYMENTS
     let interestRevenue = [];
     if (!type || type === "all" || type === "interest") {
-      // Sum up interest from completed repayments
       interestRevenue = await Loan.aggregate([
         {
           $match: {
             status: { $in: ["active", "completed"] },
-            // Only count loans with actual payments
             amountRepaid: { $gt: 0 },
           },
         },
         {
           $project: {
-            // Calculate interest earned to date based on actual repayments
             interestEarnedToDate: 1,
             principalRepaidToDate: 1,
             amountRepaid: 1,
@@ -627,7 +647,6 @@ exports.getRevenueReports = async (req, res) => {
         },
         {
           $addFields: {
-            // Sum interest from paid installments only
             actualInterestRevenue: {
               $sum: {
                 $map: {
@@ -658,7 +677,7 @@ exports.getRevenueReports = async (req, res) => {
       ]);
     }
 
-    // Transaction charges (unchanged)
+    // Transaction charges
     let transactionCharges = [];
     if (!type || type === "all" || type === "charges") {
       transactionCharges = await Transaction.aggregate([
@@ -666,7 +685,7 @@ exports.getRevenueReports = async (req, res) => {
           $match: {
             status: "approved",
             createdAt: { $gte: startDate },
-            type: { $in: ["deposit", "withdrawal"] }, // Exclude loan transactions
+            type: { $in: ["deposit", "withdrawal"] },
           },
         },
         {
@@ -701,7 +720,7 @@ exports.getRevenueReports = async (req, res) => {
       period: period || "all",
       totalRevenue: totalInterest + totalCharges,
       summary: {
-        interestRevenue: totalInterest, // 💰 Only from actual payments
+        interestRevenue: totalInterest,
         transactionCharges: totalCharges,
       },
       breakdown: {
@@ -709,19 +728,18 @@ exports.getRevenueReports = async (req, res) => {
         charges: transactionCharges,
       },
       dashboard: {
-        totalInterestEarned: totalInterest, // 💰 Actually collected
+        totalInterestEarned: totalInterest,
         totalChargesEarned: totalCharges,
         activeLoansCount: await Loan.countDocuments({ status: "active" }),
         completedLoansCount: await Loan.countDocuments({ status: "completed" }),
-        // 🔴 NEW: Show unearned interest (future revenue)
         totalUnearnedInterest: await Loan.aggregate([
           { $match: { status: "active" } },
           {
             $project: {
               remainingInterest: {
                 $subtract: [
-                  { $subtract: ["$totalPayable", "$amount"] }, // Total expected interest
-                  { $ifNull: ["$interestEarnedToDate", 0] }, // Minus already earned
+                  { $subtract: ["$totalPayable", "$amount"] },
+                  { $ifNull: ["$interestEarnedToDate", 0] },
                 ],
               },
             },
@@ -735,6 +753,7 @@ exports.getRevenueReports = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
 // Get loan summary
 exports.getLoanSummary = async (req, res) => {
   try {

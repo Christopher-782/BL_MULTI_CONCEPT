@@ -4,7 +4,7 @@ const transactionSchema = new mongoose.Schema({
   id: { type: String, unique: true },
   customerId: String,
   customerName: String,
-  type: { type: String, enum: ["deposit", "withdrawal"] },
+  // REMOVED duplicate type definition - keep only the one below
   amount: Number,
   charges: { type: Number, default: 0 },
   netAmount: Number,
@@ -13,10 +13,16 @@ const transactionSchema = new mongoose.Schema({
     enum: ["pending", "approved", "rejected"],
     default: "pending",
   },
-  // In your transaction schema, update the type enum
+  // Single type definition with all valid values including interest_revenue
   type: {
     type: String,
-    enum: ["deposit", "withdrawal", "loan_disbursement", "loan_repayment"],
+    enum: [
+      "deposit",
+      "withdrawal",
+      "loan_disbursement",
+      "loan_repayment",
+      "interest_revenue", // ADD THIS
+    ],
     required: true,
   },
   // Change from String to Date

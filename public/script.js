@@ -3404,6 +3404,7 @@ function renderMyLoans(container) {
 
 async function renderRevenueReports(container) {
   try {
+    // Helper function for transaction revenue (frontend calculation)
     const calculateTransactionRevenue = (period) => {
       const now = new Date();
       let startDate;
@@ -3442,47 +3443,32 @@ async function renderRevenueReports(container) {
       };
     };
 
-    // Replace your entire calculateLoanRevenue with this:
+    // Fetch loan revenue from backend API (correct cumulative interest)
+    const [dailyRes, weeklyRes, monthlyRes, yearlyRes] = await Promise.all([
+      api.get("/reports/revenue?period=daily"),
+      api.get("/reports/revenue?period=weekly"),
+      api.get("/reports/revenue?period=monthly"),
+      api.get("/reports/revenue?period=yearly"),
+    ]);
 
-    async function renderRevenueReports(container) {
-      try {
-        // Fetch from your backend API (already correct!)
-        const [dailyRes, weeklyRes, monthlyRes, yearlyRes] = await Promise.all([
-          api.get("/revenue?period=daily"),
-          api.get("/revenue?period=weekly"),
-          api.get("/revenue?period=monthly"),
-          api.get("/revenue?period=yearly"),
-        ]);
-
-        const daily = dailyRes.data;
-        const weekly = weeklyRes.data;
-        const monthly = monthlyRes.data;
-        const yearly = yearlyRes.data;
-
-        // Use interestFromRepayments (actual paid interest, not expected)
-        const dailyInterest = daily.interestFromRepayments || 0;
-        const weeklyInterest = weekly.interestFromRepayments || 0;
-
-        // ... rest of your rendering logic
-      } catch (error) {
-        showNotification("Failed to load revenue data", "error");
-      }
-    }
+    // Get transaction charges from frontend state
     const dailyTxn = calculateTransactionRevenue("daily");
     const weeklyTxn = calculateTransactionRevenue("weekly");
     const monthlyTxn = calculateTransactionRevenue("monthly");
     const yearlyTxn = calculateTransactionRevenue("yearly");
 
-    const dailyLoan = calculateLoanRevenue("daily");
-    const weeklyLoan = calculateLoanRevenue("weekly");
-    const monthlyLoan = calculateLoanRevenue("monthly");
-    const yearlyLoan = calculateLoanRevenue("yearly");
+    // Get loan interest from API (actual paid interest, not expected)
+    const dailyInterest = dailyRes.data.interestFromRepayments || 0;
+    const weeklyInterest = weeklyRes.data.interestFromRepayments || 0;
+    const monthlyInterest = monthlyRes.data.interestFromRepayments || 0;
+    const yearlyInterest = yearlyRes.data.interestFromRepayments || 0;
 
+    // Calculate total revenue
     const totalRevenue = {
-      daily: dailyTxn.charges + dailyLoan.interest,
-      weekly: weeklyTxn.charges + weeklyLoan.interest,
-      monthly: monthlyTxn.charges + monthlyLoan.interest,
-      yearly: yearlyTxn.charges + yearlyLoan.interest,
+      daily: dailyTxn.charges + dailyInterest,
+      weekly: weeklyTxn.charges + weeklyInterest,
+      monthly: monthlyTxn.charges + monthlyInterest,
+      yearly: yearlyTxn.charges + yearlyInterest,
     };
 
     const html = `
@@ -3498,7 +3484,7 @@ async function renderRevenueReports(container) {
             <p class="text-2xl font-bold text-green-400">₦${totalRevenue.daily.toLocaleString()}</p>
             <div class="text-xs text-gray-400 mt-1">
               Charges: ₦${dailyTxn.charges.toLocaleString()} | 
-              Interest: ₦${dailyLoan.interest.toLocaleString()}
+              Interest: ₦${dailyInterest.toLocaleString()}
             </div>
           </div>
           
@@ -3510,7 +3496,7 @@ async function renderRevenueReports(container) {
             <p class="text-2xl font-bold text-green-400">₦${totalRevenue.weekly.toLocaleString()}</p>
             <div class="text-xs text-gray-400 mt-1">
               Charges: ₦${weeklyTxn.charges.toLocaleString()} | 
-              Interest: ₦${weeklyLoan.interest.toLocaleString()}
+              Interest: ₦${weeklyInterest.toLocaleString()}
             </div>
           </div>
           
@@ -3522,7 +3508,7 @@ async function renderRevenueReports(container) {
             <p class="text-2xl font-bold text-green-400">₦${totalRevenue.monthly.toLocaleString()}</p>
             <div class="text-xs text-gray-400 mt-1">
               Charges: ₦${monthlyTxn.charges.toLocaleString()} | 
-              Interest: ₦${monthlyLoan.interest.toLocaleString()}
+              Interest: ₦${monthlyInterest.toLocaleString()}
             </div>
           </div>
           
@@ -3534,7 +3520,7 @@ async function renderRevenueReports(container) {
             <p class="text-2xl font-bold text-green-400">₦${totalRevenue.yearly.toLocaleString()}</p>
             <div class="text-xs text-gray-400 mt-1">
               Charges: ₦${yearlyTxn.charges.toLocaleString()} | 
-              Interest: ₦${yearlyLoan.interest.toLocaleString()}
+              Interest: ₦${yearlyInterest.toLocaleString()}
             </div>
           </div>
         </div>
@@ -3557,19 +3543,19 @@ async function renderRevenueReports(container) {
                 <i class="fas fa-chart-line text-green-400 mr-2"></i>
                 Loan Interest Revenue
               </h4>
-              <p class="text-3xl font-bold text-green-400">₦${yearlyLoan.interest.toLocaleString()}</p>
-              <p class="text-xs text-gray-500 mt-1">From ${yearlyLoan.count} approved loans</p>
+              <p class="text-3xl font-bold text-green-400">₦${yearlyInterest.toLocaleString()}</p>
+              <p class="text-xs text-gray-500 mt-1">From actual repayments received</p>
             </div>
           </div>
           
           <div class="mt-6">
             <div class="flex justify-between text-sm mb-2">
               <span>Transaction Charges (${((yearlyTxn.charges / (totalRevenue.yearly || 1)) * 100).toFixed(1)}%)</span>
-              <span>Loan Interest (${((yearlyLoan.interest / (totalRevenue.yearly || 1)) * 100).toFixed(1)}%)</span>
+              <span>Loan Interest (${((yearlyInterest / (totalRevenue.yearly || 1)) * 100).toFixed(1)}%)</span>
             </div>
             <div class="w-full bg-gray-700 rounded-full h-4 overflow-hidden flex">
               <div class="bg-blue-500 h-full" style="width: ${(yearlyTxn.charges / (totalRevenue.yearly || 1)) * 100}%"></div>
-              <div class="bg-green-500 h-full" style="width: ${(yearlyLoan.interest / (totalRevenue.yearly || 1)) * 100}%"></div>
+              <div class="bg-green-500 h-full" style="width: ${(yearlyInterest / (totalRevenue.yearly || 1)) * 100}%"></div>
             </div>
             <div class="flex gap-4 mt-2 text-xs">
               <div class="flex items-center gap-1"><div class="w-3 h-3 bg-blue-500 rounded"></div><span>Charges</span></div>
@@ -3587,10 +3573,10 @@ async function renderRevenueReports(container) {
                   <th class="pb-3">Customer</th>
                   <th class="pb-3">Type</th>
                   <th class="pb-3">Principal</th>
-                  <th class="pb-3">Interest</th>
+                  <th class="pb-3">Interest (Total)</th>
                   <th class="pb-3">Status</th>
                   <th class="pb-3">Approved Date</th>
-                 </tr>
+                </tr>
               </thead>
               <tbody class="divide-y divide-gray-800">
                 ${(state.loans || [])
@@ -3624,7 +3610,7 @@ async function renderRevenueReports(container) {
                         <td class="py-3 text-xs text-gray-400">
                           ${loan.approvedBy?.approvedAt ? formatDate(loan.approvedBy.approvedAt) : "N/A"}
                         </td>
-                       </tr>
+                      </tr>
                     `;
                   })
                   .join("")}
@@ -3658,7 +3644,6 @@ async function renderRevenueReports(container) {
     `;
   }
 }
-
 // ==================== DORMANT CUSTOMERS SECTION ====================
 
 function renderDormantCustomers(container) {
