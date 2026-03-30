@@ -1,15 +1,25 @@
+// routes/transactions.js
 const express = require("express");
 const router = express.Router();
 const {
   getAllTransactions,
-  getTransactionsByStatus,
+  getTransactionStats,
   createTransaction,
-  updateTransactionStatus,
+  approveTransaction,
+  rejectTransaction,
+  getTransactionsByCustomer,
 } = require("../controllers/transactionController");
 
+// GET routes
 router.get("/transactions", getAllTransactions);
-router.get("/status/:status", getTransactionsByStatus);
+router.get("/transactions/stats", getTransactionStats);
+router.get("/transactions/customer/:customerId", getTransactionsByCustomer);
+
+// POST route
 router.post("/transactions", createTransaction);
-router.patch("/transactions/:id", updateTransactionStatus);
+
+// PATCH routes - FIXED parameter names
+router.patch("/transactions/:transactionId", approveTransaction);
+router.patch("/transactions/:transactionId/reject", rejectTransaction);
 
 module.exports = router;

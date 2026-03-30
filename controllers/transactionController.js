@@ -320,13 +320,13 @@ exports.getTransactionStats = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+// At bottom of transactionController.js
 module.exports = {
   createTransaction: exports.createTransaction,
-  updateTransactionStatus: exports.approveTransaction, // Alias for approve
+  updateTransactionStatus: exports.approveTransaction, // Alias here
   getAllTransactions: exports.getAllTransactions,
-  getTransactionsByStatus: exports.getTransactionStats,
-  approveTransaction: exports.approveTransaction,
+  getTransactionStats: exports.getTransactionStats,
+  approveTransaction: exports.approveTransaction, // Also export original
   rejectTransaction: exports.rejectTransaction,
   getTransactionsByCustomer: exports.getTransactionsByCustomer,
-  getTransactionStats: exports.getTransactionStats,
 };
