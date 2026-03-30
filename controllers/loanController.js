@@ -369,6 +369,7 @@ exports.rejectLoan = async (req, res) => {
 };
 
 // Record repayment - ATOMIC VERSION with immediate balance deduction
+// Record repayment - INTEREST REVENUE RECOGNIZED ON PAYMENT (not disbursement)
 exports.recordRepayment = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -377,7 +378,6 @@ exports.recordRepayment = async (req, res) => {
     const { loanId, repaymentId } = req.params;
     const { paidBy, paymentAmount } = req.body;
 
-    // Find loan within transaction
     const loan = await Loan.findOne({ id: loanId }).session(session);
     if (!loan) {
       await session.abortTransaction();
@@ -401,20 +401,17 @@ exports.recordRepayment = async (req, res) => {
       });
     }
 
-    // Get customer within transaction
-    const customer = await Customer.findOne({ id: loan.customerId })
-      .session(session)
-      .lean(); // Use lean for faster read
-
+    const customer = await Customer.findOne({ id: loan.customerId }).session(
+      session,
+    );
     if (!customer) {
       await session.abortTransaction();
       return res.status(404).json({ error: "Customer not found" });
     }
 
     const repaymentAmount = paymentAmount || repayment.amount || 0;
-
-    // 🔴 CRITICAL: Verify sufficient balance BEFORE any updates
     const availableBalance = customer.cashBalance || customer.balance || 0;
+
     if (repaymentAmount > availableBalance) {
       await session.abortTransaction();
       return res.status(400).json({
@@ -425,48 +422,35 @@ exports.recordRepayment = async (req, res) => {
       });
     }
 
-    // Calculate principal vs interest
-    const totalInterest = (loan.totalPayable || 0) - (loan.amount || 0);
-    const interestRatio = totalInterest / (loan.totalPayable || 1);
+    // 🔴 KEY CHANGE: Calculate interest revenue for THIS installment only
+    const totalInterest = loan.totalPayable - loan.amount;
+    const interestRatio = totalInterest / loan.totalPayable;
+
+    // Interest portion for this specific payment
     const interestPortion = repaymentAmount * interestRatio;
     const principalPortion = repaymentAmount - interestPortion;
 
-    // 🔴 ATOMIC BALANCE DEDUCTION - Both operations succeed or fail together
-    const updatedCustomer = await Customer.findOneAndUpdate(
-      { id: loan.customerId },
-      {
-        $inc: {
-          cashBalance: -repaymentAmount,
-          balance: -repaymentAmount,
-          loanBalance: -principalPortion,
-          totalRepaid: repaymentAmount,
-        },
-      },
-      {
-        new: true,
-        session, // Include in transaction
-        runValidators: true,
-      },
-    );
-
-    if (!updatedCustomer) {
-      throw new Error("Failed to update customer balance");
-    }
-
-    // Update repayment record
+    // Update repayment record with breakdown
     repayment.status = "paid";
     repayment.paidDate = new Date();
     repayment.paidBy = paidBy || "Customer";
     repayment.paidAmount = repaymentAmount;
     repayment.principalPortion = principalPortion;
     repayment.interestPortion = interestPortion;
+    repayment.interestRevenue = interestPortion; // 💰 REVENUE RECOGNIZED NOW!
 
     // Update loan totals
     loan.amountRepaid = (loan.amountRepaid || 0) + repaymentAmount;
     loan.outstandingBalance = Math.max(
       0,
-      (loan.totalPayable || 0) - loan.amountRepaid,
+      loan.totalPayable - loan.amountRepaid,
     );
+
+    // 🔴 KEY CHANGE: Track cumulative principal and interest separately
+    loan.principalRepaidToDate =
+      (loan.principalRepaidToDate || 0) + principalPortion;
+    loan.interestEarnedToDate =
+      (loan.interestEarnedToDate || 0) + interestPortion;
 
     // Check completion
     const wasCompleted = loan.status === "completed";
@@ -479,10 +463,23 @@ exports.recordRepayment = async (req, res) => {
       loan.outstandingBalance = 0;
     }
 
-    // Save loan within transaction
+    // Deduct from customer balance
+    const updatedCustomer = await Customer.findOneAndUpdate(
+      { id: loan.customerId },
+      {
+        $inc: {
+          cashBalance: -repaymentAmount,
+          balance: -repaymentAmount,
+          loanBalance: -principalPortion,
+          totalRepaid: repaymentAmount,
+        },
+      },
+      { new: true, session },
+    );
+
     await loan.save({ session });
 
-    // Create transaction record within transaction
+    // Create transaction record
     const transaction = new Transaction({
       id: "TXN" + Date.now() + Math.random().toString(36).substr(2, 4),
       customerId: loan.customerId,
@@ -490,29 +487,44 @@ exports.recordRepayment = async (req, res) => {
       customerPhone: customer.phone || null,
       type: "loan_repayment",
       amount: repaymentAmount,
-      principalPortion,
-      interestPortion,
+      principalPortion: principalPortion,
+      interestPortion: interestPortion,
+      interestRevenue: interestPortion, // Track revenue in transaction too
       charges: 0,
       netAmount: -repaymentAmount,
-      description: `Loan repayment - Installment ${repaymentIndex + 1}/${loan.numberOfInstallments}`,
+      description: `Loan repayment #${repaymentIndex + 1}/${loan.numberOfInstallments} (Principal: ₦${principalPortion.toLocaleString()}, Interest: ₦${interestPortion.toLocaleString()})`,
       status: "approved",
       requestedBy: paidBy || "Customer",
       approvedBy: paidBy || "System",
       date: new Date().toISOString(),
       loanId: loan.id,
-      repaymentId,
-      previousBalance: availableBalance,
-      newBalance: updatedCustomer.cashBalance,
+      repaymentId: repaymentId,
     });
     await transaction.save({ session });
 
-    // 🔴 COMMIT TRANSACTION - All changes applied atomically
+    // 🔴 KEY CHANGE: Record interest revenue transaction for accounting
+    if (interestPortion > 0) {
+      const revenueTransaction = new Transaction({
+        id: "REV" + Date.now() + Math.random().toString(36).substr(2, 4),
+        customerId: loan.customerId,
+        customerName: loan.customerName,
+        type: "interest_revenue", // New type for revenue tracking
+        amount: interestPortion,
+        netAmount: interestPortion, // Positive = revenue to company
+        description: `Interest revenue from loan ${loan.id} - Installment ${repaymentIndex + 1}`,
+        status: "approved",
+        approvedBy: "System",
+        date: new Date().toISOString(),
+        loanId: loan.id,
+        repaymentId: repaymentId,
+        isRevenue: true, // Flag for revenue reports
+      });
+      await revenueTransaction.save({ session });
+    }
+
     await session.commitTransaction();
 
-    // Send SMS (outside transaction - non-critical)
-    let smsSent = false;
-    let completionSmsSent = false;
-
+    // Send SMS
     if (customer.phone) {
       try {
         await smsService.sendDebitAlert(
@@ -522,13 +534,8 @@ exports.recordRepayment = async (req, res) => {
           transaction.id,
           0,
         );
-        smsSent = true;
-      } catch (smsError) {
-        console.error("SMS failed:", smsError.message);
-      }
 
-      if (loan.status === "completed" && !wasCompleted) {
-        try {
+        if (loan.status === "completed" && !wasCompleted) {
           await smsService.sendLoanCompletedAlert(
             customer.phone,
             customer.name,
@@ -536,10 +543,9 @@ exports.recordRepayment = async (req, res) => {
             loan.amountRepaid,
             totalInterest,
           );
-          completionSmsSent = true;
-        } catch (smsError) {
-          console.error("Completion SMS failed:", smsError.message);
         }
+      } catch (smsError) {
+        console.error("SMS failed:", smsError.message);
       }
     }
 
@@ -554,38 +560,27 @@ exports.recordRepayment = async (req, res) => {
         status: loan.status,
         outstandingBalance: loan.outstandingBalance,
         amountRepaid: loan.amountRepaid,
+        principalRepaidToDate: loan.principalRepaidToDate,
+        interestEarnedToDate: loan.interestEarnedToDate, // 💰 Total interest actually earned
         progress: Math.round((loan.amountRepaid / loan.totalPayable) * 100),
-        isFullyPaid: loan.status === "completed",
       },
-      repayment: {
+      thisRepayment: {
         installmentNumber: repaymentIndex + 1,
-        amountPaid: repaymentAmount,
-        principalReduced: principalPortion,
-        interestPaid: interestPortion,
-        remainingInstallments: loan.repayments.filter(
-          (r) => r.status === "pending",
-        ).length,
+        totalPaid: repaymentAmount,
+        principalPortion: principalPortion,
+        interestPortion: interestPortion, // 💰 This installment's interest
+        interestRevenue: interestPortion, // 💰 Revenue recognized now
       },
       customer: {
-        id: customer.id,
-        previousBalance: availableBalance,
         newCashBalance: updatedCustomer.cashBalance,
         loanBalance: updatedCustomer.loanBalance,
         amountDeducted: repaymentAmount,
       },
-      transaction: {
-        id: transaction.id,
-        amountDebited: repaymentAmount,
-      },
-      notifications: { smsSent, completionSmsSent },
     });
   } catch (error) {
     await session.abortTransaction();
     console.error("Record repayment error:", error);
-    res.status(500).json({
-      error: error.message,
-      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
-    });
+    res.status(500).json({ error: error.message });
   } finally {
     session.endSession();
   }
@@ -595,99 +590,94 @@ exports.getRevenueReports = async (req, res) => {
     const { period, type } = req.query;
 
     let startDate = new Date();
-    let matchStage = {};
+    if (period === "daily") startDate.setHours(0, 0, 0, 0);
+    else if (period === "weekly") startDate.setDate(startDate.getDate() - 7);
+    else if (period === "monthly") startDate.setMonth(startDate.getMonth() - 1);
+    else if (period === "yearly")
+      startDate.setFullYear(startDate.getFullYear() - 1);
+    else startDate = new Date(0);
 
-    switch (period) {
-      case "daily":
-        startDate.setHours(0, 0, 0, 0);
-        break;
-      case "weekly":
-        startDate.setDate(startDate.getDate() - 7);
-        break;
-      case "monthly":
-        startDate.setMonth(startDate.getMonth() - 1);
-        break;
-      case "yearly":
-        startDate.setFullYear(startDate.getFullYear() - 1);
-        break;
-      default:
-        startDate = new Date(0);
-    }
-
-    if (period && period !== "all") {
-      matchStage.createdAt = { $gte: startDate };
-    }
-
+    // 🔴 KEY CHANGE: Calculate interest from ACTUAL PAYMENTS, not total expected
     let interestRevenue = [];
     if (!type || type === "all" || type === "interest") {
+      // Sum up interest from completed repayments
       interestRevenue = await Loan.aggregate([
         {
           $match: {
             status: { $in: ["active", "completed"] },
-            ...matchStage,
+            // Only count loans with actual payments
+            amountRepaid: { $gt: 0 },
           },
         },
         {
           $project: {
-            interestAmount: { $subtract: ["$totalPayable", "$amount"] },
+            // Calculate interest earned to date based on actual repayments
+            interestEarnedToDate: 1,
+            principalRepaidToDate: 1,
             amountRepaid: 1,
-            totalPayable: 1,
+            repayments: {
+              $filter: {
+                input: "$repayments",
+                as: "repayment",
+                cond: { $eq: ["$$repayment.status", "paid"] },
+              },
+            },
             createdAt: 1,
-            date: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-            month: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
-            year: { $year: "$createdAt" },
+          },
+        },
+        {
+          $addFields: {
+            // Sum interest from paid installments only
+            actualInterestRevenue: {
+              $sum: {
+                $map: {
+                  input: "$repayments",
+                  as: "r",
+                  in: { $ifNull: ["$$r.interestPortion", 0] },
+                },
+              },
+            },
           },
         },
         {
           $group: {
             _id:
               period === "daily"
-                ? "$date"
+                ? { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } }
                 : period === "monthly"
-                  ? "$month"
+                  ? { $dateToString: { format: "%Y-%m", date: "$createdAt" } }
                   : period === "yearly"
-                    ? "$year"
+                    ? { $year: "$createdAt" }
                     : null,
-            totalInterest: { $sum: "$interestAmount" },
+            totalInterest: { $sum: "$actualInterestRevenue" },
             totalLoans: { $sum: 1 },
-            totalPrincipal: { $sum: "$amount" },
+            totalPrincipalRepaid: { $sum: "$principalRepaidToDate" },
           },
         },
         { $sort: { _id: 1 } },
       ]);
     }
 
+    // Transaction charges (unchanged)
     let transactionCharges = [];
     if (!type || type === "all" || type === "charges") {
       transactionCharges = await Transaction.aggregate([
         {
           $match: {
             status: "approved",
-            ...(period && period !== "all"
-              ? {
-                  createdAt: { $gte: startDate },
-                }
-              : {}),
-          },
-        },
-        {
-          $project: {
-            charges: 1,
-            createdAt: 1,
-            date: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-            month: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
-            year: { $year: "$createdAt" },
+            createdAt: { $gte: startDate },
+            type: { $in: ["deposit", "withdrawal"] }, // Exclude loan transactions
           },
         },
         {
           $group: {
             _id:
               period === "daily"
-                ? "$date"
+                ? { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } }
                 : period === "monthly"
-                  ? "$month"
+                  ? { $dateToString: { format: "%Y-%m", date: "$createdAt" } }
                   : period === "yearly"
-                    ? "$year"
+                    ? { $year: "$createdAt" }
                     : null,
             totalCharges: { $sum: "$charges" },
             totalTransactions: { $sum: 1 },
@@ -705,14 +695,13 @@ exports.getRevenueReports = async (req, res) => {
       (sum, item) => sum + (item.totalCharges || 0),
       0,
     );
-    const totalRevenue = totalInterest + totalCharges;
 
     res.json({
       success: true,
       period: period || "all",
-      totalRevenue: totalRevenue,
+      totalRevenue: totalInterest + totalCharges,
       summary: {
-        interestRevenue: totalInterest,
+        interestRevenue: totalInterest, // 💰 Only from actual payments
         transactionCharges: totalCharges,
       },
       breakdown: {
@@ -720,10 +709,25 @@ exports.getRevenueReports = async (req, res) => {
         charges: transactionCharges,
       },
       dashboard: {
-        totalInterestEarned: totalInterest,
+        totalInterestEarned: totalInterest, // 💰 Actually collected
         totalChargesEarned: totalCharges,
         activeLoansCount: await Loan.countDocuments({ status: "active" }),
         completedLoansCount: await Loan.countDocuments({ status: "completed" }),
+        // 🔴 NEW: Show unearned interest (future revenue)
+        totalUnearnedInterest: await Loan.aggregate([
+          { $match: { status: "active" } },
+          {
+            $project: {
+              remainingInterest: {
+                $subtract: [
+                  { $subtract: ["$totalPayable", "$amount"] }, // Total expected interest
+                  { $ifNull: ["$interestEarnedToDate", 0] }, // Minus already earned
+                ],
+              },
+            },
+          },
+          { $group: { _id: null, total: { $sum: "$remainingInterest" } } },
+        ]).then((r) => r[0]?.total || 0),
       },
     });
   } catch (error) {
@@ -731,7 +735,6 @@ exports.getRevenueReports = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-
 // Get loan summary
 exports.getLoanSummary = async (req, res) => {
   try {
