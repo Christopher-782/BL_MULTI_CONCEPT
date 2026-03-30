@@ -3400,12 +3400,24 @@ function renderMyLoans(container) {
   container.innerHTML = html;
 }
 
-// ==================== REVENUE REPORTS ====================
+// ==================== REVENUE REPORTS (FIXED - CALCULATES FROM STATE) ====================
 
 async function renderRevenueReports(container) {
   try {
-    // Helper function for transaction revenue (frontend calculation)
-    const calculateTransactionRevenue = (period) => {
+    // Show loading state
+    container.innerHTML = `
+      <div class="flex justify-center items-center py-12">
+        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
+        <span class="ml-3 text-gray-400">Loading revenue data...</span>
+      </div>
+    `;
+
+    // Fetch all loans from backend
+    const loansRes = await api.get("/loans");
+    const allLoans = loansRes.data || [];
+
+    // Helper function to calculate transaction charges for a period
+    const calculateTransactionCharges = (period) => {
       const now = new Date();
       let startDate;
       switch (period) {
@@ -3430,201 +3442,463 @@ async function renderRevenueReports(container) {
           startDate = new Date(0);
       }
 
-      const filtered = state.transactions.filter(
-        (t) =>
-          t.status === "approved" &&
-          t.charges > 0 &&
-          new Date(t.date) >= startDate,
-      );
+      const charges = state.transactions
+        .filter((t) => t.status === "approved" && new Date(t.date) >= startDate)
+        .reduce((sum, t) => sum + (t.charges || 0), 0);
 
-      return {
-        charges: filtered.reduce((sum, t) => sum + (t.charges || 0), 0),
-        count: filtered.length,
-      };
+      return charges;
     };
 
-    // Fetch loan revenue from backend API (correct cumulative interest)
-    const [dailyRes, weeklyRes, monthlyRes, yearlyRes] = await Promise.all([
-      api.get("/reports/revenue?period=daily"),
-      api.get("/reports/revenue?period=weekly"),
-      api.get("/reports/revenue?period=monthly"),
-      api.get("/reports/revenue?period=yearly"),
-    ]);
+    // Helper function to calculate loan interest collected for a period
+    const calculateLoanInterestCollected = (period) => {
+      const now = new Date();
+      let startDate;
+      switch (period) {
+        case "daily":
+          startDate = new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate(),
+          );
+          break;
+        case "weekly":
+          startDate = new Date(now);
+          startDate.setDate(now.getDate() - 7);
+          break;
+        case "monthly":
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          break;
+        case "yearly":
+          startDate = new Date(now.getFullYear(), 0, 1);
+          break;
+        default:
+          startDate = new Date(0);
+      }
 
-    // Get transaction charges from frontend state
-    const dailyTxn = calculateTransactionRevenue("daily");
-    const weeklyTxn = calculateTransactionRevenue("weekly");
-    const monthlyTxn = calculateTransactionRevenue("monthly");
-    const yearlyTxn = calculateTransactionRevenue("yearly");
+      // Calculate interest from loan repayments in this period
+      let totalInterest = 0;
 
-    // Get loan interest from API (actual paid interest, not expected)
-    const dailyInterest = dailyRes.data.interestFromRepayments || 0;
-    const weeklyInterest = weeklyRes.data.interestFromRepayments || 0;
-    const monthlyInterest = monthlyRes.data.interestFromRepayments || 0;
-    const yearlyInterest = yearlyRes.data.interestFromRepayments || 0;
+      // Look at all approved loans and sum up interest from repayments made in this period
+      allLoans.forEach((loan) => {
+        if (loan.repayments && loan.repayments.length > 0) {
+          loan.repayments.forEach((repayment) => {
+            if (repayment.status === "paid" && repayment.paidDate) {
+              const paidDate = new Date(repayment.paidDate);
+              if (paidDate >= startDate) {
+                totalInterest += repayment.interestPortion || 0;
+              }
+            }
+          });
+        }
+      });
+
+      return totalInterest;
+    };
+
+    // Calculate transaction charges for each period
+    const dailyTxnCharges = calculateTransactionCharges("daily");
+    const weeklyTxnCharges = calculateTransactionCharges("weekly");
+    const monthlyTxnCharges = calculateTransactionCharges("monthly");
+    const yearlyTxnCharges = calculateTransactionCharges("yearly");
+
+    // Calculate loan interest collected for each period
+    const dailyLoanInterest = calculateLoanInterestCollected("daily");
+    const weeklyLoanInterest = calculateLoanInterestCollected("weekly");
+    const monthlyLoanInterest = calculateLoanInterestCollected("monthly");
+    const yearlyLoanInterest = calculateLoanInterestCollected("yearly");
+
+    // Calculate totals from all data
+    const totalTransactionCharges = state.transactions
+      .filter((t) => t.status === "approved")
+      .reduce((sum, t) => sum + (t.charges || 0), 0);
+
+    // Calculate total expected interest from all loans
+    const totalExpectedInterest = allLoans.reduce((sum, loan) => {
+      if (loan.status === "active" || loan.status === "completed") {
+        return sum + ((loan.totalPayable || 0) - (loan.amount || 0));
+      }
+      return sum;
+    }, 0);
+
+    // Calculate total actual interest collected from all loans
+    const totalActualInterest = allLoans.reduce((sum, loan) => {
+      if (loan.status === "active" || loan.status === "completed") {
+        const interestPaid = (loan.repayments || [])
+          .filter((r) => r.status === "paid")
+          .reduce((total, r) => {
+            return total + (r.interestPortion || 0);
+          }, 0);
+        return sum + interestPaid;
+      }
+      return sum;
+    }, 0);
 
     // Calculate total revenue
     const totalRevenue = {
-      daily: dailyTxn.charges + dailyInterest,
-      weekly: weeklyTxn.charges + weeklyInterest,
-      monthly: monthlyTxn.charges + monthlyInterest,
-      yearly: yearlyTxn.charges + yearlyInterest,
+      daily: dailyTxnCharges + dailyLoanInterest,
+      weekly: weeklyTxnCharges + weeklyLoanInterest,
+      monthly: monthlyTxnCharges + monthlyLoanInterest,
+      yearly: yearlyTxnCharges + yearlyLoanInterest,
     };
+
+    // Get counts for display
+    const activeLoansCount = allLoans.filter(
+      (l) => l.status === "active",
+    ).length;
+    const completedLoansCount = allLoans.filter(
+      (l) => l.status === "completed",
+    ).length;
+    const pendingLoansCount = allLoans.filter(
+      (l) => l.status === "pending",
+    ).length;
+
+    // Calculate approved transactions count
+    const approvedTransactionsCount = state.transactions.filter(
+      (t) => t.status === "approved",
+    ).length;
+    const pendingTransactionsCount = state.transactions.filter(
+      (t) => t.status === "pending",
+    ).length;
+
+    // Prepare loan data for table
+    const activeAndCompletedLoans = allLoans
+      .filter((l) => l.status === "active" || l.status === "completed")
+      .sort(
+        (a, b) =>
+          new Date(b.approvedBy?.approvedAt || 0) -
+          new Date(a.approvedBy?.approvedAt || 0),
+      );
+
+    // Calculate collection rate
+    const collectionRate =
+      totalExpectedInterest > 0
+        ? ((totalActualInterest / totalExpectedInterest) * 100).toFixed(1)
+        : 0;
 
     const html = `
       <div class="space-y-6 animate-fade-in px-4 sm:px-0">
-        <h2 class="text-xl font-bold">Revenue Reports</h2>
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-xl font-bold">Revenue Reports</h2>
+          <button onclick="renderRevenueReports(document.getElementById('contentArea'))" class="px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm transition-colors">
+            <i class="fas fa-sync-alt mr-2"></i>Refresh
+          </button>
+        </div>
         
+        <!-- Period Summary Cards -->
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div class="glass-panel p-6 rounded-xl">
+          <div class="glass-panel p-6 rounded-xl hover:transform hover:scale-105 transition-all duration-300">
             <div class="flex items-center justify-between mb-2">
               <span class="text-gray-400">Today's Revenue</span>
               <i class="fas fa-calendar-day text-blue-400 text-xl"></i>
             </div>
-            <p class="text-2xl font-bold text-green-400">₦${totalRevenue.daily.toLocaleString()}</p>
-            <div class="text-xs text-gray-400 mt-1">
-              Charges: ₦${dailyTxn.charges.toLocaleString()} | 
-              Interest: ₦${dailyInterest.toLocaleString()}
+            <p class="text-3xl font-bold text-green-400">₦${totalRevenue.daily.toLocaleString()}</p>
+            <div class="text-xs text-gray-400 mt-2 space-y-1">
+              <div class="flex justify-between">
+                <span>💰 Charges:</span>
+                <span class="text-blue-400">₦${dailyTxnCharges.toLocaleString()}</span>
+              </div>
+              <div class="flex justify-between">
+                <span>📈 Interest:</span>
+                <span class="text-green-400">₦${dailyLoanInterest.toLocaleString()}</span>
+              </div>
             </div>
           </div>
           
-          <div class="glass-panel p-6 rounded-xl">
+          <div class="glass-panel p-6 rounded-xl hover:transform hover:scale-105 transition-all duration-300">
             <div class="flex items-center justify-between mb-2">
               <span class="text-gray-400">This Week</span>
               <i class="fas fa-calendar-week text-green-400 text-xl"></i>
             </div>
-            <p class="text-2xl font-bold text-green-400">₦${totalRevenue.weekly.toLocaleString()}</p>
-            <div class="text-xs text-gray-400 mt-1">
-              Charges: ₦${weeklyTxn.charges.toLocaleString()} | 
-              Interest: ₦${weeklyInterest.toLocaleString()}
+            <p class="text-3xl font-bold text-green-400">₦${totalRevenue.weekly.toLocaleString()}</p>
+            <div class="text-xs text-gray-400 mt-2 space-y-1">
+              <div class="flex justify-between">
+                <span>💰 Charges:</span>
+                <span class="text-blue-400">₦${weeklyTxnCharges.toLocaleString()}</span>
+              </div>
+              <div class="flex justify-between">
+                <span>📈 Interest:</span>
+                <span class="text-green-400">₦${weeklyLoanInterest.toLocaleString()}</span>
+              </div>
             </div>
           </div>
           
-          <div class="glass-panel p-6 rounded-xl">
+          <div class="glass-panel p-6 rounded-xl hover:transform hover:scale-105 transition-all duration-300">
             <div class="flex items-center justify-between mb-2">
               <span class="text-gray-400">This Month</span>
               <i class="fas fa-calendar-alt text-yellow-400 text-xl"></i>
             </div>
-            <p class="text-2xl font-bold text-green-400">₦${totalRevenue.monthly.toLocaleString()}</p>
-            <div class="text-xs text-gray-400 mt-1">
-              Charges: ₦${monthlyTxn.charges.toLocaleString()} | 
-              Interest: ₦${monthlyInterest.toLocaleString()}
+            <p class="text-3xl font-bold text-green-400">₦${totalRevenue.monthly.toLocaleString()}</p>
+            <div class="text-xs text-gray-400 mt-2 space-y-1">
+              <div class="flex justify-between">
+                <span>💰 Charges:</span>
+                <span class="text-blue-400">₦${monthlyTxnCharges.toLocaleString()}</span>
+              </div>
+              <div class="flex justify-between">
+                <span>📈 Interest:</span>
+                <span class="text-green-400">₦${monthlyLoanInterest.toLocaleString()}</span>
+              </div>
             </div>
           </div>
           
-          <div class="glass-panel p-6 rounded-xl">
+          <div class="glass-panel p-6 rounded-xl hover:transform hover:scale-105 transition-all duration-300">
             <div class="flex items-center justify-between mb-2">
               <span class="text-gray-400">This Year</span>
               <i class="fas fa-calendar text-purple-400 text-xl"></i>
             </div>
-            <p class="text-2xl font-bold text-green-400">₦${totalRevenue.yearly.toLocaleString()}</p>
-            <div class="text-xs text-gray-400 mt-1">
-              Charges: ₦${yearlyTxn.charges.toLocaleString()} | 
-              Interest: ₦${yearlyInterest.toLocaleString()}
+            <p class="text-3xl font-bold text-green-400">₦${totalRevenue.yearly.toLocaleString()}</p>
+            <div class="text-xs text-gray-400 mt-2 space-y-1">
+              <div class="flex justify-between">
+                <span>💰 Charges:</span>
+                <span class="text-blue-400">₦${yearlyTxnCharges.toLocaleString()}</span>
+              </div>
+              <div class="flex justify-between">
+                <span>📈 Interest:</span>
+                <span class="text-green-400">₦${yearlyLoanInterest.toLocaleString()}</span>
+              </div>
             </div>
           </div>
         </div>
-        
+
+        <!-- Revenue Breakdown Section -->
         <div class="glass-panel rounded-2xl p-6">
           <h3 class="text-lg font-semibold mb-4">Revenue Breakdown</h3>
           
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div class="bg-gray-800/30 p-4 rounded-xl">
-              <h4 class="text-sm font-medium text-gray-400 mb-3">
-                <i class="fas fa-percent text-blue-400 mr-2"></i>
-                Transaction Charges
-              </h4>
-              <p class="text-3xl font-bold text-blue-400">₦${yearlyTxn.charges.toLocaleString()}</p>
-              <p class="text-xs text-gray-500 mt-1">From ${yearlyTxn.count} transactions</p>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div class="bg-gradient-to-br from-blue-500/10 to-blue-600/5 p-5 rounded-xl border border-blue-500/20">
+              <div class="flex items-center justify-between mb-3">
+                <h4 class="text-sm font-medium text-gray-400">
+                  <i class="fas fa-percent text-blue-400 mr-2"></i>
+                  Transaction Charges
+                </h4>
+                <i class="fas fa-money-bill-wave text-blue-400 text-2xl"></i>
+              </div>
+              <p class="text-4xl font-bold text-blue-400">₦${totalTransactionCharges.toLocaleString()}</p>
+              <p class="text-xs text-gray-500 mt-2">From ${approvedTransactionsCount} approved transactions</p>
+              <div class="mt-3 flex gap-2 text-xs">
+                <span class="px-2 py-1 bg-blue-500/20 text-blue-300 rounded-full">Deposits</span>
+                <span class="px-2 py-1 bg-orange-500/20 text-orange-300 rounded-full">Withdrawals</span>
+              </div>
             </div>
             
-            <div class="bg-gray-800/30 p-4 rounded-xl">
-              <h4 class="text-sm font-medium text-gray-400 mb-3">
-                <i class="fas fa-chart-line text-green-400 mr-2"></i>
-                Loan Interest Revenue
-              </h4>
-              <p class="text-3xl font-bold text-green-400">₦${yearlyInterest.toLocaleString()}</p>
-              <p class="text-xs text-gray-500 mt-1">From actual repayments received</p>
+            <div class="bg-gradient-to-br from-green-500/10 to-green-600/5 p-5 rounded-xl border border-green-500/20">
+              <div class="flex items-center justify-between mb-3">
+                <h4 class="text-sm font-medium text-gray-400">
+                  <i class="fas fa-chart-line text-green-400 mr-2"></i>
+                  Loan Interest Collected
+                </h4>
+                <i class="fas fa-hand-holding-usd text-green-400 text-2xl"></i>
+              </div>
+              <p class="text-4xl font-bold text-green-400">₦${totalActualInterest.toLocaleString()}</p>
+              <p class="text-xs text-gray-500 mt-2">From ${activeLoansCount + completedLoansCount} loans</p>
+              <div class="mt-3 flex gap-2 text-xs">
+                <span class="px-2 py-1 bg-green-500/20 text-green-300 rounded-full">Active: ${activeLoansCount}</span>
+                <span class="px-2 py-1 bg-blue-500/20 text-blue-300 rounded-full">Completed: ${completedLoansCount}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Expected vs Collected -->
+          <div class="bg-gray-800/30 p-5 rounded-xl mb-6">
+            <div class="flex items-center gap-2 mb-4">
+              <i class="fas fa-chart-simple text-yellow-400 text-lg"></i>
+              <h4 class="text-sm font-medium text-gray-300">Loan Interest Performance</h4>
+            </div>
+            <div class="grid grid-cols-2 gap-4 mb-4">
+              <div class="text-center p-3 bg-gray-800/50 rounded-lg">
+                <p class="text-xs text-gray-400 mb-1">Expected Interest</p>
+                <p class="text-2xl font-bold text-yellow-400">₦${totalExpectedInterest.toLocaleString()}</p>
+                <p class="text-xs text-gray-500 mt-1">From all approved loans</p>
+              </div>
+              <div class="text-center p-3 bg-gray-800/50 rounded-lg">
+                <p class="text-xs text-gray-400 mb-1">Collected So Far</p>
+                <p class="text-2xl font-bold text-green-400">₦${totalActualInterest.toLocaleString()}</p>
+                <p class="text-xs text-gray-500 mt-1">Actual payments received</p>
+              </div>
+            </div>
+            <div class="mt-2">
+              <div class="flex justify-between text-xs mb-2">
+                <span class="text-gray-300">Collection Progress</span>
+                <span class="text-yellow-400 font-semibold">${collectionRate}%</span>
+              </div>
+              <div class="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
+                <div class="bg-gradient-to-r from-green-500 to-yellow-500 h-full rounded-full transition-all duration-500" style="width: ${collectionRate}%"></div>
+              </div>
+              <p class="text-xs text-gray-400 mt-2">
+                ₦${totalActualInterest.toLocaleString()} out of ₦${totalExpectedInterest.toLocaleString()} expected interest collected
+              </p>
             </div>
           </div>
           
-          <div class="mt-6">
-            <div class="flex justify-between text-sm mb-2">
-              <span>Transaction Charges (${((yearlyTxn.charges / (totalRevenue.yearly || 1)) * 100).toFixed(1)}%)</span>
-              <span>Loan Interest (${((yearlyInterest / (totalRevenue.yearly || 1)) * 100).toFixed(1)}%)</span>
+          <!-- Revenue Composition Chart -->
+          <div class="mt-4">
+            <div class="flex justify-between text-sm mb-3">
+              <span class="text-gray-300">Revenue Composition</span>
             </div>
-            <div class="w-full bg-gray-700 rounded-full h-4 overflow-hidden flex">
-              <div class="bg-blue-500 h-full" style="width: ${(yearlyTxn.charges / (totalRevenue.yearly || 1)) * 100}%"></div>
-              <div class="bg-green-500 h-full" style="width: ${(yearlyInterest / (totalRevenue.yearly || 1)) * 100}%"></div>
+            <div class="w-full bg-gray-700 rounded-full h-8 overflow-hidden flex">
+              <div class="bg-blue-500 h-full transition-all duration-500 flex items-center justify-center text-xs text-white font-medium" style="width: ${totalTransactionCharges + totalActualInterest > 0 ? (totalTransactionCharges / (totalTransactionCharges + totalActualInterest)) * 100 : 0}%">
+                ${totalTransactionCharges + totalActualInterest > 0 ? `${((totalTransactionCharges / (totalTransactionCharges + totalActualInterest)) * 100).toFixed(0)}%` : "0%"}
+              </div>
+              <div class="bg-green-500 h-full transition-all duration-500 flex items-center justify-center text-xs text-white font-medium" style="width: ${totalTransactionCharges + totalActualInterest > 0 ? (totalActualInterest / (totalTransactionCharges + totalActualInterest)) * 100 : 0}%">
+                ${totalTransactionCharges + totalActualInterest > 0 ? `${((totalActualInterest / (totalTransactionCharges + totalActualInterest)) * 100).toFixed(0)}%` : "0%"}
+              </div>
             </div>
-            <div class="flex gap-4 mt-2 text-xs">
-              <div class="flex items-center gap-1"><div class="w-3 h-3 bg-blue-500 rounded"></div><span>Charges</span></div>
-              <div class="flex items-center gap-1"><div class="w-3 h-3 bg-green-500 rounded"></div><span>Interest</span></div>
+            <div class="flex gap-6 mt-4 text-sm justify-center">
+              <div class="flex items-center gap-2">
+                <div class="w-4 h-4 bg-blue-500 rounded"></div>
+                <span class="text-gray-300">Transaction Charges: ₦${totalTransactionCharges.toLocaleString()}</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <div class="w-4 h-4 bg-green-500 rounded"></div>
+                <span class="text-gray-300">Loan Interest: ₦${totalActualInterest.toLocaleString()}</span>
+              </div>
             </div>
           </div>
         </div>
         
+        <!-- Recent Revenue Activity -->
         <div class="glass-panel rounded-2xl p-6">
-          <h3 class="text-lg font-semibold mb-4">Active Loans Summary</h3>
+          <h3 class="text-lg font-semibold mb-4">Recent Revenue Activity</h3>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="bg-blue-500/10 p-4 rounded-lg border border-blue-500/20">
+              <p class="text-xs text-gray-400 mb-2">Last 7 Days</p>
+              <div class="flex justify-between items-end">
+                <div>
+                  <p class="text-sm text-gray-400">Transaction Charges</p>
+                  <p class="text-2xl font-bold text-blue-400">₦${weeklyTxnCharges.toLocaleString()}</p>
+                </div>
+                <i class="fas fa-arrow-trend-up text-blue-400 text-2xl"></i>
+              </div>
+              <p class="text-xs text-gray-500 mt-2">from approved deposits & withdrawals</p>
+            </div>
+            <div class="bg-green-500/10 p-4 rounded-lg border border-green-500/20">
+              <p class="text-xs text-gray-400 mb-2">Last 7 Days</p>
+              <div class="flex justify-between items-end">
+                <div>
+                  <p class="text-sm text-gray-400">Loan Interest Collected</p>
+                  <p class="text-2xl font-bold text-green-400">₦${weeklyLoanInterest.toLocaleString()}</p>
+                </div>
+                <i class="fas fa-hand-holding-usd text-green-400 text-2xl"></i>
+              </div>
+              <p class="text-xs text-gray-500 mt-2">from loan repayments</p>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Detailed Loan Breakdown -->
+        <div class="glass-panel rounded-2xl p-6">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-semibold">Loan Interest Breakdown by Customer</h3>
+            <div class="text-sm text-gray-400">
+              <span class="text-green-400">${activeLoansCount}</span> Active | 
+              <span class="text-blue-400">${completedLoansCount}</span> Completed | 
+              <span class="text-yellow-400">${pendingLoansCount}</span> Pending
+            </div>
+          </div>
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-700">
               <thead>
                 <tr class="text-left text-gray-400 text-sm">
-                  <th class="pb-3">Customer</th>
-                  <th class="pb-3">Type</th>
-                  <th class="pb-3">Principal</th>
-                  <th class="pb-3">Interest (Total)</th>
-                  <th class="pb-3">Status</th>
-                  <th class="pb-3">Approved Date</th>
-                </tr>
-              </thead>
+                  <th class="pb-3 px-2">Customer</th>
+                  <th class="pb-3 px-2">Type</th>
+                  <th class="pb-3 px-2">Principal</th>
+                  <th class="pb-3 px-2">Interest Rate</th>
+                  <th class="pb-3 px-2">Expected Interest</th>
+                  <th class="pb-3 px-2">Collected</th>
+                  <th class="pb-3 px-2">Progress</th>
+                  <th class="pb-3 px-2">Status</th>
+                 </thead>
               <tbody class="divide-y divide-gray-800">
-                ${(state.loans || [])
-                  .filter(
-                    (l) => l.status === "active" || l.status === "completed",
-                  )
-                  .sort(
-                    (a, b) =>
-                      new Date(b.approvedBy?.approvedAt || 0) -
-                      new Date(a.approvedBy?.approvedAt || 0),
-                  )
-                  .slice(0, 10)
-                  .map((loan) => {
-                    const interest =
-                      (loan.totalPayable || 0) - (loan.amount || 0);
-                    return `
-                      <tr class="hover:bg-gray-800/30">
-                        <td class="py-3 text-sm">${loan.customerName}</td>
-                        <td class="py-3">
-                          <span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
-                            ${loan.type}
-                          </span>
+                ${
+                  activeAndCompletedLoans.length > 0
+                    ? activeAndCompletedLoans
+                        .map((loan) => {
+                          const expectedInterest =
+                            (loan.totalPayable || 0) - (loan.amount || 0);
+                          const collectedInterest = (loan.repayments || [])
+                            .filter((r) => r.status === "paid")
+                            .reduce(
+                              (sum, r) => sum + (r.interestPortion || 0),
+                              0,
+                            );
+                          const collectionPercentage =
+                            expectedInterest > 0
+                              ? (
+                                  (collectedInterest / expectedInterest) *
+                                  100
+                                ).toFixed(1)
+                              : 0;
+
+                          return `
+                    <tr class="hover:bg-gray-800/30 transition-colors">
+                      <td class="py-3 px-2">
+                        <div class="font-medium text-sm">${loan.customerName}</div>
+                        <div class="text-xs text-gray-500">${loan.customerNumber || "N/A"}</div>
                         </td>
-                        <td class="py-3 font-mono">₦${(loan.amount || 0).toLocaleString()}</td>
-                        <td class="py-3 font-mono text-green-400">₦${interest.toLocaleString()}</td>
-                        <td class="py-3">
-                          <span class="px-2 py-1 rounded text-xs ${getStatusStyle(loan.status)}">
-                            ${loan.status}
-                          </span>
+                      <td class="py-3 px-2">
+                        <span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
+                          ${loan.type.toUpperCase()}
+                        </span>
                         </td>
-                        <td class="py-3 text-xs text-gray-400">
-                          ${loan.approvedBy?.approvedAt ? formatDate(loan.approvedBy.approvedAt) : "N/A"}
+                      <td class="py-3 px-2 font-mono text-sm">₦${(loan.amount || 0).toLocaleString()}</td>
+                      <td class="py-3 px-2 text-sm">${loan.interestRate || 0}%</td>
+                      <td class="py-3 px-2 font-mono text-yellow-400 text-sm">₦${expectedInterest.toLocaleString()}</td>
+                      <td class="py-3 px-2 font-mono text-green-400 text-sm">₦${collectedInterest.toLocaleString()}</td>
+                      <td class="py-3 px-2">
+                        <div class="w-24">
+                          <div class="flex justify-between text-xs mb-1">
+                            <span class="text-gray-400">${collectionPercentage}%</span>
+                          </div>
+                          <div class="bg-gray-700 rounded-full h-2">
+                            <div class="bg-green-500 h-2 rounded-full" style="width: ${collectionPercentage}%"></div>
+                          </div>
+                        </div>
+                        </td>
+                      <td class="py-3 px-2">
+                        <span class="px-2 py-1 rounded text-xs ${getStatusStyle(loan.status)}">
+                          ${loan.status}
+                        </span>
                         </td>
                       </tr>
-                    `;
-                  })
-                  .join("")}
-                ${
-                  (state.loans || []).filter(
-                    (l) => l.status === "active" || l.status === "completed",
-                  ).length === 0
-                    ? `
-                  <tr><td colspan="6" class="py-8 text-center text-gray-400">No approved loans yet</td></tr>
+                  `;
+                        })
+                        .join("")
+                    : `
+                  <tr>
+                    <td colspan="8" class="py-8 text-center text-gray-400">
+                      <i class="fas fa-chart-line text-4xl mb-3 block"></i>
+                      No approved loans yet. Interest revenue will appear here once loans are approved and repayments are made.
+                    </td>
+                  </tr>
                 `
-                    : ""
                 }
               </tbody>
             </table>
+          </div>
+        </div>
+
+        <!-- Summary Stats -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="glass-panel p-4 rounded-xl text-center">
+            <i class="fas fa-users text-blue-400 text-2xl mb-2"></i>
+            <p class="text-sm text-gray-400">Total Customers</p>
+            <p class="text-xl font-bold">${state.customers.length}</p>
+          </div>
+          <div class="glass-panel p-4 rounded-xl text-center">
+            <i class="fas fa-hand-holding-usd text-green-400 text-2xl mb-2"></i>
+            <p class="text-sm text-gray-400">Active Loans</p>
+            <p class="text-xl font-bold">${activeLoansCount}</p>
+          </div>
+          <div class="glass-panel p-4 rounded-xl text-center">
+            <i class="fas fa-exchange-alt text-purple-400 text-2xl mb-2"></i>
+            <p class="text-sm text-gray-400">Total Transactions</p>
+            <p class="text-xl font-bold">${state.transactions.length}</p>
+            <p class="text-xs text-gray-500">${pendingTransactionsCount} pending</p>
+          </div>
+          <div class="glass-panel p-4 rounded-xl text-center">
+            <i class="fas fa-chart-line text-yellow-400 text-2xl mb-2"></i>
+            <p class="text-sm text-gray-400">Total Revenue</p>
+            <p class="text-xl font-bold text-green-400">₦${(totalTransactionCharges + totalActualInterest).toLocaleString()}</p>
+            <p class="text-xs text-gray-500">All time</p>
           </div>
         </div>
       </div>
@@ -3634,17 +3908,17 @@ async function renderRevenueReports(container) {
   } catch (error) {
     console.error("Revenue reports error:", error);
     container.innerHTML = `
-      <div class="text-center text-red-400 py-8">
-        <i class="fas fa-exclamation-circle text-4xl mb-3"></i>
-        <p>Failed to load revenue reports</p>
-        <button onclick="renderRevenueReports(document.getElementById('contentArea'))" class="mt-4 px-4 py-2 bg-blue-600 rounded-lg text-sm hover:bg-blue-500">
+      <div class="text-center text-red-400 py-12">
+        <i class="fas fa-exclamation-circle text-5xl mb-4"></i>
+        <p class="text-lg mb-2">Failed to load revenue reports</p>
+        <p class="text-sm text-gray-400 mb-4">${error.response?.data?.error || error.message || "Please check your connection"}</p>
+        <button onclick="renderRevenueReports(document.getElementById('contentArea'))" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors">
           <i class="fas fa-sync-alt mr-2"></i>Retry
         </button>
       </div>
     `;
   }
-}
-// ==================== DORMANT CUSTOMERS SECTION ====================
+} // ==================== DORMANT CUSTOMERS SECTION ====================
 
 function renderDormantCustomers(container) {
   const thirtyDaysAgo = new Date();
