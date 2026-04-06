@@ -3,10 +3,10 @@ const mongoose = require("mongoose");
 
 const customerSchema = new mongoose.Schema(
   {
-    id: { type: String, unique: true },
+    // id: { type: String, unique: true },
     customerNumber: { type: String, unique: true },
     name: { type: String, required: true },
-    email: { type: String, required: true },
+    email: { type: String },
     phone: { type: String },
     address: { type: String },
 
