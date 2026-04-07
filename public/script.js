@@ -3923,13 +3923,17 @@ async function renderRevenueReports(container) {
 function renderDormantCustomers(container) {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
   const customersWithLastActivity = state.customers.map((customer) => {
+    // Only count APPROVED transactions
     const customerTransactions = state.transactions.filter(
-      (t) => t.customerId === customer.id,
+      (t) => t.customerId === customer.id && t.status === "approved",
     );
-    let lastTransactionDate = null,
-      lastTransactionType = null,
-      lastTransactionAmount = 0;
+
+    let lastTransactionDate = null;
+    let lastTransactionType = null;
+    let lastTransactionAmount = 0;
+
     if (customerTransactions.length > 0) {
       const sortedTransactions = [...customerTransactions].sort(
         (a, b) => new Date(b.date) - new Date(a.date),
@@ -3938,12 +3942,29 @@ function renderDormantCustomers(container) {
       lastTransactionType = sortedTransactions[0].type;
       lastTransactionAmount = sortedTransactions[0].amount;
     }
+
     let daysSinceLastTransaction = null;
     if (lastTransactionDate) {
       const diffTime = Math.abs(new Date() - lastTransactionDate);
       daysSinceLastTransaction = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     }
-    const isDormant = !lastTransactionDate || daysSinceLastTransaction > 30;
+
+    // Check if customer is new (joined less than 30 days ago)
+    const joinedDate = new Date(
+      customer.joined || customer.createdAt || Date.now(),
+    );
+    const daysSinceJoined = Math.floor(
+      (new Date() - joinedDate) / (1000 * 60 * 60 * 24),
+    );
+    const isNewCustomer = daysSinceJoined <= 30;
+
+    // FIX: Only mark as dormant if:
+    // 1. They HAVE transacted before AND last transaction was 30+ days ago, OR
+    // 2. They are NOT a new customer (joined > 30 days ago) AND never transacted
+    const isDormant =
+      (lastTransactionDate && daysSinceLastTransaction > 30) ||
+      (!lastTransactionDate && !isNewCustomer);
+
     return {
       ...customer,
       lastTransactionDate,
@@ -3951,37 +3972,231 @@ function renderDormantCustomers(container) {
       lastTransactionAmount,
       daysSinceLastTransaction,
       totalTransactions: customerTransactions.length,
+      daysSinceJoined,
+      isNewCustomer,
       isDormant,
     };
   });
+
+  // Filter to only show truly dormant customers
   const dormantCustomers = customersWithLastActivity.filter((c) => c.isDormant);
+
+  // Sort: customers with transactions first (most dormant), then never-transacted
   dormantCustomers.sort((a, b) => {
-    if (!a.daysSinceLastTransaction) return -1;
-    if (!b.daysSinceLastTransaction) return 1;
-    return b.daysSinceLastTransaction - a.daysSinceLastTransaction;
+    if (a.lastTransactionDate && b.lastTransactionDate) {
+      return b.daysSinceLastTransaction - a.daysSinceLastTransaction;
+    }
+    if (a.lastTransactionDate && !b.lastTransactionDate) return -1;
+    if (!a.lastTransactionDate && b.lastTransactionDate) return 1;
+    return b.daysSinceJoined - a.daysSinceJoined;
   });
-  const totalCustomers = state.customers.length,
-    dormantCount = dormantCustomers.length,
-    activeCount = totalCustomers - dormantCount,
-    dormantPercentage =
-      totalCustomers > 0
-        ? ((dormantCount / totalCustomers) * 100).toFixed(1)
-        : 0;
-  const html = `<div class="space-y-4 sm:space-y-6 animate-fade-in px-4 sm:px-0"><div class="glass-panel rounded-2xl p-4 sm:p-6"><div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4 sm:mb-6"><div><h3 class="text-base sm:text-lg font-semibold">Dormant Customers</h3><p class="text-xs sm:text-sm text-gray-400">Customers with no transactions in the last 30 days</p></div><div class="flex gap-2 w-full sm:w-auto"><button onclick="sendBulkSMSToDormantCustomers()" class="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-xs sm:text-sm transition-colors flex items-center justify-center gap-2" ${dormantCount === 0 ? 'disabled style="opacity:0.5; cursor:not-allowed"' : ""}><i class="fas fa-envelope text-xs sm:text-sm"></i>SMS (${dormantCount})</button><button onclick="exportDormantCustomers()" class="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-xs sm:text-sm transition-colors flex items-center justify-center gap-2" ${dormantCount === 0 ? 'disabled style="opacity:0.5; cursor:not-allowed"' : ""}><i class="fas fa-download text-xs sm:text-sm"></i>Export</button></div></div><div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4 sm:mb-6"><div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700"><div class="flex items-center justify-between mb-2"><span class="text-xs sm:text-sm text-gray-400">Total Customers</span><i class="fas fa-users text-blue-400 text-sm sm:text-base"></i></div><p class="text-xl sm:text-2xl font-bold">${totalCustomers}</p></div><div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700"><div class="flex items-center justify-between mb-2"><span class="text-xs sm:text-sm text-gray-400">Active Customers</span><i class="fas fa-user-check text-green-400 text-sm sm:text-base"></i></div><p class="text-xl sm:text-2xl font-bold text-green-400">${activeCount}</p><p class="text-xs text-gray-400">Active in last 30 days</p></div><div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700"><div class="flex items-center justify-between mb-2"><span class="text-xs sm:text-sm text-gray-400">Dormant Customers</span><i class="fas fa-user-clock text-yellow-400 text-sm sm:text-base"></i></div><p class="text-xl sm:text-2xl font-bold text-yellow-400">${dormantCount}</p><p class="text-xs text-gray-400">No activity in 30+ days</p></div><div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700"><div class="flex items-center justify-between mb-2"><span class="text-xs sm:text-sm text-gray-400">Dormancy Rate</span><i class="fas fa-chart-line text-purple-400 text-sm sm:text-base"></i></div><p class="text-xl sm:text-2xl font-bold text-purple-400">${dormantPercentage}%</p><p class="text-xs text-gray-400">of total customers</p></div></div>${
-    dormantCount > 0
-      ? `<div class="overflow-x-auto -mx-4 sm:mx-0"><div class="inline-block min-w-full align-middle"><table class="min-w-full divide-y divide-gray-700"><thead><tr class="text-left text-gray-400 text-xs sm:text-sm"><th class="pb-3 px-4 sm:px-0">Customer</th><th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Contact</th><th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Phone</th><th class="pb-3 px-4 sm:px-0">Cash Balance</th><th class="pb-3 px-4 sm:px-0 hidden lg:table-cell">Last Transaction</th><th class="pb-3 px-4 sm:px-0">Days</th><th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Total Txns</th><th class="pb-3 px-4 sm:px-0">Actions</th> </thead><tbody class="divide-y divide-gray-800">${dormantCustomers
-          .map(
-            (customer) =>
-              `<tr class="hover:bg-gray-800/30 transition-colors"><td class="py-3 px-4 sm:px-0"><div class="flex items-center gap-2 sm:gap-3"><div class="w-8 h-8 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center text-xs font-bold flex-shrink-0">${customer.name
-                .split(" ")
-                .map((n) => n[0])
-                .join("")
-                .substring(0, 2)
-                .toUpperCase()}</div><div><p class="font-medium text-xs sm:text-sm">${customer.name}</p><p class="text-xs text-gray-400 hidden sm:block">${customer.email}</p></div></div>  </div><td class="py-3 px-4 sm:px-0 hidden sm:table-cell"><div class="text-xs"><div class="flex items-center gap-1"><i class="fas fa-envelope text-gray-500 text-xs"></i><span class="break-words">${customer.email}</span></div></div>  </div><td class="py-3 px-4 sm:px-0 hidden md:table-cell"><div class="text-xs"><div class="flex items-center gap-1"><i class="fas fa-phone-alt text-gray-500 text-xs"></i><span>${customer.phone || "N/A"}</span></div></div>  </div><td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm">₦${(customer.cashBalance || customer.balance || 0).toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 hidden lg:table-cell">${customer.lastTransactionDate ? `<div class="text-xs"><div>${formatDate(customer.lastTransactionDate)}</div><div class="text-gray-400 capitalize">${customer.lastTransactionType} of ₦${(customer.lastTransactionAmount || 0).toLocaleString()}</div></div>` : '<span class="text-xs text-gray-500">Never</span>'}  </div><td class="py-3 px-4 sm:px-0"><span class="px-2 py-1 rounded text-xs ${customer.daysSinceLastTransaction > 90 ? "bg-red-500/20 text-red-400" : customer.daysSinceLastTransaction > 60 ? "bg-orange-500/20 text-orange-400" : "bg-yellow-500/20 text-yellow-400"}">${customer.daysSinceLastTransaction ? `${customer.daysSinceLastTransaction}d` : "Never"}</span>  </div><td class="py-3 px-4 sm:px-0 hidden md:table-cell text-xs">${customer.totalTransactions}  </div><td class="py-3 px-4 sm:px-0"><div class="flex gap-2"><button onclick="viewCustomer('${customer.id}')" class="text-blue-400 hover:text-blue-300 p-1" title="View Details"><i class="fas fa-eye text-xs sm:text-sm"></i></button>${customer.phone ? `<button onclick="sendSMSReminder('${customer.id}')" class="text-green-400 hover:text-green-300 p-1" title="Send SMS Reminder"><i class="fas fa-envelope text-xs sm:text-sm"></i></button>` : ""}<button onclick="reactivateCustomer('${customer.id}')" class="text-purple-400 hover:text-purple-300 p-1" title="Mark as Reactivated"><i class="fas fa-user-check text-xs sm:text-sm"></i></button></div>  </div>   </div>`,
-          )
-          .join("")}</tbody>   </div></div>`
-      : `<div class="text-center py-8 sm:py-12 bg-gray-800/30 rounded-xl"><div class="w-12 h-12 sm:w-16 sm:h-16 mx-auto bg-green-500/20 rounded-full flex items-center justify-center mb-3 sm:mb-4"><i class="fas fa-check-circle text-green-400 text-xl sm:text-2xl"></i></div><h3 class="text-base sm:text-lg font-semibold mb-2">No Dormant Customers</h3><p class="text-xs sm:text-sm text-gray-400">All customers have been active in the last 30 days</p></div>`
-  }</div>${dormantCount > 0 ? `<div class="glass-panel rounded-2xl p-4 sm:p-6"><h3 class="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Reactivation Suggestions</h3><div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4"><div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700"><i class="fas fa-gift text-purple-400 text-xl sm:text-2xl mb-2"></i><h4 class="font-medium text-sm sm:text-base mb-1">Offer Incentives</h4><p class="text-xs text-gray-400">Consider offering bonuses or reduced fees to dormant customers</p></div><div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700"><i class="fas fa-envelope text-blue-400 text-xl sm:text-2xl mb-2"></i><h4 class="font-medium text-sm sm:text-base mb-1">Send Reminders</h4><p class="text-xs text-gray-400">Send personalized SMS or email reminders to encourage activity</p></div><div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700"><i class="fas fa-chart-line text-green-400 text-xl sm:text-2xl mb-2"></i><h4 class="font-medium text-sm sm:text-base mb-1">Track Engagement</h4><p class="text-xs text-gray-400">Monitor reactivation rates and adjust strategies accordingly</p></div></div></div>` : ""}</div>`;
+
+  const totalCustomers = state.customers.length;
+  const dormantCount = dormantCustomers.length;
+  const activeCount = totalCustomers - dormantCount;
+
+  const dormantPercentage =
+    totalCustomers > 0 ? ((dormantCount / totalCustomers) * 100).toFixed(1) : 0;
+
+  const html = `<div class="space-y-4 sm:space-y-6 animate-fade-in px-4 sm:px-0">
+    <div class="glass-panel rounded-2xl p-4 sm:p-6">
+      <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4 sm:mb-6">
+        <div>
+          <h3 class="text-base sm:text-lg font-semibold">Dormant Customers</h3>
+          <p class="text-xs sm:text-sm text-gray-400">Customers with no approved transactions in the last 30 days</p>
+        </div>
+        <div class="flex gap-2 w-full sm:w-auto">
+          <button onclick="sendBulkSMSToDormantCustomers()" class="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-xs sm:text-sm transition-colors flex items-center justify-center gap-2" ${dormantCount === 0 ? 'disabled style="opacity:0.5; cursor:not-allowed"' : ""}>
+            <i class="fas fa-envelope text-xs sm:text-sm"></i>SMS (${dormantCount})
+          </button>
+          <button onclick="exportDormantCustomers()" class="flex-1 sm:flex-none px-3 sm:px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-xs sm:text-sm transition-colors flex items-center justify-center gap-2" ${dormantCount === 0 ? 'disabled style="opacity:0.5; cursor:not-allowed"' : ""}>
+            <i class="fas fa-download text-xs sm:text-sm"></i>Export
+          </button>
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-4 sm:mb-6">
+        <div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs sm:text-sm text-gray-400">Total Customers</span>
+            <i class="fas fa-users text-blue-400 text-sm sm:text-base"></i>
+          </div>
+          <p class="text-xl sm:text-2xl font-bold">${totalCustomers}</p>
+        </div>
+        <div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs sm:text-sm text-gray-400">Active Customers</span>
+            <i class="fas fa-user-check text-green-400 text-sm sm:text-base"></i>
+          </div>
+          <p class="text-xl sm:text-2xl font-bold text-green-400">${activeCount}</p>
+          <p class="text-xs text-gray-400">Transacted within 30 days or new</p>
+        </div>
+        <div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs sm:text-sm text-gray-400">Dormant Customers</span>
+            <i class="fas fa-user-clock text-yellow-400 text-sm sm:text-base"></i>
+          </div>
+          <p class="text-xl sm:text-2xl font-bold text-yellow-400">${dormantCount}</p>
+          <p class="text-xs text-gray-400">No activity in 30+ days</p>
+        </div>
+        <div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs sm:text-sm text-gray-400">Dormancy Rate</span>
+            <i class="fas fa-chart-line text-purple-400 text-sm sm:text-base"></i>
+          </div>
+          <p class="text-xl sm:text-2xl font-bold text-purple-400">${dormantPercentage}%</p>
+          <p class="text-xs text-gray-400">of total customers</p>
+        </div>
+      </div>
+      
+      ${
+        dormantCount > 0
+          ? `<div class="overflow-x-auto -mx-4 sm:mx-0">
+              <div class="inline-block min-w-full align-middle">
+                <table class="min-w-full divide-y divide-gray-700">
+                  <thead>
+                    <tr class="text-left text-gray-400 text-xs sm:text-sm">
+                      <th class="pb-3 px-4 sm:px-0">Customer</th>
+                      <th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Contact</th>
+                      <th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Phone</th>
+                      <th class="pb-3 px-4 sm:px-0">Cash Balance</th>
+                      <th class="pb-3 px-4 sm:px-0 hidden lg:table-cell">Last Transaction</th>
+                      <th class="pb-3 px-4 sm:px-0">Days</th>
+                      <th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Total Txns</th>
+                      <th class="pb-3 px-4 sm:px-0">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-800">
+                    ${dormantCustomers
+                      .map((customer) => {
+                        const neverTransacted = !customer.lastTransactionDate;
+                        const badgeClass = neverTransacted
+                          ? "bg-gray-500/20 text-gray-400"
+                          : customer.daysSinceLastTransaction > 90
+                            ? "bg-red-500/20 text-red-400"
+                            : customer.daysSinceLastTransaction > 60
+                              ? "bg-orange-500/20 text-orange-400"
+                              : "bg-yellow-500/20 text-yellow-400";
+
+                        const daysLabel = neverTransacted
+                          ? `${customer.daysSinceJoined}d (never)`
+                          : `${customer.daysSinceLastTransaction}d`;
+
+                        return `<tr class="hover:bg-gray-800/30 transition-colors">
+                          <td class="py-3 px-4 sm:px-0">
+                            <div class="flex items-center gap-2 sm:gap-3">
+                              <div class="w-8 h-8 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center text-xs font-bold flex-shrink-0">
+                                ${customer.name
+                                  .split(" ")
+                                  .map((n) => n[0])
+                                  .join("")
+                                  .substring(0, 2)
+                                  .toUpperCase()}
+                              </div>
+                              <div>
+                                <p class="font-medium text-xs sm:text-sm">${customer.name}</p>
+                                <p class="text-xs text-gray-400 hidden sm:block">${customer.email}</p>
+                                ${neverTransacted ? '<span class="text-xs text-gray-500">Never transacted</span>' : ""}
+                              </div>
+                            </div>
+                          </td>
+                          <td class="py-3 px-4 sm:px-0 hidden sm:table-cell">
+                            <div class="text-xs">
+                              <div class="flex items-center gap-1">
+                                <i class="fas fa-envelope text-gray-500 text-xs"></i>
+                                <span class="break-words">${customer.email}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td class="py-3 px-4 sm:px-0 hidden md:table-cell">
+                            <div class="text-xs">
+                              <div class="flex items-center gap-1">
+                                <i class="fas fa-phone-alt text-gray-500 text-xs"></i>
+                                <span>${customer.phone || "N/A"}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm">
+                            ₦${(customer.cashBalance || customer.balance || 0).toLocaleString()}
+                          </td>
+                          <td class="py-3 px-4 sm:px-0 hidden lg:table-cell">
+                            ${
+                              customer.lastTransactionDate
+                                ? `<div class="text-xs">
+                                  <div>${formatDate(customer.lastTransactionDate)}</div>
+                                  <div class="text-gray-400 capitalize">${customer.lastTransactionType} of ₦${(customer.lastTransactionAmount || 0).toLocaleString()}</div>
+                                </div>`
+                                : '<span class="text-xs text-gray-500">Never</span>'
+                            }
+                          </td>
+                          <td class="py-3 px-4 sm:px-0">
+                            <span class="px-2 py-1 rounded text-xs ${badgeClass}">
+                              ${daysLabel}
+                            </span>
+                          </td>
+                          <td class="py-3 px-4 sm:px-0 hidden md:table-cell text-xs">
+                            ${customer.totalTransactions}
+                          </td>
+                          <td class="py-3 px-4 sm:px-0">
+                            <div class="flex gap-2">
+                              <button onclick="viewCustomer('${customer.id}')" class="text-blue-400 hover:text-blue-300 p-1" title="View Details">
+                                <i class="fas fa-eye text-xs sm:text-sm"></i>
+                              </button>
+                              ${
+                                customer.phone
+                                  ? `<button onclick="sendSMSReminder('${customer.id}')" class="text-green-400 hover:text-green-300 p-1" title="Send SMS Reminder">
+                                    <i class="fas fa-envelope text-xs sm:text-sm"></i>
+                                  </button>`
+                                  : ""
+                              }
+                              <button onclick="reactivateCustomer('${customer.id}')" class="text-purple-400 hover:text-purple-300 p-1" title="Mark as Reactivated">
+                                <i class="fas fa-user-check text-xs sm:text-sm"></i>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>`;
+                      })
+                      .join("")}
+                  </tbody>
+                </table>
+              </div>
+            </div>`
+          : `<div class="text-center py-8 sm:py-12 bg-gray-800/30 rounded-xl">
+              <div class="w-12 h-12 sm:w-16 sm:h-16 mx-auto bg-green-500/20 rounded-full flex items-center justify-center mb-3 sm:mb-4">
+                <i class="fas fa-check-circle text-green-400 text-xl sm:text-2xl"></i>
+              </div>
+              <h3 class="text-base sm:text-lg font-semibold mb-2">No Dormant Customers</h3>
+              <p class="text-xs sm:text-sm text-gray-400">All customers have been active in the last 30 days</p>
+            </div>`
+      }
+    </div>
+    
+    ${
+      dormantCount > 0
+        ? `<div class="glass-panel rounded-2xl p-4 sm:p-6">
+          <h3 class="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Reactivation Suggestions</h3>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+            <div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700">
+              <i class="fas fa-gift text-purple-400 text-xl sm:text-2xl mb-2"></i>
+              <h4 class="font-medium text-sm sm:text-base mb-1">Offer Incentives</h4>
+              <p class="text-xs text-gray-400">Consider offering bonuses or reduced fees to dormant customers</p>
+            </div>
+            <div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700">
+              <i class="fas fa-envelope text-blue-400 text-xl sm:text-2xl mb-2"></i>
+              <h4 class="font-medium text-sm sm:text-base mb-1">Send Reminders</h4>
+              <p class="text-xs text-gray-400">Send personalized SMS or email reminders to encourage activity</p>
+            </div>
+            <div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700">
+              <i class="fas fa-chart-line text-green-400 text-xl sm:text-2xl mb-2"></i>
+              <h4 class="font-medium text-sm sm:text-base mb-1">Track Engagement</h4>
+              <p class="text-xs text-gray-400">Monitor reactivation rates and adjust strategies accordingly</p>
+            </div>
+          </div>
+        </div>`
+        : ""
+    }
+  </div>`;
+
   container.innerHTML = html;
   document.getElementById("pageTitle").textContent = "Dormant Customers";
 }
@@ -4009,12 +4224,26 @@ async function sendSMSReminder(customerId) {
 async function sendBulkSMSToDormantCustomers() {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
   const dormantCustomers = state.customers
     .filter((c) => {
+      // Only approved transactions
       const customerTransactions = state.transactions.filter(
-        (t) => t.customerId === c.id,
+        (t) => t.customerId === c.id && t.status === "approved",
       );
-      if (customerTransactions.length === 0) return true;
+
+      // Check join date
+      const joinedDate = new Date(c.joined || c.createdAt || Date.now());
+      const daysSinceJoined = Math.floor(
+        (new Date() - joinedDate) / (1000 * 60 * 60 * 24),
+      );
+      const isNewCustomer = daysSinceJoined <= 30;
+
+      if (customerTransactions.length === 0) {
+        // Only dormant if NOT a new customer
+        return !isNewCustomer;
+      }
+
       const sortedTransactions = [...customerTransactions].sort(
         (a, b) => new Date(b.date) - new Date(a.date),
       );
@@ -4022,6 +4251,7 @@ async function sendBulkSMSToDormantCustomers() {
       return lastDate < thirtyDaysAgo;
     })
     .filter((c) => c.phone);
+
   if (dormantCustomers.length === 0) {
     showNotification("No dormant customers with phone numbers", "info");
     return;
@@ -4056,13 +4286,24 @@ async function sendBulkSMSToDormantCustomers() {
 function exportDormantCustomers() {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
   const dormantCustomers = state.customers
     .map((customer) => {
       const customerTransactions = state.transactions.filter(
-        (t) => t.customerId === customer.id,
+        (t) => t.customerId === customer.id && t.status === "approved",
       );
+
+      const joinedDate = new Date(
+        customer.joined || customer.createdAt || Date.now(),
+      );
+      const daysSinceJoined = Math.floor(
+        (new Date() - joinedDate) / (1000 * 60 * 60 * 24),
+      );
+      const isNewCustomer = daysSinceJoined <= 30;
+
       let lastTransactionDate = null,
         daysDormant = "Never";
+
       if (customerTransactions.length > 0) {
         const sortedTransactions = [...customerTransactions].sort(
           (a, b) => new Date(b.date) - new Date(a.date),
@@ -4072,8 +4313,13 @@ function exportDormantCustomers() {
         const diffTime = Math.abs(new Date() - lastDate);
         daysDormant = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
       }
-      const isDormant = !lastTransactionDate || daysDormant > 30;
-      if (isDormant)
+
+      // Same logic as render function
+      const isDormant =
+        (lastTransactionDate && daysDormant > 30) ||
+        (!lastTransactionDate && !isNewCustomer);
+
+      if (isDormant) {
         return {
           Name: customer.name,
           Email: customer.email,
@@ -4084,14 +4330,18 @@ function exportDormantCustomers() {
             ? formatDate(lastTransactionDate)
             : "Never",
           "Days Dormant":
-            daysDormant === "Never" ? "Never" : `${daysDormant} days`,
+            daysDormant === "Never"
+              ? `Joined ${daysSinceJoined} days ago`
+              : `${daysDormant} days`,
           "Total Transactions": customerTransactions.length,
           "Added By": customer.addedBy?.staffName || "System",
           "Joined Date": formatSimpleDate(customer.joined),
         };
+      }
       return null;
     })
     .filter((c) => c !== null);
+
   if (dormantCustomers.length === 0) {
     showNotification("No dormant customers to export", "info");
     return;
