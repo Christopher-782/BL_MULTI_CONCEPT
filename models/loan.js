@@ -21,7 +21,7 @@ const loanSchema = new mongoose.Schema(
     repaymentStartDate: { type: Date, required: true },
     repaymentEndDate: { type: Date, required: true },
 
-    // 🔴 ENHANCED: Repayments with interest tracking per installment
+    // ENHANCED: Repayments with interest tracking per installment
     repayments: [
       {
         id: { type: String },
@@ -34,7 +34,7 @@ const loanSchema = new mongoose.Schema(
           default: "pending",
         },
         paidBy: { type: String },
-        // 🔴 NEW: Track principal/interest breakdown per installment
+        // NEW: Track principal/interest breakdown per installment
         principalPortion: { type: Number, default: 0 }, // Principal in this payment
         interestPortion: { type: Number, default: 0 }, // Interest in this payment
         interestRevenue: { type: Number, default: 0 }, // Revenue recognized (same as interestPortion)
@@ -67,7 +67,7 @@ const loanSchema = new mongoose.Schema(
     amountRepaid: { type: Number, default: 0 }, // Total paid (principal + interest)
     outstandingBalance: { type: Number, default: 0 },
 
-    // 🔴 NEW: Track cumulative amounts from actual payments
+    // NEW: Track cumulative amounts from actual payments
     principalRepaidToDate: { type: Number, default: 0 }, // Principal actually collected
     interestEarnedToDate: { type: Number, default: 0 }, // Interest actually earned (revenue)
 
