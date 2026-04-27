@@ -1826,7 +1826,7 @@ function initTransactionSearch(customersData) {
 async function handleNewTransaction(e) {
   e.preventDefault();
   const formData = new FormData(e.target);
-  const customerId = Number(formData.get("customerId"));
+  const customerId = formData.get("customerId");
   const customer = state.customers.find((c) => c.id === customerId);
   const type = formData.get("type");
   const amount = parseFloat(formData.get("amount"));
