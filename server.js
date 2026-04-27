@@ -17,9 +17,6 @@ mongoose
 app.use(cors());
 app.use(express.json());
 app.use(express.static("public"));
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
-});
 
 // Routes
 app.use("/", staffRouter);
@@ -27,6 +24,10 @@ app.use("/", customerRouter);
 app.use("/", transactionRouter);
 app.use("/", loanRoutes);
 app.use("/", reportRoutes);
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
 
 const Staff = require("./models/staff");
 
