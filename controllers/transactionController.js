@@ -4,33 +4,41 @@ const smsService = require("../services/smsService");
 
 /**
  * HELPER: Robust Customer Lookup
- * Solves the 404 by handling String/Number mismatches and id vs _id.
+ * Now searches: custom 'id', 'customerNumber', and standard '_id'
  */
 async function findCustomerRobustly(identifier) {
   if (!identifier) return null;
 
-  // 1. Try searching by the custom 'id' field as a string (e.g., "1")
+  // 1. Try searching by the custom 'id' field (String or Number)
   let customer = await Customer.findOne({ id: identifier.toString() });
   if (customer) return customer;
 
-  // 2. Try searching by the custom 'id' field as a number (e.g., 1)
   const numericId = Number(identifier);
   if (!isNaN(numericId)) {
     customer = await Customer.findOne({ id: numericId });
     if (customer) return customer;
   }
 
+  // 2. NEW: Try searching by the 'customerNumber' field (This is what your UI uses!)
+  const numericCustNum = Number(identifier);
+  if (!isNaN(numericCustNum)) {
+    customer = await Customer.findOne({ customerNumber: numericCustNum });
+    if (customer) return customer;
+  }
+  // Also try customerNumber as a string just in case
+  customer = await Customer.findOne({ customerNumber: identifier.toString() });
+  if (customer) return customer;
+
   // 3. Try searching by the standard MongoDB '_id'
   try {
     customer = await Customer.findById(identifier);
     if (customer) return customer;
   } catch (err) {
-    // Ignore error if identifier isn't a valid ObjectId
+    // Ignore error
   }
 
   return null;
 }
-
 // ==========================================================
 // CREATE TRANSACTION (Deposit/Withdrawal Request)
 // ==========================================================
