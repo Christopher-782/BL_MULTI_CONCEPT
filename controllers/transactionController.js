@@ -4,17 +4,16 @@ const smsService = require("../services/smsService");
 
 /**
  * HELPER: Robust Customer Lookup
- * This solves the 404 issue by handling String/Number mismatches
- * and id vs _id mismatches.
+ * Solves the 404 by handling String/Number mismatches and id vs _id.
  */
 async function findCustomerRobustly(identifier) {
   if (!identifier) return null;
 
-  // 1. Try searching by the custom 'id' field as a string
+  // 1. Try searching by the custom 'id' field as a string (e.g., "1")
   let customer = await Customer.findOne({ id: identifier.toString() });
   if (customer) return customer;
 
-  // 2. Try searching by the custom 'id' field as a number
+  // 2. Try searching by the custom 'id' field as a number (e.g., 1)
   const numericId = Number(identifier);
   if (!isNaN(numericId)) {
     customer = await Customer.findOne({ id: numericId });
@@ -44,24 +43,26 @@ exports.createTransaction = async (req, res) => {
       type,
       amount,
       charges,
-      netAmount,
       description,
       requestedBy,
     } = req.body;
 
-    // Validation
+    // 1. VALIDATION
     if (!customerId || !amount || !type) {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    // DEBUG LOG (Check your server terminal!)
+    // Convert inputs to numbers immediately for safety
+    const numAmount = Number(amount);
+    const numCharges = Number(charges) || 0;
+    const numNetAmount = numAmount - numCharges;
+
     console.log(
-      `[Transaction] Attempting to create ${type} for Customer ID: ${customerId} (Type: ${typeof customerId})`,
+      `[Transaction] New ${type} request for CustomerID: ${customerId}. Amount: ${numAmount}, Net: ${numNetAmount}`,
     );
 
-    // Find customer using our robust helper
+    // 2. FIND CUSTOMER
     const customer = await findCustomerRobustly(customerId);
-
     if (!customer) {
       console.error(
         `[Transaction Error] Customer not found for ID: ${customerId}`,
@@ -69,31 +70,29 @@ exports.createTransaction = async (req, res) => {
       return res.status(404).json({ error: "Customer not found" });
     }
 
-    // Check balance for withdrawals
+    // 3. CHECK BALANCE FOR WITHDRAWALS
     if (type === "withdrawal") {
       const availableBalance = customer.cashBalance || customer.balance || 0;
-      const totalDeduction = Number(netAmount);
-
-      if (totalDeduction > availableBalance) {
+      if (numNetAmount > availableBalance) {
         return res.status(400).json({
           error: "Insufficient funds",
           availableBalance,
-          requestedAmount: totalDeduction,
-          shortfall: totalDeduction - availableBalance,
+          requestedAmount: numNetAmount,
+          shortfall: numNetAmount - availableBalance,
         });
       }
     }
 
-    // Create transaction record
+    // 4. CREATE TRANSACTION RECORD
     const transaction = new Transaction({
       id: "TXN" + Date.now() + Math.random().toString(36).substr(2, 4),
-      customerId: customer.id || customer._id.toString(), // Ensure we store the correct ID type
+      customerId: customer.id || customer._id.toString(),
       customerName,
       customerPhone,
       type,
-      amount: Number(amount),
-      charges: Number(charges) || 0,
-      netAmount: Number(netAmount),
+      amount: numAmount,
+      charges: numCharges,
+      netAmount: numNetAmount,
       description: description || "",
       status: "pending",
       requestedBy: requestedBy || "System",
@@ -138,14 +137,14 @@ exports.approveTransaction = async (req, res) => {
       return res.status(400).json({ error: "Transaction already processed" });
     }
 
-    // 2. Find the customer using robust lookup
+    // 2. Find the customer using the robust helper
     const customer = await findCustomerRobustly(transaction.customerId);
     if (!customer) {
       return res.status(404).json({ error: "Customer not found" });
     }
 
     const charges = transaction.charges || 0;
-    const netAmount = transaction.netAmount || transaction.amount - charges;
+    const netAmount = transaction.netAmount;
 
     // 3. Calculate new balance
     let newBalance;
@@ -172,21 +171,23 @@ exports.approveTransaction = async (req, res) => {
     await transaction.save();
 
     // 5. Update customer balance and stats
-    await Customer.findOneAndUpdate(
-      { id: customer.id }, // Update using the robustly found customer's ID
-      {
-        $set: {
-          cashBalance: newBalance,
-          balance: newBalance,
-        },
-        $inc: {
-          totalTransactions: 1,
-          totalDeposits: transaction.type === "deposit" ? netAmount : 0,
-          totalWithdrawals: transaction.type === "withdrawal" ? netAmount : 0,
-          totalChargesPaid: charges,
-        },
+    // We use the exact field we found (id or _id) to ensure the update hits the right document
+    const updateQuery = customer.id
+      ? { id: customer.id }
+      : { _id: customer._id };
+
+    await Customer.findOneAndUpdate(updateQuery, {
+      $set: {
+        cashBalance: newBalance,
+        balance: newBalance,
       },
-    );
+      $inc: {
+        totalTransactions: 1,
+        totalDeposits: transaction.type === "deposit" ? netAmount : 0,
+        totalWithdrawals: transaction.type === "withdrawal" ? netAmount : 0,
+        totalChargesPaid: charges,
+      },
+    });
 
     // 6. Send SMS Alert
     if (customer.phone) {
@@ -208,7 +209,7 @@ exports.approveTransaction = async (req, res) => {
             charges,
           );
         }
-        console.log(`✅ SMS sent to ${customer.phone}`);
+        console.log(`✅ SMS Alert sent to ${customer.phone}`);
       } catch (smsError) {
         console.error("❌ SMS failed:", smsError.message);
       }
@@ -342,7 +343,7 @@ exports.getTransactionStats = async (req, res) => {
 // ==========================================================
 module.exports = {
   createTransaction: exports.createTransaction,
-  updateTransactionStatus: exports.approveTransaction, // Alias for router
+  updateTransactionStatus: exports.approveTransaction,
   getAllTransactions: exports.getAllTransactions,
   getTransactionStats: exports.getTransactionStats,
   approveTransaction: exports.approveTransaction,
