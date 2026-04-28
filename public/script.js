@@ -1901,16 +1901,18 @@ async function handleNewTransaction(e) {
     netAmount: remainingForCustomer,
     loanDeduction: loanDeduction > 0 ? loanDeduction : undefined,
     loanRepaymentInfo: loanRepaymentInfo,
-    description:
-      loanDeduction > 0
-        ? `Deposit ₦${amount.toLocaleString()}: ₦${loanDeduction.toLocaleString()} auto-deducted for loan repayment. Available: ₦${remainingForCustomer.toLocaleString()}`
-        : "",
+    description: description || "",
     status: "pending",
-    requestedBy: state.currentUser.name,
+
+    // FIX: Send staff info explicitly
+    requestedBy: state.currentUser.name, // "Frank O"
+    requestedById: state.currentUser.id, // <-- MUST SEND THIS
+    staffName: state.currentUser.name, // "Frank O"
+    staffId: state.currentUser.id, // <-- MUST SEND THIS
+
     requestedAt: new Date(),
     date: new Date(),
   };
-
   try {
     await api.post("/transactions", txnData);
     await loadAllData();
@@ -4490,12 +4492,16 @@ function renderHistory(container) {
 function renderAdminTransactions(container) {
   const pending = state.transactions.filter((t) => t.status === "pending");
   const others = state.transactions.filter((t) => t.status !== "pending");
+
+  // ==================== FIX: Group by TRANSACTION CREATOR, not customer registrant ====================
   const pendingByStaff = {};
   pending.forEach((txn) => {
-    const customer = state.customers.find((c) => c.id === txn.customerId);
-    const staffId = customer?.addedBy?.staffId || "unknown";
-    const staffName = customer?.addedBy?.staffName || "Unknown Staff";
-    if (!pendingByStaff[staffId])
+    // Use ONLY the transaction's own staff fields — NEVER fall back to customer.addedBy
+    // The staff who created the transaction is stored in requestedById/staffId
+    const staffId = txn.requestedById || txn.staffId || "unknown";
+    const staffName = txn.staffName || txn.requestedBy || "Unknown Staff";
+
+    if (!pendingByStaff[staffId]) {
       pendingByStaff[staffId] = {
         staffId,
         staffName,
@@ -4503,57 +4509,247 @@ function renderAdminTransactions(container) {
         totalAmount: 0,
         totalCharges: 0,
       };
+    }
     pendingByStaff[staffId].transactions.push(txn);
     pendingByStaff[staffId].totalAmount += txn.amount;
     pendingByStaff[staffId].totalCharges += txn.charges || 0;
   });
+
   const staffPendingList = Object.values(pendingByStaff).sort(
     (a, b) => b.totalAmount - a.totalAmount,
   );
+
   const html = `<div class="space-y-4 sm:space-y-6 animate-fade-in px-4 sm:px-0">${
     staffPendingList.length > 0
-      ? `<div class="glass-panel rounded-2xl p-4 sm:p-6 border-l-4 border-yellow-500"><h3 class="text-base sm:text-lg font-semibold mb-3 sm:mb-4 flex items-center gap-2"><i class="fas fa-users text-yellow-500 text-sm sm:text-base"></i>Pending Approvals by Staff</h3><div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-6">${staffPendingList
-          .map(
-            (staff) =>
-              `<div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700 hover:border-yellow-500/50 transition-all"><div class="flex items-center justify-between mb-3"><div class="flex items-center gap-2 sm:gap-3"><div class="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center font-bold text-white text-xs sm:text-sm">${staff.staffName
-                .split(" ")
-                .map((n) => n[0])
-                .join("")
-                .substring(0, 2)
-                .toUpperCase()}</div><div><h4 class="font-semibold text-sm sm:text-base">${staff.staffName}</h4><p class="text-xs text-gray-400">${staff.transactions.length} pending</p></div></div><div class="text-right"><span class="text-yellow-400 font-bold text-xs sm:text-sm block">₦${staff.totalAmount.toLocaleString()}</span><span class="text-xs text-red-400">Charges: ₦${staff.totalCharges.toLocaleString()}</span></div></div><div class="flex gap-2 mt-3"><button onclick="viewStaffPendingTransactions('${staff.staffId}')" class="flex-1 px-2 sm:px-3 py-2 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg text-xs sm:text-sm transition-colors">View</button><button onclick="approveAllStaffTransactions('${staff.staffId}')" class="flex-1 px-2 sm:px-3 py-2 bg-green-600/20 text-green-400 hover:bg-green-600 hover:text-white rounded-lg text-xs sm:text-sm transition-colors">Approve All</button></div></div>`,
-          )
-          .join(
-            "",
-          )}</div><div class="flex justify-end mt-4 pt-4 border-t border-gray-700"><button onclick="approveAllPendingTransactions()" class="px-4 sm:px-6 py-2 sm:py-3 bg-green-600 hover:bg-green-500 rounded-lg transition-colors flex items-center gap-2 text-sm sm:text-base"><i class="fas fa-check-double"></i>Approve All (${pending.length})</button></div></div>`
-      : `<div class="glass-panel rounded-2xl p-8 sm:p-12 text-center"><div class="w-12 h-12 sm:w-16 sm:h-16 mx-auto bg-green-500/20 rounded-full flex items-center justify-center mb-3 sm:mb-4"><i class="fas fa-check-double text-green-400 text-xl sm:text-2xl"></i></div><h3 class="text-base sm:text-lg font-semibold mb-2">All Caught Up!</h3><p class="text-xs sm:text-sm text-gray-400">No pending transactions requiring approval</p></div>`
+      ? `<div class="glass-panel rounded-2xl p-4 sm:p-6 border-l-4 border-yellow-500">
+          <h3 class="text-base sm:text-lg font-semibold mb-3 sm:mb-4 flex items-center gap-2">
+            <i class="fas fa-users text-yellow-500 text-sm sm:text-base"></i>
+            Pending Approvals by Staff
+          </h3>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-6">
+            ${staffPendingList
+              .map(
+                (staff) =>
+                  `<div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700 hover:border-yellow-500/50 transition-all">
+                    <div class="flex items-center justify-between mb-3">
+                      <div class="flex items-center gap-2 sm:gap-3">
+                        <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center font-bold text-white text-xs sm:text-sm">
+                          ${staff.staffName
+                            .split(" ")
+                            .map((n) => n[0])
+                            .join("")
+                            .substring(0, 2)
+                            .toUpperCase()}
+                        </div>
+                        <div>
+                          <h4 class="font-semibold text-sm sm:text-base">${staff.staffName}</h4>
+                          <p class="text-xs text-gray-400">${staff.transactions.length} pending</p>
+                        </div>
+                      </div>
+                      <div class="text-right">
+                        <span class="text-yellow-400 font-bold text-xs sm:text-sm block">₦${staff.totalAmount.toLocaleString()}</span>
+                        <span class="text-xs text-red-400">Charges: ₦${staff.totalCharges.toLocaleString()}</span>
+                      </div>
+                    </div>
+                    <div class="flex gap-2 mt-3">
+                      <button onclick="viewStaffPendingTransactions('${staff.staffId}')" class="flex-1 px-2 sm:px-3 py-2 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg text-xs sm:text-sm transition-colors">
+                        View
+                      </button>
+                      <button onclick="approveAllStaffTransactions('${staff.staffId}')" class="flex-1 px-2 sm:px-3 py-2 bg-green-600/20 text-green-400 hover:bg-green-600 hover:text-white rounded-lg text-xs sm:text-sm transition-colors">
+                        Approve All
+                      </button>
+                    </div>
+                  </div>`,
+              )
+              .join("")}
+          </div>
+          <div class="flex justify-end mt-4 pt-4 border-t border-gray-700">
+            <button onclick="approveAllPendingTransactions()" class="px-4 sm:px-6 py-2 sm:py-3 bg-green-600 hover:bg-green-500 rounded-lg transition-colors flex items-center gap-2 text-sm sm:text-base">
+              <i class="fas fa-check-double"></i>
+              Approve All (${pending.length})
+            </button>
+          </div>
+        </div>`
+      : `<div class="glass-panel rounded-2xl p-8 sm:p-12 text-center">
+          <div class="w-12 h-12 sm:w-16 sm:h-16 mx-auto bg-green-500/20 rounded-full flex items-center justify-center mb-3 sm:mb-4">
+            <i class="fas fa-check-double text-green-400 text-xl sm:text-2xl"></i>
+          </div>
+          <h3 class="text-base sm:text-lg font-semibold mb-2">All Caught Up!</h3>
+          <p class="text-xs sm:text-sm text-gray-400">No pending transactions requiring approval</p>
+        </div>`
   }${
     pending.length > 0
-      ? `<div class="glass-panel rounded-2xl p-4 sm:p-6"><h3 class="text-base sm:text-lg font-semibold mb-3 sm:mb-4">All Pending Transactions</h3><div class="space-y-3 sm:space-y-4">${pending
-          .map((txn) => {
-            const customer = state.customers.find(
-                (c) => c.id === txn.customerId,
-              ),
-              staffName = customer?.addedBy?.staffName || "Unknown Staff",
-              charges = txn.charges || 0,
-              netAmount = txn.amount - charges,
-              hasSMS = customer?.phone ? "📱" : "⚠️";
-            return `<div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700 hover:border-yellow-500/50 transition-all" id="txn-${txn.id}"><div class="flex flex-col lg:flex-row justify-between items-start gap-3 sm:gap-4"><div class="flex items-start gap-3 sm:gap-4 flex-1"><div class="w-8 h-8 sm:w-12 sm:h-12 rounded-full ${txn.type === "deposit" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"} flex items-center justify-center flex-shrink-0"><i class="fas fa-arrow-${txn.type === "deposit" ? "down" : "up"} text-sm sm:text-xl"></i></div><div class="flex-1"><div class="flex flex-wrap items-center gap-2"><p class="font-semibold text-sm sm:text-lg">₦${(txn.amount || 0).toLocaleString()}</p><span class="px-2 py-0.5 ${txn.type === "deposit" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"} rounded-full text-xs font-medium">${txn.type}</span><span class="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full text-xs">${staffName} ${hasSMS}</span></div><p class="text-xs sm:text-sm text-gray-300 mt-1">${txn.customerName}</p><div class="flex items-center gap-2 text-xs text-gray-400 mt-1"><i class="fas fa-calendar-alt"></i><span>${formatDate(txn.date)}</span></div></div></div><div class="flex-1 lg:max-w-xs"><div class="bg-gray-900/50 p-2 sm:p-3 rounded-lg"><h4 class="text-xs font-medium text-gray-400 mb-2">BREAKDOWN</h4><div class="space-y-1"><div class="flex justify-between text-xs sm:text-sm"><span class="text-gray-400">Gross:</span><span class="font-mono ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">${txn.type === "deposit" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()}</span></div>${charges > 0 ? `<div class="flex justify-between text-xs sm:text-sm"><span class="text-gray-400">Charge:</span><span class="font-mono text-red-400">-₦${charges.toLocaleString()}</span></div><div class="flex justify-between text-xs sm:text-sm pt-1 border-t border-gray-700"><span class="text-gray-300 font-medium">Net:</span><span class="font-mono text-blue-400 font-bold">₦${netAmount.toLocaleString()}</span></div>` : `<div class="flex justify-between text-xs sm:text-sm pt-1 border-t border-gray-700"><span class="text-gray-300 font-medium">Net:</span><span class="font-mono text-blue-400 font-bold">₦${netAmount.toLocaleString()}</span></div>`}</div></div></div><div class="flex gap-2 w-full lg:w-auto mt-2 lg:mt-0"><button onclick="processTransaction('${txn.id}', 'approved')" class="flex-1 lg:flex-none px-3 sm:px-4 py-2 bg-green-500/20 text-green-400 hover:bg-green-500 hover:text-white rounded-lg transition-colors flex items-center justify-center gap-2 text-xs sm:text-sm"><i class="fas fa-check"></i><span>Approve</span></button><button onclick="processTransaction('${txn.id}', 'rejected')" class="flex-1 lg:flex-none px-3 sm:px-4 py-2 bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white rounded-lg transition-colors flex items-center justify-center gap-2 text-xs sm:text-sm"><i class="fas fa-times"></i><span>Reject</span></button></div></div>${txn.description ? `<div class="mt-3 pt-3 border-t border-gray-700"><div class="flex items-start gap-2"><i class="fas fa-align-left text-gray-500 text-xs mt-1"></i><div class="flex-1"><p class="text-xs text-gray-400 mb-1">Description:</p><p class="text-xs sm:text-sm text-gray-300 bg-gray-900/50 p-2 rounded-lg break-words">${txn.description}</p></div></div></div>` : ""}</div>`;
-          })
-          .join("")}</div></div>`
+      ? `<div class="glass-panel rounded-2xl p-4 sm:p-6">
+          <h3 class="text-base sm:text-lg font-semibold mb-3 sm:mb-4">All Pending Transactions</h3>
+          <div class="space-y-3 sm:space-y-4">
+            ${pending
+              .map((txn) => {
+                const charges = txn.charges || 0;
+                const netAmount = txn.amount - charges;
+                const customer = state.customers.find(
+                  (c) => c.id === txn.customerId,
+                );
+                const staffName =
+                  txn.staffName || txn.requestedBy || "Unknown Staff";
+                const hasSMS = customer?.phone ? "📱" : "⚠️";
+                return `<div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700 hover:border-yellow-500/50 transition-all" id="txn-${txn.id}">
+                  <div class="flex flex-col lg:flex-row justify-between items-start gap-3 sm:gap-4">
+                    <div class="flex items-start gap-3 sm:gap-4 flex-1">
+                      <div class="w-8 h-8 sm:w-12 sm:h-12 rounded-full ${
+                        txn.type === "deposit"
+                          ? "bg-green-500/20 text-green-400"
+                          : "bg-orange-500/20 text-orange-400"
+                      } flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-arrow-${
+                          txn.type === "deposit" ? "down" : "up"
+                        } text-sm sm:text-xl"></i>
+                      </div>
+                      <div class="flex-1">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <p class="font-semibold text-sm sm:text-lg">₦${(
+                            txn.amount || 0
+                          ).toLocaleString()}</p>
+                          <span class="px-2 py-0.5 ${
+                            txn.type === "deposit"
+                              ? "bg-green-500/20 text-green-400"
+                              : "bg-orange-500/20 text-orange-400"
+                          } rounded-full text-xs font-medium">${txn.type}</span>
+                          <span class="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full text-xs">${staffName} ${hasSMS}</span>
+                        </div>
+                        <p class="text-xs sm:text-sm text-gray-300 mt-1">${txn.customerName}</p>
+                        <div class="flex items-center gap-2 text-xs text-gray-400 mt-1">
+                          <i class="fas fa-calendar-alt"></i>
+                          <span>${formatDate(txn.date)}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="flex-1 lg:max-w-xs">
+                      <div class="bg-gray-900/50 p-2 sm:p-3 rounded-lg">
+                        <h4 class="text-xs font-medium text-gray-400 mb-2">BREAKDOWN</h4>
+                        <div class="space-y-1">
+                          <div class="flex justify-between text-xs sm:text-sm">
+                            <span class="text-gray-400">Gross:</span>
+                            <span class="font-mono ${
+                              txn.type === "deposit"
+                                ? "text-green-400"
+                                : "text-orange-400"
+                            }">${txn.type === "deposit" ? "+" : "-"}₦${(
+                              txn.amount || 0
+                            ).toLocaleString()}</span>
+                          </div>
+                          ${charges > 0 ? `<div class="flex justify-between text-xs sm:text-sm"><span class="text-gray-400">Charge:</span><span class="font-mono text-red-400">-₦${charges.toLocaleString()}</span></div><div class="flex justify-between text-xs sm:text-sm pt-1 border-t border-gray-700"><span class="text-gray-300 font-medium">Net:</span><span class="font-mono text-blue-400 font-bold">₦${netAmount.toLocaleString()}</span></div>` : `<div class="flex justify-between text-xs sm:text-sm pt-1 border-t border-gray-700"><span class="text-gray-300 font-medium">Net:</span><span class="font-mono text-blue-400 font-bold">₦${netAmount.toLocaleString()}</span></div>`}
+                        </div>
+                      </div>
+                    </div>
+                    <div class="flex gap-2 w-full lg:w-auto mt-2 lg:mt-0">
+                      <button onclick="processTransaction('${txn.id}', 'approved')" class="flex-1 lg:flex-none px-3 sm:px-4 py-2 bg-green-500/20 text-green-400 hover:bg-green-500 hover:text-white rounded-lg transition-colors flex items-center justify-center gap-2 text-xs sm:text-sm">
+                        <i class="fas fa-check"></i><span>Approve</span>
+                      </button>
+                      <button onclick="processTransaction('${txn.id}', 'rejected')" class="flex-1 lg:flex-none px-3 sm:px-4 py-2 bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white rounded-lg transition-colors flex items-center justify-center gap-2 text-xs sm:text-sm">
+                        <i class="fas fa-times"></i><span>Reject</span>
+                      </button>
+                    </div>
+                  </div>
+                  ${txn.description ? `<div class="mt-3 pt-3 border-t border-gray-700"><div class="flex items-start gap-2"><i class="fas fa-align-left text-gray-500 text-xs mt-1"></i><div class="flex-1"><p class="text-xs text-gray-400 mb-1">Description:</p><p class="text-xs sm:text-sm text-gray-300 bg-gray-900/50 p-2 rounded-lg break-words">${txn.description}</p></div></div></div>` : ""}
+                </div>`;
+              })
+              .join("")}
+          </div>
+        </div>`
       : ""
-  }<div class="glass-panel rounded-2xl p-4 sm:p-6"><div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4"><h3 class="text-base sm:text-lg font-semibold">Transaction History</h3><div class="flex gap-2 w-full sm:w-auto"><select id="staffTransactionFilter" onchange="filterTransactionsByStaff()" class="flex-1 sm:flex-none px-2 sm:px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs sm:text-sm text-white"><option value="">All Staff</option>${state.staff.map((s) => `<option value="${s.id}">${s.name}</option>`).join("")}</select><select id="sortTransactions" onchange="sortTransactions()" class="flex-1 sm:flex-none px-2 sm:px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs sm:text-sm text-white"><option value="newest">Newest</option><option value="oldest">Oldest</option><option value="amount-high">Amount High</option><option value="amount-low">Amount Low</option></select></div></div><div class="overflow-x-auto -mx-4 sm:mx-0"><div class="inline-block min-w-full align-middle"><table class="min-w-full divide-y divide-gray-700" id="transactionsTable"><thead><tr class="text-left text-gray-400 text-xs sm:text-sm"><th class="pb-3 px-4 sm:px-0 hidden md:table-cell">ID</th><th class="pb-3 px-4 sm:px-0">Customer</th><th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Staff</th><th class="pb-3 px-4 sm:px-0">Type</th><th class="pb-3 px-4 sm:px-0">Gross</th><th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Charges</th><th class="pb-3 px-4 sm:px-0">Net</th><th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Date</th><th class="pb-3 px-4 sm:px-0">Status</th><th class="pb-3 px-4 sm:px-0">Actions</th> </thead><tbody class="divide-y divide-gray-800" id="transactionsTableBody">${others
-    .map((txn) => {
-      const customer = state.customers.find((c) => c.id === txn.customerId),
-        staffName = customer?.addedBy?.staffName || "System",
-        staffId = customer?.addedBy?.staffId || "system",
-        charges = txn.charges || 0,
-        netAmount = txn.amount - charges;
-      return `<tr class="hover:bg-gray-800/30 transition-colors transaction-row" data-staff="${staffId}"><td class="py-3 px-4 sm:px-0 font-mono text-xs text-gray-500 hidden md:table-cell">${txn.id.substring(0, 8)}...  </div><td class="py-3 px-4 sm:px-0 text-xs sm:text-sm break-words max-w-[120px] sm:max-w-none">${txn.customerName}  </div><td class="py-3 px-4 sm:px-0 hidden sm:table-cell"><span class="px-2 py-1 bg-purple-500/20 text-purple-400 rounded-full text-xs">${staffName}</span>  </div><td class="py-3 px-4 sm:px-0"><span class="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm"><i class="fas fa-arrow-${txn.type === "deposit" ? "down text-green-400" : "up text-orange-400"}"></i>${txn.type}</span>  </div><td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">${txn.type === "deposit" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-red-400 hidden sm:table-cell">${charges > 0 ? `-₦${charges.toLocaleString()}` : "-"}  </div><td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-blue-400">₦${netAmount.toLocaleString()}  </div><td class="py-3 px-4 sm:px-0 hidden md:table-cell text-xs sm:text-sm text-gray-300"><div class="flex items-center gap-1"><i class="fas fa-calendar-alt text-gray-500 text-xs"></i>${formatDate(txn.date)}</div>  </div><td class="py-3 px-4 sm:px-0"><span class="px-2 py-1 rounded text-xs ${getStatusStyle(txn.status)}">${txn.status}</span>  </div><td class="py-3 px-4 sm:px-0"><button onclick="viewTransactionDetails('${txn.id}')" class="text-blue-400 hover:text-blue-300 p-1" title="View Details"><i class="fas fa-eye text-xs sm:text-sm"></i></button>  </div>  </div>`;
-    })
-    .join("")}</tbody>   </div></div></div></div>`;
+  }
+  <div class="glass-panel rounded-2xl p-4 sm:p-6">
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+      <h3 class="text-base sm:text-lg font-semibold">Transaction History</h3>
+      <div class="flex gap-2 w-full sm:w-auto">
+        <select id="staffTransactionFilter" onchange="filterTransactionsByStaff()" class="flex-1 sm:flex-none px-2 sm:px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs sm:text-sm text-white">
+          <option value="">All Staff</option>
+          ${state.staff.map((s) => `<option value="${s.id}">${s.name}</option>`).join("")}
+        </select>
+        <select id="sortTransactions" onchange="sortTransactions()" class="flex-1 sm:flex-none px-2 sm:px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs sm:text-sm text-white">
+          <option value="newest">Newest</option>
+          <option value="oldest">Oldest</option>
+          <option value="amount-high">Amount High</option>
+          <option value="amount-low">Amount Low</option>
+        </select>
+      </div>
+    </div>
+    <div class="overflow-x-auto -mx-4 sm:mx-0">
+      <div class="inline-block min-w-full align-middle">
+        <table class="min-w-full divide-y divide-gray-700" id="transactionsTable">
+          <thead>
+            <tr class="text-left text-gray-400 text-xs sm:text-sm">
+              <th class="pb-3 px-4 sm:px-0 hidden md:table-cell">ID</th>
+              <th class="pb-3 px-4 sm:px-0">Customer</th>
+              <th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Staff</th>
+              <th class="pb-3 px-4 sm:px-0">Type</th>
+              <th class="pb-3 px-4 sm:px-0">Gross</th>
+              <th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Charges</th>
+              <th class="pb-3 px-4 sm:px-0">Net</th>
+              <th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Date</th>
+              <th class="pb-3 px-4 sm:px-0">Status</th>
+              <th class="pb-3 px-4 sm:px-0">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800" id="transactionsTableBody">
+            ${others
+              .map((txn) => {
+                const customer = state.customers.find(
+                  (c) => c.id === txn.customerId,
+                );
+                // ==================== FIX: Use transaction's staff fields, not customer.addedBy ====================
+                const staffName =
+                  txn.staffName || txn.requestedBy || "Unknown Staff";
+                const staffId = txn.requestedById || txn.staffId || "unknown";
+                const charges = txn.charges || 0;
+                const netAmount = txn.amount - charges;
+                return `<tr class="hover:bg-gray-800/30 transition-colors transaction-row" data-staff="${staffId}">
+                  <td class="py-3 px-4 sm:px-0 font-mono text-xs text-gray-500 hidden md:table-cell">${txn.id.substring(0, 8)}...</td>
+                  <td class="py-3 px-4 sm:px-0 text-xs sm:text-sm break-words max-w-[120px] sm:max-w-none">${txn.customerName}</td>
+                  <td class="py-3 px-4 sm:px-0 hidden sm:table-cell">
+                    <span class="px-2 py-1 bg-purple-500/20 text-purple-400 rounded-full text-xs">${staffName}</span>
+                  </td>
+                  <td class="py-3 px-4 sm:px-0">
+                    <span class="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+                      <i class="fas fa-arrow-${txn.type === "deposit" ? "down text-green-400" : "up text-orange-400"}"></i>
+                      ${txn.type}
+                    </span>
+                  </td>
+                  <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">
+                    ${txn.type === "deposit" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()}
+                  </td>
+                  <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-red-400 hidden sm:table-cell">
+                    ${charges > 0 ? `-₦${charges.toLocaleString()}` : "-"}
+                  </td>
+                  <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-blue-400">
+                    ₦${netAmount.toLocaleString()}
+                  </td>
+                  <td class="py-3 px-4 sm:px-0 hidden md:table-cell text-xs sm:text-sm text-gray-300">
+                    <div class="flex items-center gap-1">
+                      <i class="fas fa-calendar-alt text-gray-500 text-xs"></i>
+                      ${formatDate(txn.date)}
+                    </div>
+                  </td>
+                  <td class="py-3 px-4 sm:px-0">
+                    <span class="px-2 py-1 rounded text-xs ${getStatusStyle(txn.status)}">${txn.status}</span>
+                  </td>
+                  <td class="py-3 px-4 sm:px-0">
+                    <button onclick="viewTransactionDetails('${txn.id}')" class="text-blue-400 hover:text-blue-300 p-1" title="View Details">
+                      <i class="fas fa-eye text-xs sm:text-sm"></i>
+                    </button>
+                  </td>
+                </tr>`;
+              })
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>`;
+
   container.innerHTML = html;
 }
-
 // ==================== HELPER FUNCTIONS ====================
 
 function formatLoanRepaymentSMS(

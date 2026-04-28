@@ -4,7 +4,7 @@ const transactionSchema = new mongoose.Schema({
   id: { type: String, unique: true },
   customerId: String,
   customerName: String,
-  // REMOVED duplicate type definition - keep only the one below
+  customerPhone: String, // <-- ADD THIS (for SMS)
   amount: Number,
   charges: { type: Number, default: 0 },
   netAmount: Number,
@@ -13,7 +13,6 @@ const transactionSchema = new mongoose.Schema({
     enum: ["pending", "approved", "rejected"],
     default: "pending",
   },
-  // Single type definition with all valid values including interest_revenue
   type: {
     type: String,
     enum: [
@@ -21,21 +20,33 @@ const transactionSchema = new mongoose.Schema({
       "withdrawal",
       "loan_disbursement",
       "loan_repayment",
-      "interest_revenue", // ADD THIS
+      "interest_revenue",
     ],
     required: true,
   },
-  // Change from String to Date
   date: { type: Date, default: Date.now },
   approvedBy: String,
+  approvedAt: Date, // <-- ADD THIS
+  rejectedBy: String, // <-- ADD THIS
+  rejectedAt: Date, // <-- ADD THIS
+  rejectionReason: String, // <-- ADD THIS
   description: String,
-  requestedBy: String,
+
+  // STAFF FIELDS - ADD THESE
+  requestedBy: { type: String, default: "System" }, // Staff name
+  requestedById: { type: String, default: null }, // Staff ID <-- KEY FIX
+  staffName: { type: String, default: "System" }, // Alias for frontend
+  staffId: { type: String, default: null }, // Alias for frontend
+
   requestedAt: Date,
+  finalBalance: Number, // <-- ADD THIS (track balance after approval)
   createdAt: { type: Date, default: Date.now },
 });
 
-// Index for faster queries
-transactionSchema.index({ date: -1, status: 1, charges: 1 });
+// Better indexes for common queries
+transactionSchema.index({ date: -1 });
+transactionSchema.index({ status: 1, requestedById: 1 }); // <-- ADD THIS for staff grouping
+transactionSchema.index({ customerId: 1, date: -1 });
 
 module.exports = mongoose.model(
   "Transaction",

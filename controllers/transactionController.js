@@ -75,54 +75,73 @@ exports.createTransaction = async (req, res) => {
       charges,
       netAmount,
       description,
-      requestedBy,
+      requestedBy, // "Frank O"
+      requestedById, // "staff_123" <-- frontend sends this
+      staffName, // "Frank O"
+      staffId, // "staff_123"
     } = req.body;
 
-    console.log("========================================");
     console.log(
-      "[DEBUG] Incoming Request Body:",
+      "[DEBUG] Incoming transaction:",
       JSON.stringify(req.body, null, 2),
     );
-    console.log("========================================");
 
-    if (!customerId)
+    if (!customerId) {
       return res.status(400).json({ error: "Missing customerId" });
+    }
 
     const customer = await findCustomerRobustly(customerId);
 
     if (!customer) {
-      // This is where your 404 is coming from
       return res.status(404).json({
         error: "Customer not found",
-        debugInfo: `Tried searching for ${customerId} in id, customerNumber, and _id`,
+        debugInfo: `Tried searching for ${customerId}`,
       });
     }
 
-    // ... [REST OF YOUR CODE REMAINS THE SAME] ...
-    // (Just ensure you use the 'customer' object found above)
-
     const numAmount = Number(amount);
     const numCharges = Number(charges) || 0;
-    const numNetAmount = numAmount - numCharges;
+    const numNetAmount =
+      netAmount !== undefined ? Number(netAmount) : numAmount - numCharges;
+
+    // Determine staff info - prioritize explicit IDs, fallback to name
+    const finalStaffName =
+      requestedBy || staffName || req.user?.name || "System";
+    const finalStaffId = requestedById || staffId || req.user?.id || null;
 
     const transaction = new Transaction({
       id: "TXN" + Date.now() + Math.random().toString(36).substr(2, 4),
       customerId: customer.id || customer._id.toString(),
-      customerName,
-      customerPhone,
+      customerName: customerName || customer.name,
+      customerPhone: customerPhone || customer.phone || "",
       type,
       amount: numAmount,
       charges: numCharges,
       netAmount: numNetAmount,
       description: description || "",
       status: "pending",
-      requestedBy: requestedBy || "System",
+
+      // FIX: Store both name AND ID
+      requestedBy: finalStaffName,
+      requestedById: finalStaffId,
+      staffName: finalStaffName,
+      staffId: finalStaffId,
+
       requestedAt: new Date(),
       date: new Date(),
     });
 
     await transaction.save();
-    res.status(201).json({ success: true, transaction });
+
+    console.log(
+      "[DEBUG] Saved transaction:",
+      JSON.stringify(transaction.toObject(), null, 2),
+    );
+
+    res.status(201).json({
+      success: true,
+      transaction,
+    });
   } catch (error) {
     console.error("Create transaction error:", error);
     res.status(500).json({ error: error.message });
@@ -136,7 +155,6 @@ exports.approveTransaction = async (req, res) => {
     const { transactionId } = req.params;
     const { approvedBy } = req.body;
 
-    // 1. Find the transaction
     const transaction = await Transaction.findOne({ id: transactionId });
     if (!transaction) {
       return res.status(404).json({ error: "Transaction not found" });
@@ -146,7 +164,6 @@ exports.approveTransaction = async (req, res) => {
       return res.status(400).json({ error: "Transaction already processed" });
     }
 
-    // 2. Find the customer using the robust helper
     const customer = await findCustomerRobustly(transaction.customerId);
     if (!customer) {
       return res.status(404).json({ error: "Customer not found" });
@@ -155,7 +172,6 @@ exports.approveTransaction = async (req, res) => {
     const charges = transaction.charges || 0;
     const netAmount = transaction.netAmount;
 
-    // 3. Calculate new balance
     let newBalance;
     if (transaction.type === "deposit") {
       newBalance = (customer.cashBalance || 0) + netAmount;
@@ -172,15 +188,14 @@ exports.approveTransaction = async (req, res) => {
       return res.status(400).json({ error: "Invalid transaction type" });
     }
 
-    // 4. Update transaction status
+    // Update transaction
     transaction.status = "approved";
     transaction.approvedBy = approvedBy?.name || "Admin";
     transaction.approvedAt = new Date();
     transaction.finalBalance = newBalance;
     await transaction.save();
 
-    // 5. Update customer balance and stats
-    // We use the exact field we found (id or _id) to ensure the update hits the right document
+    // Update customer
     const updateQuery = customer.id
       ? { id: customer.id }
       : { _id: customer._id };
@@ -198,7 +213,7 @@ exports.approveTransaction = async (req, res) => {
       },
     });
 
-    // 6. Send SMS Alert
+    // Send SMS
     if (customer.phone) {
       try {
         if (transaction.type === "deposit") {
@@ -218,7 +233,7 @@ exports.approveTransaction = async (req, res) => {
             charges,
           );
         }
-        console.log(`✅ SMS Alert sent to ${customer.phone}`);
+        console.log(`✅ SMS sent to ${customer.phone}`);
       } catch (smsError) {
         console.error("❌ SMS failed:", smsError.message);
       }
@@ -233,6 +248,7 @@ exports.approveTransaction = async (req, res) => {
         amount: transaction.amount,
         status: transaction.status,
         newBalance: newBalance,
+        approvedBy: transaction.approvedBy,
       },
       customer: {
         id: customer.id,
@@ -245,7 +261,6 @@ exports.approveTransaction = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-
 // ==========================================================
 // REJECT TRANSACTION
 // ==========================================================
