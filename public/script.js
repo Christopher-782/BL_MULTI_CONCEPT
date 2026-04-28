@@ -1832,6 +1832,9 @@ async function handleNewTransaction(e) {
   const amount = parseFloat(formData.get("amount"));
   const charges = parseFloat(formData.get("charges")) || 0;
 
+  // Extract description from the form
+  const description = formData.get("description") || "";
+
   if (!customer) {
     showNotification("Please select a customer", "error");
     return;
@@ -1843,7 +1846,7 @@ async function handleNewTransaction(e) {
     return;
   }
 
-  // Check for withdrawal validity
+  // Check for withdrawal validity (validation only - no state changes)
   const availableBalance = customer.cashBalance || customer.balance || 0;
   if (type === "withdrawal" && netAmount > availableBalance) {
     showNotification(
@@ -1853,20 +1856,18 @@ async function handleNewTransaction(e) {
     return;
   }
 
-  // ==================== AUTO-LOAN REPAYMENT LOGIC ====================
+  // Calculate loan repayment info for the backend to use upon approval
+  // BUT DO NOT modify customer state here - the transaction is still pending!
   let loanDeduction = 0;
   let loanRepaymentInfo = null;
   let remainingForCustomer = netAmount;
 
-  // Only for DEPOSITS when customer has active loan
   if (
     type === "deposit" &&
     customer.hasActiveLoan &&
     customer.loanBalance > 0
   ) {
     const outstandingLoan = customer.loanBalance;
-
-    // Deduct either full deposit or remaining loan, whichever is smaller
     loanDeduction = Math.min(netAmount, outstandingLoan);
     remainingForCustomer = netAmount - loanDeduction;
 
@@ -1880,15 +1881,12 @@ async function handleNewTransaction(e) {
       outstandingAfter: Math.max(0, newLoanBalance),
       fullyPaid: isFullyPaid,
     };
+  }
 
-    // Update customer balances immediately for the transaction
-    customer.cashBalance = (customer.cashBalance || 0) + remainingForCustomer;
-    customer.loanBalance = Math.max(0, newLoanBalance);
-
-    if (isFullyPaid) {
-      customer.hasActiveLoan = false;
-      customer.activeLoanId = null;
-    }
+  // Build description with loan info if applicable
+  let finalDescription = description;
+  if (loanDeduction > 0) {
+    finalDescription = `Deposit ₦${amount.toLocaleString()}: ₦${loanDeduction.toLocaleString()} auto-deducted for loan repayment. Available: ₦${remainingForCustomer.toLocaleString()}`;
   }
 
   const txnData = {
@@ -1901,33 +1899,34 @@ async function handleNewTransaction(e) {
     netAmount: remainingForCustomer,
     loanDeduction: loanDeduction > 0 ? loanDeduction : undefined,
     loanRepaymentInfo: loanRepaymentInfo,
-    description: description || "",
+    description: finalDescription,
     status: "pending",
-
-    // FIX: Send staff info explicitly
-    requestedBy: state.currentUser.name, // "Frank O"
-    requestedById: state.currentUser.id, // <-- MUST SEND THIS
-    staffName: state.currentUser.name, // "Frank O"
-    staffId: state.currentUser.id, // <-- MUST SEND THIS
-
+    requestedBy: state.currentUser.name,
+    requestedById: state.currentUser.id,
+    staffName: state.currentUser.name,
+    staffId: state.currentUser.id,
     requestedAt: new Date(),
     date: new Date(),
   };
+
   try {
     await api.post("/transactions", txnData);
+
+    // Refresh data from backend to ensure frontend state is in sync
+    // This prevents any stale state issues
     await loadAllData();
 
     let successMessage = `✅ Transaction request submitted! `;
     if (type === "deposit") {
       successMessage += `Deposit ₦${amount.toLocaleString()}`;
       if (loanDeduction > 0) {
-        successMessage += `. ₦${loanDeduction.toLocaleString()} auto-deducted for loan`;
+        successMessage += `. ₦${loanDeduction.toLocaleString()} will be auto-deducted for loan`;
         if (loanRepaymentInfo?.fullyPaid) {
-          successMessage += `. 🎉 Loan FULLY PAID!`;
+          successMessage += ` (loan will be FULLY PAID upon approval)`;
         } else {
-          successMessage += `. Remaining loan: ₦${loanRepaymentInfo.outstandingAfter.toLocaleString()}`;
+          successMessage += ` (remaining loan: ₦${loanRepaymentInfo.outstandingAfter.toLocaleString()} after approval)`;
         }
-        successMessage += `. Available to customer: ₦${remainingForCustomer.toLocaleString()}`;
+        successMessage += `. Available to customer after approval: ₦${remainingForCustomer.toLocaleString()}`;
       }
     } else {
       successMessage += `Withdrawal ₦${amount.toLocaleString()}`;
@@ -2000,11 +1999,10 @@ async function processTransaction(
       }
 
       showNotification(notifMessage, "success");
+    } else if (action === "rejected") {
+      showNotification(`❌ Transaction rejected`, "error");
     } else {
-      showNotification(
-        `✅ Transaction ${action}!`,
-        action === "approved" ? "success" : "error",
-      );
+      showNotification(`✅ Transaction ${action}!`, "success");
     }
 
     await api.patch(`/transactions/${txnId}`, updateData);
@@ -2020,7 +2018,9 @@ async function processTransaction(
       "error",
     );
   }
-} // ==================== LOGOUT FUNCTION ====================
+}
+
+// ==================== LOGOUT FUNCTION ====================
 
 function logout() {
   localStorage.removeItem("token");
@@ -4493,12 +4493,11 @@ function renderAdminTransactions(container) {
   const pending = state.transactions.filter((t) => t.status === "pending");
   const others = state.transactions.filter((t) => t.status !== "pending");
 
-  // ==================== FIX: Group by TRANSACTION CREATOR, not customer registrant ====================
+  // Group pending by staff for the cards
   const pendingByStaff = {};
   pending.forEach((txn) => {
-    // Use ONLY the transaction's own staff fields — NEVER fall back to customer.addedBy
-    // The staff who created the transaction is stored in requestedById/staffId
-    const staffId = txn.requestedById || txn.staffId || "unknown";
+    const staffId =
+      txn.requestedById || txn.staffId || txn.requestedBy || "unknown";
     const staffName = txn.staffName || txn.requestedBy || "Unknown Staff";
 
     if (!pendingByStaff[staffId]) {
@@ -4519,18 +4518,67 @@ function renderAdminTransactions(container) {
     (a, b) => b.totalAmount - a.totalAmount,
   );
 
-  const html = `<div class="space-y-4 sm:space-y-6 animate-fade-in px-4 sm:px-0">${
-    staffPendingList.length > 0
-      ? `<div class="glass-panel rounded-2xl p-4 sm:p-6 border-l-4 border-yellow-500">
+  // Get unique staff members for filter dropdown
+  const uniqueStaff = [
+    ...new Set(
+      pending.map((t) => {
+        return JSON.stringify({
+          id: t.requestedById || t.staffId || t.requestedBy || "unknown",
+          name: t.staffName || t.requestedBy || "Unknown Staff",
+        });
+      }),
+    ),
+  ].map((s) => JSON.parse(s));
+
+  const html = `<div class="space-y-4 sm:space-y-6 animate-fade-in px-4 sm:px-0">
+    
+    <!-- STAFF FILTER DROPDOWN - ADD THIS -->
+    ${
+      pending.length > 0
+        ? `
+      <div class="glass-panel rounded-2xl p-4 sm:p-6 border-l-4 border-blue-500">
+        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <h3 class="text-base sm:text-lg font-semibold flex items-center gap-2">
+              <i class="fas fa-filter text-blue-500"></i>
+              Filter Pending Transactions
+            </h3>
+            <p class="text-xs text-gray-400 mt-1">Show transactions by specific staff member</p>
+          </div>
+          <div class="w-full sm:w-auto">
+            <select id="pendingStaffFilter" onchange="filterPendingByStaff()" 
+              class="w-full sm:w-64 px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
+              <option value="all">All Staff (${pending.length} pending)</option>
+              ${uniqueStaff
+                .map((staff) => {
+                  const count = pending.filter(
+                    (t) =>
+                      (t.requestedById || t.staffId || t.requestedBy) ===
+                      staff.id,
+                  ).length;
+                  return `<option value="${staff.id}">${staff.name} (${count} pending)</option>`;
+                })
+                .join("")}
+            </select>
+          </div>
+        </div>
+      </div>
+    `
+        : ""
+    }
+
+    ${
+      staffPendingList.length > 0
+        ? `<div class="glass-panel rounded-2xl p-4 sm:p-6 border-l-4 border-yellow-500">
           <h3 class="text-base sm:text-lg font-semibold mb-3 sm:mb-4 flex items-center gap-2">
             <i class="fas fa-users text-yellow-500 text-sm sm:text-base"></i>
             Pending Approvals by Staff
           </h3>
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-6">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-6" id="staffCardsContainer">
             ${staffPendingList
               .map(
                 (staff) =>
-                  `<div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700 hover:border-yellow-500/50 transition-all">
+                  `<div class="staff-card bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700 hover:border-yellow-500/50 transition-all" data-staff-id="${staff.staffId}">
                     <div class="flex items-center justify-between mb-3">
                       <div class="flex items-center gap-2 sm:gap-3">
                         <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-yellow-400 to-orange-500 flex items-center justify-center font-bold text-white text-xs sm:text-sm">
@@ -4570,187 +4618,237 @@ function renderAdminTransactions(container) {
             </button>
           </div>
         </div>`
-      : `<div class="glass-panel rounded-2xl p-8 sm:p-12 text-center">
+        : `<div class="glass-panel rounded-2xl p-8 sm:p-12 text-center">
           <div class="w-12 h-12 sm:w-16 sm:h-16 mx-auto bg-green-500/20 rounded-full flex items-center justify-center mb-3 sm:mb-4">
             <i class="fas fa-check-double text-green-400 text-xl sm:text-2xl"></i>
           </div>
           <h3 class="text-base sm:text-lg font-semibold mb-2">All Caught Up!</h3>
           <p class="text-xs sm:text-sm text-gray-400">No pending transactions requiring approval</p>
         </div>`
-  }${
-    pending.length > 0
-      ? `<div class="glass-panel rounded-2xl p-4 sm:p-6">
-          <h3 class="text-base sm:text-lg font-semibold mb-3 sm:mb-4">All Pending Transactions</h3>
-          <div class="space-y-3 sm:space-y-4">
-            ${pending
-              .map((txn) => {
-                const charges = txn.charges || 0;
-                const netAmount = txn.amount - charges;
-                const customer = state.customers.find(
-                  (c) => c.id === txn.customerId,
-                );
-                const staffName =
-                  txn.staffName || txn.requestedBy || "Unknown Staff";
-                const hasSMS = customer?.phone ? "📱" : "⚠️";
-                return `<div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700 hover:border-yellow-500/50 transition-all" id="txn-${txn.id}">
-                  <div class="flex flex-col lg:flex-row justify-between items-start gap-3 sm:gap-4">
-                    <div class="flex items-start gap-3 sm:gap-4 flex-1">
-                      <div class="w-8 h-8 sm:w-12 sm:h-12 rounded-full ${
-                        txn.type === "deposit"
-                          ? "bg-green-500/20 text-green-400"
-                          : "bg-orange-500/20 text-orange-400"
-                      } flex items-center justify-center flex-shrink-0">
-                        <i class="fas fa-arrow-${
-                          txn.type === "deposit" ? "down" : "up"
-                        } text-sm sm:text-xl"></i>
-                      </div>
-                      <div class="flex-1">
-                        <div class="flex flex-wrap items-center gap-2">
-                          <p class="font-semibold text-sm sm:text-lg">₦${(
-                            txn.amount || 0
-                          ).toLocaleString()}</p>
-                          <span class="px-2 py-0.5 ${
-                            txn.type === "deposit"
-                              ? "bg-green-500/20 text-green-400"
-                              : "bg-orange-500/20 text-orange-400"
-                          } rounded-full text-xs font-medium">${txn.type}</span>
-                          <span class="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full text-xs">${staffName} ${hasSMS}</span>
-                        </div>
-                        <p class="text-xs sm:text-sm text-gray-300 mt-1">${txn.customerName}</p>
-                        <div class="flex items-center gap-2 text-xs text-gray-400 mt-1">
-                          <i class="fas fa-calendar-alt"></i>
-                          <span>${formatDate(txn.date)}</span>
-                        </div>
-                      </div>
+    }
+
+    <!-- PENDING TRANSACTIONS LIST WITH FILTER -->
+    ${
+      pending.length > 0
+        ? `
+      <div class="glass-panel rounded-2xl p-4 sm:p-6">
+        <h3 class="text-base sm:text-lg font-semibold mb-3 sm:mb-4">All Pending Transactions</h3>
+        <div class="space-y-3 sm:space-y-4" id="pendingTransactionsList">
+          ${pending
+            .map((txn) => {
+              const charges = txn.charges || 0;
+              const netAmount = txn.amount - charges;
+              const customer = state.customers.find(
+                (c) => c.id === txn.customerId,
+              );
+              const staffName =
+                txn.staffName || txn.requestedBy || "Unknown Staff";
+              const staffId =
+                txn.requestedById ||
+                txn.staffId ||
+                txn.requestedBy ||
+                "unknown";
+              const hasSMS = customer?.phone ? "📱" : "⚠️";
+              return `<div class="pending-transaction-item bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700 hover:border-yellow-500/50 transition-all" 
+                data-staff-id="${staffId}" id="txn-${txn.id}">
+                <div class="flex flex-col lg:flex-row justify-between items-start gap-3 sm:gap-4">
+                  <div class="flex items-start gap-3 sm:gap-4 flex-1">
+                    <div class="w-8 h-8 sm:w-12 sm:h-12 rounded-full ${
+                      txn.type === "deposit"
+                        ? "bg-green-500/20 text-green-400"
+                        : "bg-orange-500/20 text-orange-400"
+                    } flex items-center justify-center flex-shrink-0">
+                      <i class="fas fa-arrow-${
+                        txn.type === "deposit" ? "down" : "up"
+                      } text-sm sm:text-xl"></i>
                     </div>
-                    <div class="flex-1 lg:max-w-xs">
-                      <div class="bg-gray-900/50 p-2 sm:p-3 rounded-lg">
-                        <h4 class="text-xs font-medium text-gray-400 mb-2">BREAKDOWN</h4>
-                        <div class="space-y-1">
-                          <div class="flex justify-between text-xs sm:text-sm">
-                            <span class="text-gray-400">Gross:</span>
-                            <span class="font-mono ${
-                              txn.type === "deposit"
-                                ? "text-green-400"
-                                : "text-orange-400"
-                            }">${txn.type === "deposit" ? "+" : "-"}₦${(
-                              txn.amount || 0
-                            ).toLocaleString()}</span>
-                          </div>
-                          ${charges > 0 ? `<div class="flex justify-between text-xs sm:text-sm"><span class="text-gray-400">Charge:</span><span class="font-mono text-red-400">-₦${charges.toLocaleString()}</span></div><div class="flex justify-between text-xs sm:text-sm pt-1 border-t border-gray-700"><span class="text-gray-300 font-medium">Net:</span><span class="font-mono text-blue-400 font-bold">₦${netAmount.toLocaleString()}</span></div>` : `<div class="flex justify-between text-xs sm:text-sm pt-1 border-t border-gray-700"><span class="text-gray-300 font-medium">Net:</span><span class="font-mono text-blue-400 font-bold">₦${netAmount.toLocaleString()}</span></div>`}
-                        </div>
+                    <div class="flex-1">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <p class="font-semibold text-sm sm:text-lg">₦${(
+                          txn.amount || 0
+                        ).toLocaleString()}</p>
+                        <span class="px-2 py-0.5 ${
+                          txn.type === "deposit"
+                            ? "bg-green-500/20 text-green-400"
+                            : "bg-orange-500/20 text-orange-400"
+                        } rounded-full text-xs font-medium">${txn.type}</span>
+                        <span class="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full text-xs">${staffName} ${hasSMS}</span>
                       </div>
-                    </div>
-                    <div class="flex gap-2 w-full lg:w-auto mt-2 lg:mt-0">
-                      <button onclick="processTransaction('${txn.id}', 'approved')" class="flex-1 lg:flex-none px-3 sm:px-4 py-2 bg-green-500/20 text-green-400 hover:bg-green-500 hover:text-white rounded-lg transition-colors flex items-center justify-center gap-2 text-xs sm:text-sm">
-                        <i class="fas fa-check"></i><span>Approve</span>
-                      </button>
-                      <button onclick="processTransaction('${txn.id}', 'rejected')" class="flex-1 lg:flex-none px-3 sm:px-4 py-2 bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white rounded-lg transition-colors flex items-center justify-center gap-2 text-xs sm:text-sm">
-                        <i class="fas fa-times"></i><span>Reject</span>
-                      </button>
+                      <p class="text-xs sm:text-sm text-gray-300 mt-1">${txn.customerName}</p>
+                      <div class="flex items-center gap-2 text-xs text-gray-400 mt-1">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span>${formatDate(txn.date)}</span>
+                      </div>
                     </div>
                   </div>
-                  ${txn.description ? `<div class="mt-3 pt-3 border-t border-gray-700"><div class="flex items-start gap-2"><i class="fas fa-align-left text-gray-500 text-xs mt-1"></i><div class="flex-1"><p class="text-xs text-gray-400 mb-1">Description:</p><p class="text-xs sm:text-sm text-gray-300 bg-gray-900/50 p-2 rounded-lg break-words">${txn.description}</p></div></div></div>` : ""}
-                </div>`;
-              })
-              .join("")}
-          </div>
-        </div>`
-      : ""
-  }
-  <div class="glass-panel rounded-2xl p-4 sm:p-6">
-    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
-      <h3 class="text-base sm:text-lg font-semibold">Transaction History</h3>
-      <div class="flex gap-2 w-full sm:w-auto">
-        <select id="staffTransactionFilter" onchange="filterTransactionsByStaff()" class="flex-1 sm:flex-none px-2 sm:px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs sm:text-sm text-white">
-          <option value="">All Staff</option>
-          ${state.staff.map((s) => `<option value="${s.id}">${s.name}</option>`).join("")}
-        </select>
-        <select id="sortTransactions" onchange="sortTransactions()" class="flex-1 sm:flex-none px-2 sm:px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs sm:text-sm text-white">
-          <option value="newest">Newest</option>
-          <option value="oldest">Oldest</option>
-          <option value="amount-high">Amount High</option>
-          <option value="amount-low">Amount Low</option>
-        </select>
-      </div>
-    </div>
-    <div class="overflow-x-auto -mx-4 sm:mx-0">
-      <div class="inline-block min-w-full align-middle">
-        <table class="min-w-full divide-y divide-gray-700" id="transactionsTable">
-          <thead>
-            <tr class="text-left text-gray-400 text-xs sm:text-sm">
-              <th class="pb-3 px-4 sm:px-0 hidden md:table-cell">ID</th>
-              <th class="pb-3 px-4 sm:px-0">Customer</th>
-              <th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Staff</th>
-              <th class="pb-3 px-4 sm:px-0">Type</th>
-              <th class="pb-3 px-4 sm:px-0">Gross</th>
-              <th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Charges</th>
-              <th class="pb-3 px-4 sm:px-0">Net</th>
-              <th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Date</th>
-              <th class="pb-3 px-4 sm:px-0">Status</th>
-              <th class="pb-3 px-4 sm:px-0">Actions</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-800" id="transactionsTableBody">
-            ${others
-              .map((txn) => {
-                const customer = state.customers.find(
-                  (c) => c.id === txn.customerId,
-                );
-                // ==================== FIX: Use transaction's staff fields, not customer.addedBy ====================
-                const staffName =
-                  txn.staffName || txn.requestedBy || "Unknown Staff";
-                const staffId = txn.requestedById || txn.staffId || "unknown";
-                const charges = txn.charges || 0;
-                const netAmount = txn.amount - charges;
-                return `<tr class="hover:bg-gray-800/30 transition-colors transaction-row" data-staff="${staffId}">
-                  <td class="py-3 px-4 sm:px-0 font-mono text-xs text-gray-500 hidden md:table-cell">${txn.id.substring(0, 8)}...</td>
-                  <td class="py-3 px-4 sm:px-0 text-xs sm:text-sm break-words max-w-[120px] sm:max-w-none">${txn.customerName}</td>
-                  <td class="py-3 px-4 sm:px-0 hidden sm:table-cell">
-                    <span class="px-2 py-1 bg-purple-500/20 text-purple-400 rounded-full text-xs">${staffName}</span>
-                  </td>
-                  <td class="py-3 px-4 sm:px-0">
-                    <span class="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
-                      <i class="fas fa-arrow-${txn.type === "deposit" ? "down text-green-400" : "up text-orange-400"}"></i>
-                      ${txn.type}
-                    </span>
-                  </td>
-                  <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">
-                    ${txn.type === "deposit" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()}
-                  </td>
-                  <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-red-400 hidden sm:table-cell">
-                    ${charges > 0 ? `-₦${charges.toLocaleString()}` : "-"}
-                  </td>
-                  <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-blue-400">
-                    ₦${netAmount.toLocaleString()}
-                  </td>
-                  <td class="py-3 px-4 sm:px-0 hidden md:table-cell text-xs sm:text-sm text-gray-300">
-                    <div class="flex items-center gap-1">
-                      <i class="fas fa-calendar-alt text-gray-500 text-xs"></i>
-                      ${formatDate(txn.date)}
+                  <div class="flex-1 lg:max-w-xs">
+                    <div class="bg-gray-900/50 p-2 sm:p-3 rounded-lg">
+                      <h4 class="text-xs font-medium text-gray-400 mb-2">BREAKDOWN</h4>
+                      <div class="space-y-1">
+                        <div class="flex justify-between text-xs sm:text-sm">
+                          <span class="text-gray-400">Gross:</span>
+                          <span class="font-mono ${
+                            txn.type === "deposit"
+                              ? "text-green-400"
+                              : "text-orange-400"
+                          }">${txn.type === "deposit" ? "+" : "-"}₦${(
+                            txn.amount || 0
+                          ).toLocaleString()}</span>
+                        </div>
+                        ${charges > 0 ? `<div class="flex justify-between text-xs sm:text-sm"><span class="text-gray-400">Charge:</span><span class="font-mono text-red-400">-₦${charges.toLocaleString()}</span></div><div class="flex justify-between text-xs sm:text-sm pt-1 border-t border-gray-700"><span class="text-gray-300 font-medium">Net:</span><span class="font-mono text-blue-400 font-bold">₦${netAmount.toLocaleString()}</span></div>` : `<div class="flex justify-between text-xs sm:text-sm pt-1 border-t border-gray-700"><span class="text-gray-300 font-medium">Net:</span><span class="font-mono text-blue-400 font-bold">₦${netAmount.toLocaleString()}</span></div>`}
+                      </div>
                     </div>
-                  </td>
-                  <td class="py-3 px-4 sm:px-0">
-                    <span class="px-2 py-1 rounded text-xs ${getStatusStyle(txn.status)}">${txn.status}</span>
-                  </td>
-                  <td class="py-3 px-4 sm:px-0">
-                    <button onclick="viewTransactionDetails('${txn.id}')" class="text-blue-400 hover:text-blue-300 p-1" title="View Details">
-                      <i class="fas fa-eye text-xs sm:text-sm"></i>
+                  </div>
+                  <div class="flex gap-2 w-full lg:w-auto mt-2 lg:mt-0">
+                    <button onclick="processTransaction('${txn.id}', 'approved')" class="flex-1 lg:flex-none px-3 sm:px-4 py-2 bg-green-500/20 text-green-400 hover:bg-green-500 hover:text-white rounded-lg transition-colors flex items-center justify-center gap-2 text-xs sm:text-sm">
+                      <i class="fas fa-check"></i><span>Approve</span>
                     </button>
-                  </td>
-                </tr>`;
-              })
-              .join("")}
-          </tbody>
-        </table>
+                    <button onclick="processTransaction('${txn.id}', 'rejected')" class="flex-1 lg:flex-none px-3 sm:px-4 py-2 bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white rounded-lg transition-colors flex items-center justify-center gap-2 text-xs sm:text-sm">
+                      <i class="fas fa-times"></i><span>Reject</span>
+                    </button>
+                  </div>
+                </div>
+                ${txn.description ? `<div class="mt-3 pt-3 border-t border-gray-700"><div class="flex items-start gap-2"><i class="fas fa-align-left text-gray-500 text-xs mt-1"></i><div class="flex-1"><p class="text-xs text-gray-400 mb-1">Description:</p><p class="text-xs sm:text-sm text-gray-300 bg-gray-900/50 p-2 rounded-lg break-words">${txn.description}</p></div></div></div>` : ""}
+              </div>`;
+            })
+            .join("")}
+        </div>
+      </div>`
+        : ""
+    }
+    
+    <!-- HISTORY TABLE -->
+    <div class="glass-panel rounded-2xl p-4 sm:p-6">
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+        <h3 class="text-base sm:text-lg font-semibold">Transaction History</h3>
+        <div class="flex gap-2 w-full sm:w-auto">
+          <select id="staffTransactionFilter" onchange="filterTransactionsByStaff()" class="flex-1 sm:flex-none px-2 sm:px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs sm:text-sm text-white">
+            <option value="">All Staff</option>
+            ${state.staff.map((s) => `<option value="${s.id}">${s.name}</option>`).join("")}
+          </select>
+          <select id="sortTransactions" onchange="sortTransactions()" class="flex-1 sm:flex-none px-2 sm:px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-xs sm:text-sm text-white">
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="amount-high">Amount High</option>
+            <option value="amount-low">Amount Low</option>
+          </select>
+        </div>
+      </div>
+      <div class="overflow-x-auto -mx-4 sm:mx-0">
+        <div class="inline-block min-w-full align-middle">
+          <table class="min-w-full divide-y divide-gray-700" id="transactionsTable">
+            <thead>
+              <tr class="text-left text-gray-400 text-xs sm:text-sm">
+                <th class="pb-3 px-4 sm:px-0 hidden md:table-cell">ID</th>
+                <th class="pb-3 px-4 sm:px-0">Customer</th>
+                <th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Staff</th>
+                <th class="pb-3 px-4 sm:px-0">Type</th>
+                <th class="pb-3 px-4 sm:px-0">Gross</th>
+                <th class="pb-3 px-4 sm:px-0 hidden sm:table-cell">Charges</th>
+                <th class="pb-3 px-4 sm:px-0">Net</th>
+                <th class="pb-3 px-4 sm:px-0 hidden md:table-cell">Date</th>
+                <th class="pb-3 px-4 sm:px-0">Status</th>
+                <th class="pb-3 px-4 sm:px-0">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-800" id="transactionsTableBody">
+              ${others
+                .map((txn) => {
+                  const customer = state.customers.find(
+                    (c) => c.id === txn.customerId,
+                  );
+                  const staffName =
+                    txn.staffName || txn.requestedBy || "Unknown Staff";
+                  const staffId = txn.requestedById || txn.staffId || "unknown";
+                  const charges = txn.charges || 0;
+                  const netAmount = txn.amount - charges;
+                  return `<tr class="hover:bg-gray-800/30 transition-colors transaction-row" data-staff="${staffId}">
+                    <td class="py-3 px-4 sm:px-0 font-mono text-xs text-gray-500 hidden md:table-cell">${txn.id.substring(0, 8)}...</td>
+                    <td class="py-3 px-4 sm:px-0 text-xs sm:text-sm break-words max-w-[120px] sm:max-w-none">${txn.customerName}</td>
+                    <td class="py-3 px-4 sm:px-0 hidden sm:table-cell">
+                      <span class="px-2 py-1 bg-purple-500/20 text-purple-400 rounded-full text-xs">${staffName}</span>
+                    </td>
+                    <td class="py-3 px-4 sm:px-0">
+                      <span class="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm">
+                        <i class="fas fa-arrow-${txn.type === "deposit" ? "down text-green-400" : "up text-orange-400"}"></i>
+                        ${txn.type}
+                      </span>
+                    </td>
+                    <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">
+                      ${txn.type === "deposit" ? "+" : "-"}₦${(txn.amount || 0).toLocaleString()}
+                    </td>
+                    <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-red-400 hidden sm:table-cell">
+                      ${charges > 0 ? `-₦${charges.toLocaleString()}` : "-"}
+                    </td>
+                    <td class="py-3 px-4 sm:px-0 font-mono text-xs sm:text-sm text-blue-400">
+                      ₦${netAmount.toLocaleString()}
+                    </td>
+                    <td class="py-3 px-4 sm:px-0 hidden md:table-cell text-xs sm:text-sm text-gray-300">
+                      <div class="flex items-center gap-1">
+                        <i class="fas fa-calendar-alt text-gray-500 text-xs"></i>
+                        ${formatDate(txn.date)}
+                      </div>
+                    </td>
+                    <td class="py-3 px-4 sm:px-0">
+                      <span class="px-2 py-1 rounded text-xs ${getStatusStyle(txn.status)}">${txn.status}</span>
+                    </td>
+                    <td class="py-3 px-4 sm:px-0">
+                      <button onclick="viewTransactionDetails('${txn.id}')" class="text-blue-400 hover:text-blue-300 p-1" title="View Details">
+                        <i class="fas fa-eye text-xs sm:text-sm"></i>
+                      </button>
+                    </td>
+                  </tr>`;
+                })
+                .join("")}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
-  </div>
-</div>`;
+  </div>`;
 
   container.innerHTML = html;
+} // ==================== HELPER FUNCTIONS ====================
+
+function filterPendingByStaff() {
+  const selectedStaffId = document.getElementById("pendingStaffFilter")?.value;
+
+  // Filter staff cards
+  const staffCards = document.querySelectorAll(".staff-card");
+  staffCards.forEach((card) => {
+    if (selectedStaffId === "all" || card.dataset.staffId === selectedStaffId) {
+      card.style.display = "";
+    } else {
+      card.style.display = "none";
+    }
+  });
+
+  // Filter pending transaction items
+  const pendingItems = document.querySelectorAll(".pending-transaction-item");
+  pendingItems.forEach((item) => {
+    if (selectedStaffId === "all" || item.dataset.staffId === selectedStaffId) {
+      item.style.display = "";
+    } else {
+      item.style.display = "none";
+    }
+  });
+
+  // Update count display
+  const visibleCount =
+    selectedStaffId === "all"
+      ? pendingItems.length
+      : document.querySelectorAll(
+          `.pending-transaction-item[data-staff-id="${selectedStaffId}"]`,
+        ).length;
+
+  const filterLabel =
+    document.querySelector("#pendingStaffFilter option:checked")?.textContent ||
+    "";
+  showNotification(
+    `Showing ${visibleCount} pending transactions for ${filterLabel.split(" (")[0]}`,
+    "info",
+  );
 }
-// ==================== HELPER FUNCTIONS ====================
 
 function formatLoanRepaymentSMS(
   customerName,
@@ -4875,39 +4973,92 @@ function filterTransactionsByStaff() {
   });
 }
 
-function viewStaffPendingTransactions(staffId) {
-  if (staffId === "unknown") {
+function viewStaffPendingTransactions(staffIdentifier) {
+  if (!staffIdentifier || staffIdentifier === "unknown") {
     showNotification(
       "Cannot identify staff member for these transactions",
       "warning",
     );
     return;
   }
-  const staff = state.staff.find((s) => s.id === staffId);
-  if (!staff) return;
-  const staffCustomers = state.customers.filter(
-    (c) => c.addedBy?.staffId === staffId,
-  );
-  const pendingTransactions = state.transactions.filter(
-    (t) =>
-      staffCustomers.some((c) => c.id === t.customerId) &&
-      t.status === "pending",
-  );
+
+  // Find staff info
+  const staff = state.staff.find((s) => s.id === staffIdentifier);
+  const staffName = staff?.name || staffIdentifier;
+
+  // Find all pending transactions for this staff member
+  const pendingTransactions = state.transactions.filter((t) => {
+    const txnStaffId =
+      t.requestedById || t.staffId || t.requestedBy || "unknown";
+    const txnStaffName = t.staffName || t.requestedBy || "Unknown Staff";
+    return (
+      t.status === "pending" &&
+      (txnStaffId === staffIdentifier || txnStaffName === staffIdentifier)
+    );
+  });
+
   if (pendingTransactions.length === 0) {
     showNotification("No pending transactions for this staff member", "info");
     return;
   }
-  const modalHtml = `<div id="staffPendingModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"><div class="bg-gray-900 rounded-2xl p-4 sm:p-8 max-w-4xl w-full mx-auto max-h-[90vh] overflow-y-auto animate-slideIn"><div class="flex justify-between items-center mb-4 sm:mb-6"><div><h3 class="text-lg sm:text-xl font-semibold">${staff.name} - Pending</h3><p class="text-xs sm:text-sm text-gray-400">${pendingTransactions.length} transactions awaiting approval</p></div><button onclick="closeStaffPendingModal()" class="text-gray-400 hover:text-white p-2"><i class="fas fa-times text-lg"></i></button></div><div class="space-y-3 sm:space-y-4">${pendingTransactions
-    .map((txn) => {
-      const charges = txn.charges || 0,
-        netAmount = txn.amount - charges,
-        customer = state.customers.find((c) => c.id === txn.customerId),
-        hasSMS = customer?.phone ? "📱" : "⚠️";
-      return `<div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700"><div class="flex flex-col sm:flex-row justify-between items-start gap-3"><div class="flex-1"><div class="flex flex-wrap items-center gap-2 mb-2"><span class="px-2 py-1 rounded text-xs ${txn.type === "deposit" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">${txn.type}</span><span class="text-white font-bold text-sm sm:text-base">₦${txn.amount.toLocaleString()}</span><span class="text-xs">${hasSMS}</span></div><p class="text-xs sm:text-sm text-gray-300">Customer: ${txn.customerName}</p><p class="text-xs text-gray-400">Date: ${formatDate(txn.date)}</p><div class="mt-2 p-2 sm:p-3 bg-gray-900/50 rounded-lg"><div class="flex justify-between text-xs sm:text-sm mb-1"><span class="text-gray-400">Gross:</span><span class="font-mono ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">${txn.type === "deposit" ? "+" : "-"}₦${txn.amount.toLocaleString()}</span></div>${charges > 0 ? `<div class="flex justify-between text-xs sm:text-sm mb-1"><span class="text-gray-400">Charge:</span><span class="font-mono text-red-400">-₦${charges.toLocaleString()}</span></div><div class="flex justify-between text-xs sm:text-sm pt-1 border-t border-gray-700"><span class="text-gray-300">Net:</span><span class="font-mono text-blue-400 font-bold">₦${netAmount.toLocaleString()}</span></div>` : `<div class="text-xs text-gray-400">No charges applied</div>`}</div>${txn.description ? `<div class="mt-2 text-xs text-gray-400 break-words"><span class="text-gray-500">Desc:</span> ${txn.description}</div>` : ""}</div><div class="flex gap-2 w-full sm:w-auto mt-2 sm:mt-0"><button onclick="processTransaction('${txn.id}', 'rejected', true, '${staffId}')" class="flex-1 sm:flex-none px-3 py-2 bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white rounded-lg text-xs sm:text-sm">Reject</button><button onclick="processTransaction('${txn.id}', 'approved', true, '${staffId}')" class="flex-1 sm:flex-none px-3 py-2 bg-green-500/20 text-green-400 hover:bg-green-500 hover:text-white rounded-lg text-xs sm:text-sm">Approve</button></div></div></div>`;
-    })
-    .join(
-      "",
-    )}</div><div class="flex flex-col sm:flex-row justify-end gap-4 mt-6 pt-4 border-t border-gray-700"><button onclick="closeStaffPendingModal()" class="px-6 py-2 border border-gray-600 rounded-lg hover:bg-gray-800">Close</button><button onclick="approveAllStaffTransactions('${staffId}')" class="px-6 py-2 bg-green-600 hover:bg-green-500 rounded-lg transition-colors flex items-center justify-center gap-2"><i class="fas fa-check-double"></i>Approve All</button></div></div></div>`;
+
+  const modalHtml = `<div id="staffPendingModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+    <div class="bg-gray-900 rounded-2xl p-4 sm:p-8 max-w-4xl w-full mx-auto max-h-[90vh] overflow-y-auto animate-slideIn">
+      <div class="flex justify-between items-center mb-4 sm:mb-6">
+        <div>
+          <h3 class="text-lg sm:text-xl font-semibold">${staffName} - Pending</h3>
+          <p class="text-xs sm:text-sm text-gray-400">${pendingTransactions.length} transactions awaiting approval</p>
+        </div>
+        <button onclick="closeStaffPendingModal()" class="text-gray-400 hover:text-white p-2">
+          <i class="fas fa-times text-lg"></i>
+        </button>
+      </div>
+      <div class="space-y-3 sm:space-y-4">
+        ${pendingTransactions
+          .map((txn) => {
+            const charges = txn.charges || 0;
+            const netAmount = txn.amount - charges;
+            const customer = state.customers.find(
+              (c) => c.id === txn.customerId,
+            );
+            const hasSMS = customer?.phone ? "📱" : "⚠️";
+            return `<div class="bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700">
+              <div class="flex flex-col sm:flex-row justify-between items-start gap-3">
+                <div class="flex-1">
+                  <div class="flex flex-wrap items-center gap-2 mb-2">
+                    <span class="px-2 py-1 rounded text-xs ${txn.type === "deposit" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">${txn.type}</span>
+                    <span class="text-white font-bold text-sm sm:text-base">₦${txn.amount.toLocaleString()}</span>
+                    <span class="text-xs">${hasSMS}</span>
+                  </div>
+                  <p class="text-xs sm:text-sm text-gray-300">Customer: ${txn.customerName}</p>
+                  <p class="text-xs text-gray-400">Date: ${formatDate(txn.date)}</p>
+                  <div class="mt-2 p-2 sm:p-3 bg-gray-900/50 rounded-lg">
+                    <div class="flex justify-between text-xs sm:text-sm mb-1">
+                      <span class="text-gray-400">Gross:</span>
+                      <span class="font-mono ${txn.type === "deposit" ? "text-green-400" : "text-orange-400"}">${txn.type === "deposit" ? "+" : "-"}₦${txn.amount.toLocaleString()}</span>
+                    </div>
+                    ${charges > 0 ? `<div class="flex justify-between text-xs sm:text-sm mb-1"><span class="text-gray-400">Charge:</span><span class="font-mono text-red-400">-₦${charges.toLocaleString()}</span></div><div class="flex justify-between text-xs sm:text-sm pt-1 border-t border-gray-700"><span class="text-gray-300">Net:</span><span class="font-mono text-blue-400 font-bold">₦${netAmount.toLocaleString()}</span></div>` : `<div class="text-xs text-gray-400">No charges applied</div>`}
+                  </div>
+                  ${txn.description ? `<div class="mt-2 text-xs text-gray-400 break-words"><span class="text-gray-500">Desc:</span> ${txn.description}</div>` : ""}
+                </div>
+                <div class="flex gap-2 w-full sm:w-auto mt-2 sm:mt-0">
+                  <button onclick="processTransaction('${txn.id}', 'rejected', true, '${staffIdentifier}')" class="flex-1 sm:flex-none px-3 py-2 bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white rounded-lg text-xs sm:text-sm">Reject</button>
+                  <button onclick="processTransaction('${txn.id}', 'approved', true, '${staffIdentifier}')" class="flex-1 sm:flex-none px-3 py-2 bg-green-500/20 text-green-400 hover:bg-green-500 hover:text-white rounded-lg text-xs sm:text-sm">Approve</button>
+                </div>
+              </div>
+            </div>`;
+          })
+          .join("")}
+      </div>
+      <div class="flex flex-col sm:flex-row justify-end gap-4 mt-6 pt-4 border-t border-gray-700">
+        <button onclick="closeStaffPendingModal()" class="px-6 py-2 border border-gray-600 rounded-lg hover:bg-gray-800">Close</button>
+        <button onclick="approveAllStaffTransactions('${staffIdentifier}')" class="px-6 py-2 bg-green-600 hover:bg-green-500 rounded-lg transition-colors flex items-center justify-center gap-2">
+          <i class="fas fa-check-double"></i>Approve All (${pendingTransactions.length})
+        </button>
+      </div>
+    </div>
+  </div>`;
+
   const modalContainer = document.createElement("div");
   modalContainer.innerHTML = modalHtml;
   document.body.appendChild(modalContainer);
@@ -4923,41 +5074,46 @@ function closeTransactionModal() {
   if (modal) modal.remove();
 }
 
-async function approveAllStaffTransactions(staffId) {
-  if (staffId === "unknown") {
+async function approveAllStaffTransactions(staffIdentifier) {
+  if (!staffIdentifier || staffIdentifier === "unknown") {
     showNotification(
       "Cannot identify staff member for these transactions",
       "warning",
     );
     return;
   }
-  const staff = state.staff.find((s) => s.id === staffId);
-  if (!staff) return;
-  const staffCustomers = state.customers.filter(
-    (c) => c.addedBy?.staffId === staffId,
-  );
-  const pendingTransactions = state.transactions.filter(
-    (t) =>
-      staffCustomers.some((c) => c.id === t.customerId) &&
-      t.status === "pending",
-  );
+
+  // Find all pending transactions for this staff member
+  const pendingTransactions = state.transactions.filter((t) => {
+    const txnStaffId =
+      t.requestedById || t.staffId || t.requestedBy || "unknown";
+    const txnStaffName = t.staffName || t.requestedBy || "Unknown Staff";
+    return (
+      t.status === "pending" &&
+      (txnStaffId === staffIdentifier || txnStaffName === staffIdentifier)
+    );
+  });
+
   if (pendingTransactions.length === 0) {
     showNotification("No pending transactions for this staff member", "info");
     closeStaffPendingModal();
     return;
   }
+
   if (
     !confirm(
-      `Are you sure you want to approve all ${pendingTransactions.length} pending transactions for ${staff.name}?`,
+      `Are you sure you want to approve all ${pendingTransactions.length} pending transactions?`,
     )
   )
     return;
+
   let approved = 0,
     failed = 0;
   showNotification(
     `Processing ${pendingTransactions.length} transactions...`,
     "info",
   );
+
   for (const txn of pendingTransactions) {
     try {
       await processTransaction(txn.id, "approved", false);
@@ -4968,21 +5124,22 @@ async function approveAllStaffTransactions(staffId) {
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+
   await loadAllData();
-  if (failed === 0)
+  if (failed === 0) {
     showNotification(
-      `Successfully approved all ${approved} transactions for ${staff.name}`,
+      `Successfully approved all ${approved} transactions`,
       "success",
     );
-  else
+  } else {
     showNotification(
-      `Approved ${approved} transactions, ${failed} failed for ${staff.name}`,
+      `Approved ${approved} transactions, ${failed} failed`,
       "warning",
     );
+  }
   closeStaffPendingModal();
   navigate("transactions");
 }
-
 async function approveAllPendingTransactions() {
   const pending = state.transactions.filter((t) => t.status === "pending");
   if (pending.length === 0) {
