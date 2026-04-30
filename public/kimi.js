@@ -90,6 +90,11 @@ const menus = {
     { id: "dashboard", icon: "fa-chart-line", label: "Dashboard" },
     { id: "customers", icon: "fa-users", label: "All Customers" },
     { id: "new-customer", icon: "fa-user-plus", label: "Register Customer" },
+    {
+      id: "quick-transaction",
+      icon: "fa-bolt",
+      label: "Quick Transaction",
+    },
     { id: "transactions", icon: "fa-exchange-alt", label: "New Transaction" },
     {
       id: "loan-request",
@@ -97,7 +102,7 @@ const menus = {
       label: "Request Loan/Overdraft",
     },
     { id: "my-loans", icon: "fa-history", label: "My Loan Requests" },
-    { id: "history", icon: "fa-history", label: "My History" },
+    { id: "history", icon: "fa-list-alt", label: "My History" },
   ],
 };
 
@@ -330,6 +335,467 @@ function showNotification(message, type = "info") {
   }, 3000);
 }
 
+// ==================== QUICK TRANSACTION FUNCTIONALITY ====================
+
+function renderQuickTransaction(container) {
+  let availableCustomers = state.customers;
+
+  const html = `
+    <div class="max-w-2xl mx-auto animate-fade-in px-4 sm:px-0">
+      <div class="glass-panel rounded-2xl p-4 sm:p-8">
+        <div class="flex items-center gap-4 mb-6 sm:mb-8">
+          <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
+            <i class="fas fa-bolt text-emerald-400 text-base sm:text-xl"></i>
+          </div>
+          <div>
+            <h3 class="text-lg sm:text-xl font-semibold">Quick Transaction</h3>
+            <p class="text-xs sm:text-sm text-gray-400">Fast processing - select customer, type, and amount</p>
+            <p class="text-xs text-emerald-400 mt-1">⚡ Processes immediately - no approval needed</p>
+          </div>
+        </div>
+
+        <form onsubmit="handleQuickTransaction(event)" class="space-y-4 sm:space-y-6">
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">
+              <i class="fas fa-search mr-2 text-emerald-400"></i>Search Customer
+            </label>
+            <div class="relative">
+              <input type="text" id="quickCustomerSearch" placeholder="Type name, email, phone, or #001..." 
+                autocomplete="off" 
+                class="w-full px-4 py-3 pl-10 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-emerald-500 transition-colors text-base" />
+              <i class="fas fa-search absolute left-3 top-3.5 text-gray-500"></i>
+            </div>
+          </div>
+
+          <div id="quickSearchResults" class="hidden glass-panel rounded-xl border border-gray-700 max-h-48 overflow-y-auto">
+            <div id="quickSearchList" class="divide-y divide-gray-700"></div>
+          </div>
+
+          <div id="quickSelectedCustomer" class="hidden p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+            <div class="flex justify-between items-center">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 font-bold">
+                  <span id="quickCustomerInitials">--</span>
+                </div>
+                <div>
+                  <p class="font-semibold text-sm" id="quickCustomerName">--</p>
+                  <p class="text-xs text-gray-400" id="quickCustomerDetails">--</p>
+                </div>
+              </div>
+              <button type="button" onclick="clearQuickCustomer()" class="text-red-400 hover:text-red-300 p-1">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+            <div class="mt-2 pt-2 border-t border-emerald-500/20 flex justify-between text-sm">
+              <span class="text-gray-400">Balance:</span>
+              <span class="font-mono font-bold text-emerald-400" id="quickCustomerBalance">₦0</span>
+            </div>
+          </div>
+
+          <input type="hidden" id="quickCustomerId" value="">
+
+          <div class="grid grid-cols-2 gap-3">
+            <button type="button" id="quickDepositBtn" onclick="setQuickType('deposit')" 
+              class="p-4 rounded-xl border-2 border-gray-700 hover:border-emerald-500 transition-all text-center group">
+              <i class="fas fa-arrow-down text-green-400 text-2xl mb-2 group-hover:scale-110 transition-transform"></i>
+              <p class="font-medium">Deposit</p>
+              <p class="text-xs text-gray-400">Add funds</p>
+            </button>
+            <button type="button" id="quickWithdrawBtn" onclick="setQuickType('withdrawal')" 
+              class="p-4 rounded-xl border-2 border-gray-700 hover:border-orange-500 transition-all text-center group">
+              <i class="fas fa-arrow-up text-orange-400 text-2xl mb-2 group-hover:scale-110 transition-transform"></i>
+              <p class="font-medium">Withdrawal</p>
+              <p class="text-xs text-gray-400">Remove funds</p>
+            </button>
+          </div>
+          <input type="hidden" name="type" id="quickType" value="">
+
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">Amount (₦)</label>
+            <input type="number" name="amount" id="quickAmount" required min="1" 
+              oninput="updateQuickNet()"
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white text-2xl font-mono focus:border-emerald-500 transition-colors" 
+              placeholder="0.00">
+          </div>
+
+          <div class="grid grid-cols-4 gap-2">
+            <button type="button" onclick="setQuickAmount(1000)" 
+              class="py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-xs font-mono transition-colors">
+              ₦1,000
+            </button>
+            <button type="button" onclick="setQuickAmount(5000)" 
+              class="py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-xs font-mono transition-colors">
+              ₦5,000
+            </button>
+            <button type="button" onclick="setQuickAmount(10000)" 
+              class="py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-xs font-mono transition-colors">
+              ₦10,000
+            </button>
+            <button type="button" onclick="setQuickAmount(50000)" 
+              class="py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-xs font-mono transition-colors">
+              ₦50,000
+            </button>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">
+              Charge (₦) <span class="text-xs text-gray-500">- Optional, default 0</span>
+            </label>
+            <input type="number" name="charges" id="quickCharges" value="0" min="0" 
+              oninput="updateQuickNet()"
+              class="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white font-mono focus:border-emerald-500 transition-colors" 
+              placeholder="0.00">
+          </div>
+
+          <div id="quickNetDisplay" class="p-3 bg-gray-800/50 border border-gray-700 rounded-xl hidden">
+            <div class="flex justify-between items-center">
+              <span class="text-sm text-gray-400">Net Amount:</span>
+              <span class="text-xl font-bold font-mono text-emerald-400" id="quickNetAmount">₦0</span>
+            </div>
+          </div>
+
+          <div id="quickWarning" class="hidden p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+            <p class="text-xs text-red-300 flex items-center gap-2">
+              <i class="fas fa-exclamation-circle"></i>
+              <span id="quickWarningText">Insufficient funds</span>
+            </p>
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">Description</label>
+            <input type="text" name="description" id="quickDescription" 
+              class="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white text-sm focus:border-emerald-500 transition-colors" 
+              placeholder="Quick transaction">
+          </div>
+
+          <button type="submit" id="quickSubmitBtn" disabled
+            class="w-full py-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed rounded-xl font-semibold text-lg transition-all flex items-center justify-center gap-2">
+            <i class="fas fa-bolt"></i>
+            <span>Process Transaction</span>
+          </button>
+
+          <p class="text-xs text-center text-gray-500">
+            <i class="fas fa-info-circle mr-1"></i>
+            Quick transactions are recorded as approved immediately
+          </p>
+        </form>
+      </div>
+    </div>
+  `;
+
+  container.innerHTML = html;
+  initQuickSearch(availableCustomers);
+}
+
+function initQuickSearch(customersData) {
+  window.quickCustomersData = customersData;
+  let searchTimeout;
+
+  const searchInput = document.getElementById("quickCustomerSearch");
+  if (searchInput) {
+    searchInput.addEventListener("input", function () {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(filterQuickCustomers, 200);
+    });
+    searchInput.addEventListener("focus", function () {
+      if (this.value.trim() !== "") filterQuickCustomers();
+    });
+  }
+
+  document.addEventListener("click", function (e) {
+    const dropdown = document.getElementById("quickSearchResults");
+    const searchContainer = document.getElementById("quickCustomerSearch");
+    if (
+      dropdown &&
+      searchContainer &&
+      !dropdown.contains(e.target) &&
+      !searchContainer.contains(e.target)
+    ) {
+      dropdown.classList.add("hidden");
+    }
+  });
+}
+
+function filterQuickCustomers() {
+  const searchInput = document.getElementById("quickCustomerSearch");
+  const dropdown = document.getElementById("quickSearchResults");
+  const list = document.getElementById("quickSearchList");
+
+  if (!searchInput) return;
+  const term = searchInput.value.toLowerCase().trim();
+
+  if (!term) {
+    dropdown.classList.add("hidden");
+    return;
+  }
+
+  const filtered = window.quickCustomersData.filter((c) => {
+    const name = (c.name || "").toLowerCase();
+    const email = (c.email || "").toLowerCase();
+    const phone = (c.phone || "").toLowerCase();
+    const number = (c.customerNumber || "").toLowerCase();
+    return (
+      name.includes(term) ||
+      email.includes(term) ||
+      phone.includes(term) ||
+      number === term
+    );
+  });
+
+  if (filtered.length === 0) {
+    list.innerHTML =
+      '<div class="p-4 text-center text-gray-400 text-sm">No customers found</div>';
+  } else {
+    list.innerHTML = filtered
+      .map((c) => {
+        const initials = c.name
+          ? c.name
+              .split(" ")
+              .map((n) => n[0])
+              .join("")
+              .substring(0, 2)
+              .toUpperCase()
+          : "??";
+        const balance = c.cashBalance || c.balance || 0;
+        return `<div class="p-3 hover:bg-gray-700 cursor-pointer transition-colors" 
+        onclick="selectQuickCustomer('${c.id}', '${c.name.replace(/'/g, "\'")}', ${balance}, '${c.phone || ""}', '${c.customerNumber || ""}', '${initials}')">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 text-xs font-bold">${initials}</div>
+          <div class="flex-1">
+            <div class="flex items-center gap-2">
+              ${c.customerNumber ? `<span class="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-mono">#${c.customerNumber}</span>` : ""}
+              <p class="font-medium text-sm">${c.name}</p>
+            </div>
+            <p class="text-xs text-gray-400">${c.email} • ₦${balance.toLocaleString()}</p>
+          </div>
+          <i class="fas fa-chevron-right text-gray-600 text-xs"></i>
+        </div>
+      </div>`;
+      })
+      .join("");
+  }
+
+  dropdown.classList.remove("hidden");
+}
+
+function selectQuickCustomer(id, name, balance, phone, number, initials) {
+  document.getElementById("quickCustomerId").value = id;
+  document.getElementById("quickCustomerName").textContent = name;
+  document.getElementById("quickCustomerInitials").textContent = initials;
+  document.getElementById("quickCustomerDetails").textContent = phone
+    ? `📱 ${phone}`
+    : "No phone";
+  document.getElementById("quickCustomerBalance").textContent =
+    "₦" + balance.toLocaleString();
+  document.getElementById("quickSelectedCustomer").classList.remove("hidden");
+
+  window.quickSelectedCustomer = { id, name, balance };
+
+  document.getElementById("quickSearchResults").classList.add("hidden");
+  document.getElementById("quickCustomerSearch").value = "";
+
+  setTimeout(() => document.getElementById("quickAmount")?.focus(), 100);
+  validateQuickForm();
+}
+
+function clearQuickCustomer() {
+  document.getElementById("quickCustomerId").value = "";
+  document.getElementById("quickSelectedCustomer").classList.add("hidden");
+  window.quickSelectedCustomer = null;
+  validateQuickForm();
+}
+
+function setQuickType(type) {
+  document.getElementById("quickType").value = type;
+
+  const depositBtn = document.getElementById("quickDepositBtn");
+  const withdrawBtn = document.getElementById("quickWithdrawBtn");
+
+  if (type === "deposit") {
+    depositBtn.classList.add("border-emerald-500", "bg-emerald-500/10");
+    depositBtn.classList.remove("border-gray-700");
+    withdrawBtn.classList.remove("border-orange-500", "bg-orange-500/10");
+    withdrawBtn.classList.add("border-gray-700");
+  } else {
+    withdrawBtn.classList.add("border-orange-500", "bg-orange-500/10");
+    withdrawBtn.classList.remove("border-gray-700");
+    depositBtn.classList.remove("border-emerald-500", "bg-emerald-500/10");
+    depositBtn.classList.add("border-gray-700");
+  }
+
+  validateQuickAmount();
+}
+
+function setQuickAmount(amount) {
+  document.getElementById("quickAmount").value = amount;
+  updateQuickNet();
+}
+
+function updateQuickNet() {
+  const amount = parseFloat(document.getElementById("quickAmount")?.value || 0);
+  const charges = parseFloat(
+    document.getElementById("quickCharges")?.value || 0,
+  );
+  const net = amount - charges;
+
+  const netDisplay = document.getElementById("quickNetDisplay");
+  const netAmount = document.getElementById("quickNetAmount");
+
+  if (amount > 0) {
+    netDisplay.classList.remove("hidden");
+    netAmount.textContent = "₦" + net.toLocaleString();
+  } else {
+    netDisplay.classList.add("hidden");
+  }
+
+  validateQuickAmount();
+}
+
+function validateQuickAmount() {
+  const amount = parseFloat(document.getElementById("quickAmount")?.value || 0);
+  const charges = parseFloat(
+    document.getElementById("quickCharges")?.value || 0,
+  );
+  const type = document.getElementById("quickType")?.value;
+  const balance = window.quickSelectedCustomer?.balance || 0;
+  const net = amount - charges;
+
+  const warning = document.getElementById("quickWarning");
+  const warningText = document.getElementById("quickWarningText");
+
+  let hasError = false;
+
+  if (type === "withdrawal" && net > balance) {
+    warning.classList.remove("hidden");
+    warningText.textContent = `Insufficient funds! Available: ₦${balance.toLocaleString()}, Required: ₦${net.toLocaleString()}`;
+    hasError = true;
+  } else if (net < 0) {
+    warning.classList.remove("hidden");
+    warningText.textContent = "Charges cannot exceed amount";
+    hasError = true;
+  } else {
+    warning.classList.add("hidden");
+  }
+
+  validateQuickForm();
+  return !hasError;
+}
+
+function validateQuickForm() {
+  const customerId = document.getElementById("quickCustomerId")?.value;
+  const type = document.getElementById("quickType")?.value;
+  const amount = parseFloat(document.getElementById("quickAmount")?.value || 0);
+  const charges = parseFloat(
+    document.getElementById("quickCharges")?.value || 0,
+  );
+  const balance = window.quickSelectedCustomer?.balance || 0;
+  const net = amount - charges;
+
+  const submitBtn = document.getElementById("quickSubmitBtn");
+
+  let isValid = customerId && type && amount > 0 && net >= 0;
+
+  if (type === "withdrawal" && net > balance) {
+    isValid = false;
+  }
+
+  if (submitBtn) submitBtn.disabled = !isValid;
+}
+
+async function handleQuickTransaction(e) {
+  e.preventDefault();
+
+  const customerId = document.getElementById("quickCustomerId").value;
+  const type = document.getElementById("quickType").value;
+  const amount = parseFloat(document.getElementById("quickAmount").value);
+  const charges =
+    parseFloat(document.getElementById("quickCharges").value) || 0;
+  const description =
+    document.getElementById("quickDescription").value || `Quick ${type}`;
+
+  const customer = state.customers.find((c) => c.id === customerId);
+  if (!customer) {
+    showNotification("Customer not found", "error");
+    return;
+  }
+
+  const netAmount = amount - charges;
+
+  if (
+    type === "withdrawal" &&
+    netAmount > (customer.cashBalance || customer.balance || 0)
+  ) {
+    showNotification("Insufficient funds", "error");
+    return;
+  }
+
+  const submitBtn = document.getElementById("quickSubmitBtn");
+  const originalText = submitBtn.innerHTML;
+  submitBtn.disabled = true;
+  submitBtn.innerHTML =
+    '<i class="fas fa-spinner fa-spin mr-2"></i>Processing...';
+
+  const txnData = {
+    customerId,
+    customerName: customer.name,
+    customerPhone: customer.phone,
+    type,
+    amount,
+    charges,
+    netAmount,
+    description,
+    status: "approved",
+    requestedBy: state.currentUser.name,
+    requestedById: state.currentUser.id,
+    staffName: state.currentUser.name,
+    staffId: state.currentUser.id,
+    approvedBy: state.currentUser.name,
+    approvedAt: new Date(),
+    date: new Date(),
+    isQuickTransaction: true,
+  };
+
+  try {
+    await api.post("/transactions", txnData);
+    await loadAllData();
+
+    showNotification(
+      `⚡ Quick ${type} of ₦${amount.toLocaleString()} processed! Net: ₦${netAmount.toLocaleString()}`,
+      "success",
+    );
+
+    // Reset form but stay on page
+    clearQuickCustomer();
+    document.getElementById("quickAmount").value = "";
+    document.getElementById("quickCharges").value = "0";
+    document.getElementById("quickDescription").value = "";
+    document.getElementById("quickType").value = "";
+
+    const depositBtn = document.getElementById("quickDepositBtn");
+    const withdrawBtn = document.getElementById("quickWithdrawBtn");
+    if (depositBtn) {
+      depositBtn.classList.remove("border-emerald-500", "bg-emerald-500/10");
+      depositBtn.classList.add("border-gray-700");
+    }
+    if (withdrawBtn) {
+      withdrawBtn.classList.remove("border-orange-500", "bg-orange-500/10");
+      withdrawBtn.classList.add("border-gray-700");
+    }
+
+    document.getElementById("quickNetDisplay").classList.add("hidden");
+    document.getElementById("quickCustomerSearch").focus();
+  } catch (error) {
+    console.error("Quick transaction error:", error);
+    showNotification(
+      error.response?.data?.message || "Failed to process quick transaction",
+      "error",
+    );
+  } finally {
+    submitBtn.innerHTML = originalText;
+    submitBtn.disabled = false;
+  }
+}
+
 // ==================== INITIALIZATION ====================
 
 function selectRole(role) {
@@ -367,6 +833,8 @@ async function login() {
 
     if (response.data.token) {
       localStorage.setItem("token", response.data.token);
+      // Cache user data for offline/network error recovery
+      localStorage.setItem("cachedUser", JSON.stringify(response.data));
     }
 
     document.getElementById("loginScreen").classList.add("hidden");
@@ -507,6 +975,7 @@ function navigate(view) {
     "dormant-customers": "Dormant Customers",
     transactions:
       state.role === "admin" ? "Transaction Approvals" : "New Transaction",
+    "quick-transaction": "Quick Transaction",
     loans: "Loan & Overdraft Management",
     "loan-request": "Request Loan/Overdraft",
     "my-loans": "My Loan Requests",
@@ -516,7 +985,7 @@ function navigate(view) {
     "customer-reports": "Customer Reports",
     settings: "System Settings",
     "new-customer": "Register New Customer",
-    history: "Transaction History",
+    history: "My Transaction History",
   };
 
   document.getElementById("pageTitle").textContent = titles[view] || view;
@@ -538,6 +1007,9 @@ function navigate(view) {
       state.role === "admin"
         ? renderAdminTransactions(contentArea)
         : renderNewTransaction(contentArea);
+      break;
+    case "quick-transaction":
+      renderQuickTransaction(contentArea);
       break;
     case "loans":
       renderAdminLoans(contentArea);
@@ -762,7 +1234,7 @@ function renderDashboard(container) {
       <div class="lg:col-span-2 glass-panel rounded-xl sm:rounded-2xl p-4 sm:p-6 animate-fade-in">
         <div class="flex justify-between items-center mb-4 sm:mb-6">
           <h3 class="text-base sm:text-lg font-semibold">Recent Transactions</h3>
-          <button onclick="navigate('transactions')" class="text-xs sm:text-sm text-blue-400 hover:text-blue-300">View all</button>
+          <button onclick="navigate('history')" class="text-xs sm:text-sm text-blue-400 hover:text-blue-300">View all</button>
         </div>
         <div class="space-y-3 sm:space-y-4">
           ${recentTransactions
@@ -855,13 +1327,22 @@ function renderDashboard(container) {
                 <p class="text-xs text-gray-400">Create new account</p>
               </div>
             </button>
+            <button onclick="navigate('quick-transaction')" class="w-full p-3 sm:p-4 bg-gray-800 hover:bg-gray-700 rounded-xl flex items-center gap-3 transition-colors group border border-emerald-500/30">
+              <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center group-hover:bg-emerald-500 group-hover:text-white transition-colors">
+                <i class="fas fa-bolt text-sm sm:text-base"></i>
+              </div>
+              <div class="text-left">
+                <p class="font-medium text-sm sm:text-base">Quick Transaction</p>
+                <p class="text-xs text-gray-400">Process instantly - no approval needed</p>
+              </div>
+            </button>
             <button onclick="navigate('transactions')" class="w-full p-3 sm:p-4 bg-gray-800 hover:bg-gray-700 rounded-xl flex items-center gap-3 transition-colors group">
               <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-green-500/20 text-green-400 flex items-center justify-center group-hover:bg-green-500 group-hover:text-white transition-colors">
                 <i class="fas fa-plus-circle text-sm sm:text-base"></i>
               </div>
               <div class="text-left">
                 <p class="font-medium text-sm sm:text-base">New Transaction</p>
-                <p class="text-xs text-gray-400">Deposit or Withdrawal</p>
+                <p class="text-xs text-gray-400">Deposit or Withdrawal (requires approval)</p>
               </div>
             </button>
             <button onclick="navigate('loan-request')" class="w-full p-3 sm:p-4 bg-gray-800 hover:bg-gray-700 rounded-xl flex items-center gap-3 transition-colors group">
@@ -871,6 +1352,15 @@ function renderDashboard(container) {
               <div class="text-left">
                 <p class="font-medium text-sm sm:text-base">Request Loan</p>
                 <p class="text-xs text-gray-400">Apply for loan or overdraft</p>
+              </div>
+            </button>
+            <button onclick="navigate('history')" class="w-full p-3 sm:p-4 bg-gray-800 hover:bg-gray-700 rounded-xl flex items-center gap-3 transition-colors group">
+              <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-gray-500/20 text-gray-400 flex items-center justify-center group-hover:bg-gray-500 group-hover:text-white transition-colors">
+                <i class="fas fa-list-alt text-sm sm:text-base"></i>
+              </div>
+              <div class="text-left">
+                <p class="font-medium text-sm sm:text-base">View My History</p>
+                <p class="text-xs text-gray-400">All your transactions</p>
               </div>
             </button>
           `
@@ -1955,21 +2445,13 @@ async function processTransaction(
       return;
     }
 
-    // 1. FIX: Determine the correct endpoint to match your new Backend routes
-    // If action is 'approved' -> /transactions/ID/approve
-    // If action is 'rejected' -> /transactions/ID/reject
-    const endpoint = action === "approved" ? "/approve" : "/reject";
-
-    // 2. Prepare the data payload
     const updateData = {
       status: action,
       approvedBy: state.currentUser.name,
       approvedAt: new Date(),
-      rejectedBy: state.currentUser.name, // Added so backend knows who rejected it
-      reason: "", // You can expand this later to prompt for a reason
     };
 
-    // 3. Handle UI Notifications and Loan-specific data
+    // If approving a deposit with loan repayment
     if (
       action === "approved" &&
       transaction.type === "deposit" &&
@@ -1995,6 +2477,7 @@ async function processTransaction(
         `Loan Repayment: ₦${amount.toLocaleString()} | ` +
         `Available to Customer: ₦${transaction.netAmount.toLocaleString()}`;
 
+      // Show detailed notification
       let notifMessage = `✅ Approved! ₦${amount.toLocaleString()} deducted for loan repayment.`;
       if (fullyPaid) {
         notifMessage += ` 🎉 Loan FULLY PAID!`;
@@ -2004,6 +2487,7 @@ async function processTransaction(
       if (customer?.phone) {
         notifMessage += ` SMS sent to ${customer.phone}`;
       }
+
       showNotification(notifMessage, "success");
     } else if (action === "rejected") {
       showNotification(`❌ Transaction rejected`, "error");
@@ -2011,18 +2495,12 @@ async function processTransaction(
       showNotification(`✅ Transaction ${action}!`, "success");
     }
 
-    // 4. FIX: Call the specific endpoint (e.g., /transactions/TXN123/approve)
-    await api.patch(`/transactions/${txnId}${endpoint}`, updateData);
+    await api.patch(`/transactions/${txnId}`, updateData);
 
-    // 5. Refresh the UI
     closeStaffPendingModal();
     closeTransactionModal();
     await loadAllData();
-
-    // This ensures the page re-renders so the rejected transaction disappears from the list
-    if (refreshView) {
-      navigate(staffId ? "staff" : "transactions");
-    }
+    if (refreshView) navigate(staffId ? "staff" : "transactions");
   } catch (error) {
     console.error("Transaction processing error:", error);
     showNotification(
@@ -2031,6 +2509,7 @@ async function processTransaction(
     );
   }
 }
+
 // ==================== LOGOUT FUNCTION ====================
 
 function logout() {
@@ -5281,21 +5760,48 @@ function closeModal() {
 
 // ==================== AUTH CHECK ====================
 
-function checkAuth() {
+async function checkAuth() {
   const token = localStorage.getItem("token");
   if (token) {
-    api
-      .get("/verify")
-      .then((response) => {
-        state.currentUser = response.data.user;
-        state.role = response.data.user.role;
-        document.getElementById("loginScreen").classList.add("hidden");
-        document.getElementById("app").classList.remove("hidden");
-        initializeApp();
-      })
-      .catch(() => {
+    try {
+      const response = await api.get("/verify");
+      state.currentUser = response.data.user;
+      state.role = response.data.user.role;
+
+      document.getElementById("loginScreen").classList.add("hidden");
+      document.getElementById("app").classList.remove("hidden");
+
+      await initializeApp();
+    } catch (error) {
+      console.error("Auth verification failed:", error);
+      // Only clear token if it's actually invalid (401), not for network errors
+      if (error.response?.status === 401) {
         localStorage.removeItem("token");
-      });
+        localStorage.removeItem("cachedUser");
+        state.currentUser = null;
+        state.role = null;
+      } else {
+        // For network errors, keep the token and show app (will retry)
+        showNotification(
+          "Connection issue. Some features may be limited.",
+          "warning",
+        );
+        // Try to use cached user data if available
+        const cachedUser = localStorage.getItem("cachedUser");
+        if (cachedUser) {
+          try {
+            const user = JSON.parse(cachedUser);
+            state.currentUser = user;
+            state.role = user.role;
+            document.getElementById("loginScreen").classList.add("hidden");
+            document.getElementById("app").classList.remove("hidden");
+            await initializeApp();
+          } catch (e) {
+            console.error("Failed to restore cached user", e);
+          }
+        }
+      }
+    }
   }
 }
 
@@ -5306,6 +5812,19 @@ window.recordRepayment = recordRepayment;
 window.filterCustomersByBalance = filterCustomersByBalance;
 window.viewCustomerLoans = viewCustomerLoans;
 window.closeCustomerLoansModal = closeCustomerLoansModal;
+
+// Make Quick Transaction functions globally available
+window.renderQuickTransaction = renderQuickTransaction;
+window.handleQuickTransaction = handleQuickTransaction;
+window.initQuickSearch = initQuickSearch;
+window.filterQuickCustomers = filterQuickCustomers;
+window.selectQuickCustomer = selectQuickCustomer;
+window.clearQuickCustomer = clearQuickCustomer;
+window.setQuickType = setQuickType;
+window.setQuickAmount = setQuickAmount;
+window.updateQuickNet = updateQuickNet;
+window.validateQuickAmount = validateQuickAmount;
+window.validateQuickForm = validateQuickForm;
 
 // Initialize
 window.onload = () => {

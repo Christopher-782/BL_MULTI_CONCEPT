@@ -1,4 +1,3 @@
-// routes/transactions.js
 const express = require("express");
 const router = express.Router();
 const {
@@ -18,8 +17,7 @@ router.get("/transactions/customer/:customerId", getTransactionsByCustomer);
 // POST route
 router.post("/transactions", createTransaction);
 
-// PATCH routes - FIXED parameter names
-router.patch("/transactions/:transactionId", approveTransaction);
+router.patch("/transactions/:transactionId/approve", approveTransaction);
 router.patch("/transactions/:transactionId/reject", rejectTransaction);
 
 module.exports = router;
