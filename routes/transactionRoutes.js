@@ -20,6 +20,6 @@ router.post("/", createTransaction);
 
 // PATCH routes (Notice we removed "/transactions")
 router.patch("/:transactionId/approve", approveTransaction);
-router.patch("/transaction/:transactionId/reject", rejectTransaction); // Fixed potential typo
+router.patch("/:transactionId/reject", rejectTransaction);
 
 module.exports = router;
