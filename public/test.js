@@ -4618,35 +4618,49 @@ async function renderRevenueReports(container) {
   }
 }
 function renderStaffReconciliation(container) {
+  // Get today's date boundaries
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const endOfDay = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + 1,
+  );
+
+  // Only consider approved transactions from TODAY for daily reconciliation
+  const todayTransactions = state.transactions.filter((t) => {
+    if (t.status !== "approved") return false;
+
+    const txnDate = new Date(t.date || t.approvedAt || t.createdAt);
+    return txnDate >= startOfDay && txnDate < endOfDay;
+  });
+
   // Grouping logic
   const staffStats = {};
 
-  // Only consider approved transactions for official reconciliation
-  state.transactions
-    .filter((t) => t.status === "approved")
-    .forEach((t) => {
-      const sId = t.requestedById || t.staffId || "unknown";
-      const sName = t.staffName || t.requestedBy || "Unknown Staff";
+  todayTransactions.forEach((t) => {
+    const sId = t.requestedById || t.staffId || "unknown";
+    const sName = t.staffName || t.requestedBy || "Unknown Staff";
 
-      if (!staffStats[sId]) {
-        staffStats[sId] = {
-          name: sName,
-          deposits: 0,
-          withdrawals: 0,
-          net: 0,
-          count: 0,
-        };
-      }
+    if (!staffStats[sId]) {
+      staffStats[sId] = {
+        name: sName,
+        deposits: 0,
+        withdrawals: 0,
+        net: 0,
+        count: 0,
+      };
+    }
 
-      const amount = t.amount || 0;
-      if (t.type === "deposit") {
-        staffStats[sId].deposits += amount;
-      } else if (t.type === "withdrawal") {
-        staffStats[sId].withdrawals += amount;
-      }
+    const amount = t.amount || 0;
+    if (t.type === "deposit") {
+      staffStats[sId].deposits += amount;
+    } else if (t.type === "withdrawal") {
+      staffStats[sId].withdrawals += amount;
+    }
 
-      staffStats[sId].count++;
-    });
+    staffStats[sId].count++;
+  });
 
   const staffList = Object.values(staffStats).map((stat) => {
     stat.net = stat.deposits - stat.withdrawals;
@@ -4663,71 +4677,90 @@ function renderStaffReconciliation(container) {
     <div class="space-y-6 animate-fade-in px-4 sm:px-0">
       <div class="flex justify-between items-center">
         <h3 class="text-lg font-semibold">End-of-Day Staff Reconciliation</h3>
-        <button onclick="refreshData()" class="text-blue-400 hover:text-blue-300 text-sm">
-          <i class="fas fa-sync-alt mr-1"></i> Refresh
-        </button>
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-gray-400 bg-gray-800 px-3 py-1 rounded-full">
+            <i class="fas fa-calendar-day mr-1"></i>${now.toLocaleDateString("en-GB")}
+          </span>
+          <button onclick="refreshData()" class="text-blue-400 hover:text-blue-300 text-sm">
+            <i class="fas fa-sync-alt mr-1"></i> Refresh
+          </button>
+        </div>
       </div>
 
       <!-- Summary Cards -->
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div class="glass-panel p-4 rounded-xl border-l-4 border-green-500">
-          <p class="text-xs text-gray-400">Total Staff Deposits</p>
+          <p class="text-xs text-gray-400">Today's Staff Deposits</p>
           <p class="text-xl font-bold text-green-400">₦${totalSystemDeposits.toLocaleString()}</p>
+          <p class="text-xs text-gray-500 mt-1">${todayTransactions.filter((t) => t.type === "deposit").length} deposit transactions</p>
         </div>
         <div class="glass-panel p-4 rounded-xl border-l-4 border-orange-500">
-          <p class="text-xs text-gray-400">Total Staff Withdrawals</p>
+          <p class="text-xs text-gray-400">Today's Staff Withdrawals</p>
           <p class="text-xl font-bold text-orange-400">₦${totalSystemWithdrawals.toLocaleString()}</p>
+          <p class="text-xs text-gray-500 mt-1">${todayTransactions.filter((t) => t.type === "withdrawal").length} withdrawal transactions</p>
         </div>
         <div class="glass-panel p-4 rounded-xl border-l-4 border-blue-500">
-          <p class="text-xs text-gray-400">System Net Position</p>
+          <p class="text-xs text-gray-400">Today's Net Position</p>
           <p class="text-xl font-bold text-blue-400">₦${(totalSystemDeposits - totalSystemWithdrawals).toLocaleString()}</p>
+          <p class="text-xs text-gray-500 mt-1">${todayTransactions.length} total transactions</p>
         </div>
       </div>
 
-      <div class="glass-panel rounded-2xl overflow-hidden">
-        <table class="min-w-full divide-y divide-gray-700">
-          <thead class="bg-gray-800/50">
-            <tr>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Staff Member</th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Total Deposits</th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Total Withdrawals</th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Net Position</th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Txns</th>
-            </tr>
-          </thead>
-          <tbody class="bg-gray-900/20 divide-y divide-gray-800">
-            ${
-              staffList.length > 0
-                ? staffList
-                    .map(
-                      (s) => `
-                <tr class="hover:bg-gray-800/30 transition-colors">
-                  <td class="px-6 py-4 whitespace-nowrap">
-                    <div class="flex items-center">
-                      <div class="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold mr-3 text-xs">
-                        ${s.name
-                          .split(" ")
-                          .map((n) => n[0])
-                          .join("")}
-                      </div>
-                      <span class="text-sm font-medium text-white">${s.name}</span>
-                    </div>
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-green-400 font-mono">₦${s.deposits.toLocaleString()}</td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-orange-400 font-mono">₦${s.withdrawals.toLocaleString()}</td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm font-bold ${s.net >= 0 ? "text-blue-400" : "text-red-400"} font-mono">
-                    ₦${s.net.toLocaleString()}
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">${s.count}</td>
-                </tr>
-              `,
-                    )
-                    .join("")
-                : `<tr><td colspan="5" class="px-6 py-10 text-center text-gray-500">No approved transaction data found for reconciliation.</td></tr>`
-            }
-          </tbody>
-        </table>
-      </div>
+      ${
+        todayTransactions.length === 0
+          ? `<div class="glass-panel rounded-2xl p-8 text-center">
+              <div class="w-16 h-16 mx-auto bg-gray-800 rounded-full flex items-center justify-center mb-4">
+                <i class="fas fa-clipboard-check text-gray-500 text-2xl"></i>
+              </div>
+              <h4 class="text-lg font-semibold mb-2">No Transactions Today</h4>
+              <p class="text-sm text-gray-400">All transactions have been processed and cleared. Ready for a new day.</p>
+              <p class="text-xs text-gray-500 mt-2">Last updated: ${now.toLocaleTimeString("en-GB")}</p>
+            </div>`
+          : `<div class="glass-panel rounded-2xl overflow-hidden">
+              <table class="min-w-full divide-y divide-gray-700">
+                <thead class="bg-gray-800/50">
+                  <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Staff Member</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Total Deposits</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Total Withdrawals</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Net Position</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Txns</th>
+                  </tr>
+                </thead>
+                <tbody class="bg-gray-900/20 divide-y divide-gray-800">
+                  ${
+                    staffList.length > 0
+                      ? staffList
+                          .map(
+                            (s) => `
+                          <tr class="hover:bg-gray-800/30 transition-colors">
+                            <td class="px-6 py-4 whitespace-nowrap">
+                              <div class="flex items-center">
+                                <div class="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold mr-3 text-xs">
+                                  ${s.name
+                                    .split(" ")
+                                    .map((n) => n[0])
+                                    .join("")}
+                                </div>
+                                <span class="text-sm font-medium text-white">${s.name}</span>
+                              </div>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-green-400 font-mono">₦${s.deposits.toLocaleString()}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-orange-400 font-mono">₦${s.withdrawals.toLocaleString()}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-bold ${s.net >= 0 ? "text-blue-400" : "text-red-400"} font-mono">
+                              ₦${s.net.toLocaleString()}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">${s.count}</td>
+                          </tr>
+                        `,
+                          )
+                          .join("")
+                      : `<tr><td colspan="5" class="px-6 py-10 text-center text-gray-500">No approved transaction data found for today.</td></tr>`
+                  }
+                </tbody>
+              </table>
+            </div>`
+      }
       
       <div class="text-center">
         <button onclick="window.print()" class="px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition-colors">
@@ -4739,7 +4772,6 @@ function renderStaffReconciliation(container) {
 
   container.innerHTML = html;
 }
-
 // ==================== DORMANT CUSTOMERS SECTION ====================
 
 function renderDormantCustomers(container) {
