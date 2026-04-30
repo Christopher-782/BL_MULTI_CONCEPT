@@ -2608,7 +2608,7 @@ async function processTransaction(
     // 4. Prepare the base payload
     let updateData = {
       status: action,
-      approvedBy: state.currentUser.name, // Used for both approval and rejection
+      approvedBy: state.currentUser.name,
       approvedAt: new Date(),
     };
 
@@ -2626,10 +2626,7 @@ async function processTransaction(
 
       await api.patch(`/transactions/${txnId}${endpoint}`, updateData);
 
-      showNotification(
-        `❌ Transaction rejected. Customer balance unchanged.`,
-        "error",
-      );
+      showNotification(`TRANSACTION REJECTED.`, "error");
 
       // Cleanup UI
       closeStaffPendingModal();
@@ -2675,9 +2672,9 @@ async function processTransaction(
         `Available to Customer: ₦${transaction.netAmount.toLocaleString()}`;
 
       // Detailed success notification
-      let notifMessage = `✅ Approved! ₦${amount.toLocaleString()} deducted for loan repayment.`;
+      let notifMessage = `Approved! ₦${amount.toLocaleString()} deducted for loan repayment.`;
       if (fullyPaid) {
-        notifMessage += ` 🎉 Loan FULLY PAID!`;
+        notifMessage += ` Loan FULLY PAID!`;
       } else {
         notifMessage += ` ₦${outstandingAfter.toLocaleString()} remaining.`;
       }
