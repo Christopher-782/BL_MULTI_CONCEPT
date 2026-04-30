@@ -4618,21 +4618,16 @@ async function renderRevenueReports(container) {
   }
 }
 function renderStaffReconciliation(container) {
-  // Get today's date boundaries
+  // Get today's date as YYYY-MM-DD in local time
   const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const endOfDay = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() + 1,
-  );
+  const todayStr = now.toLocaleDateString("en-CA");
 
-  // Only consider approved transactions from TODAY for daily reconciliation
+  // Include ALL transactions submitted today (pending, approved, rejected)
+  // This shows what staff actually did today, regardless of approval status
   const todayTransactions = state.transactions.filter((t) => {
-    if (t.status !== "approved") return false;
-
     const txnDate = new Date(t.date || t.approvedAt || t.createdAt);
-    return txnDate >= startOfDay && txnDate < endOfDay;
+    const txnDateStr = txnDate.toLocaleDateString("en-CA");
+    return txnDateStr === todayStr;
   });
 
   // Grouping logic
@@ -4649,6 +4644,9 @@ function renderStaffReconciliation(container) {
         withdrawals: 0,
         net: 0,
         count: 0,
+        pendingCount: 0,
+        approvedCount: 0,
+        rejectedCount: 0,
       };
     }
 
@@ -4660,6 +4658,12 @@ function renderStaffReconciliation(container) {
     }
 
     staffStats[sId].count++;
+
+    // Track status breakdown
+    const status = t.status?.toString().toLowerCase();
+    if (status === "pending") staffStats[sId].pendingCount++;
+    else if (status === "approved") staffStats[sId].approvedCount++;
+    else if (status === "rejected") staffStats[sId].rejectedCount++;
   });
 
   const staffList = Object.values(staffStats).map((stat) => {
@@ -4672,6 +4676,16 @@ function renderStaffReconciliation(container) {
     (sum, s) => sum + s.withdrawals,
     0,
   );
+
+  const totalPending = todayTransactions.filter(
+    (t) => t.status?.toString().toLowerCase() === "pending",
+  ).length;
+  const totalApproved = todayTransactions.filter(
+    (t) => t.status?.toString().toLowerCase() === "approved",
+  ).length;
+  const totalRejected = todayTransactions.filter(
+    (t) => t.status?.toString().toLowerCase() === "rejected",
+  ).length;
 
   const html = `
     <div class="space-y-6 animate-fade-in px-4 sm:px-0">
@@ -4688,78 +4702,93 @@ function renderStaffReconciliation(container) {
       </div>
 
       <!-- Summary Cards -->
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div class="glass-panel p-4 rounded-xl border-l-4 border-green-500">
-          <p class="text-xs text-gray-400">Today's Staff Deposits</p>
+          <p class="text-xs text-gray-400">Today's Deposits</p>
           <p class="text-xl font-bold text-green-400">₦${totalSystemDeposits.toLocaleString()}</p>
-          <p class="text-xs text-gray-500 mt-1">${todayTransactions.filter((t) => t.type === "deposit").length} deposit transactions</p>
+          <p class="text-xs text-gray-500 mt-1">${todayTransactions.filter((t) => t.type === "deposit").length} deposits</p>
         </div>
         <div class="glass-panel p-4 rounded-xl border-l-4 border-orange-500">
-          <p class="text-xs text-gray-400">Today's Staff Withdrawals</p>
+          <p class="text-xs text-gray-400">Today's Withdrawals</p>
           <p class="text-xl font-bold text-orange-400">₦${totalSystemWithdrawals.toLocaleString()}</p>
-          <p class="text-xs text-gray-500 mt-1">${todayTransactions.filter((t) => t.type === "withdrawal").length} withdrawal transactions</p>
+          <p class="text-xs text-gray-500 mt-1">${todayTransactions.filter((t) => t.type === "withdrawal").length} withdrawals</p>
         </div>
         <div class="glass-panel p-4 rounded-xl border-l-4 border-blue-500">
-          <p class="text-xs text-gray-400">Today's Net Position</p>
+          <p class="text-xs text-gray-400">Net Position</p>
           <p class="text-xl font-bold text-blue-400">₦${(totalSystemDeposits - totalSystemWithdrawals).toLocaleString()}</p>
-          <p class="text-xs text-gray-500 mt-1">${todayTransactions.length} total transactions</p>
+          <p class="text-xs text-gray-500 mt-1">${todayTransactions.length} total</p>
+        </div>
+        <div class="glass-panel p-4 rounded-xl border-l-4 border-purple-500">
+          <p class="text-xs text-gray-400">Status Breakdown</p>
+          <div class="flex gap-2 mt-2 text-xs">
+            <span class="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded-full">${totalPending} pending</span>
+            <span class="px-2 py-1 bg-green-500/20 text-green-400 rounded-full">${totalApproved} approved</span>
+            <span class="px-2 py-1 bg-red-500/20 text-red-400 rounded-full">${totalRejected} rejected</span>
+          </div>
         </div>
       </div>
 
       ${
         todayTransactions.length === 0
           ? `<div class="glass-panel rounded-2xl p-8 text-center">
-              <div class="w-16 h-16 mx-auto bg-gray-800 rounded-full flex items-center justify-center mb-4">
-                <i class="fas fa-clipboard-check text-gray-500 text-2xl"></i>
-              </div>
-              <h4 class="text-lg font-semibold mb-2">No Transactions Today</h4>
-              <p class="text-sm text-gray-400">All transactions have been processed and cleared. Ready for a new day.</p>
-              <p class="text-xs text-gray-500 mt-2">Last updated: ${now.toLocaleTimeString("en-GB")}</p>
-            </div>`
+            <div class="w-16 h-16 mx-auto bg-gray-800 rounded-full flex items-center justify-center mb-4">
+              <i class="fas fa-clipboard-check text-gray-500 text-2xl"></i>
+            </div>
+            <h4 class="text-lg font-semibold mb-2">No Transactions Today</h4>
+            <p class="text-sm text-gray-400">No transactions recorded for today yet.</p>
+          </div>`
           : `<div class="glass-panel rounded-2xl overflow-hidden">
-              <table class="min-w-full divide-y divide-gray-700">
-                <thead class="bg-gray-800/50">
-                  <tr>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Staff Member</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Total Deposits</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Total Withdrawals</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Net Position</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Txns</th>
-                  </tr>
-                </thead>
-                <tbody class="bg-gray-900/20 divide-y divide-gray-800">
-                  ${
-                    staffList.length > 0
-                      ? staffList
-                          .map(
-                            (s) => `
-                          <tr class="hover:bg-gray-800/30 transition-colors">
-                            <td class="px-6 py-4 whitespace-nowrap">
-                              <div class="flex items-center">
-                                <div class="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold mr-3 text-xs">
-                                  ${s.name
-                                    .split(" ")
-                                    .map((n) => n[0])
-                                    .join("")}
-                                </div>
-                                <span class="text-sm font-medium text-white">${s.name}</span>
-                              </div>
-                            </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-green-400 font-mono">₦${s.deposits.toLocaleString()}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-orange-400 font-mono">₦${s.withdrawals.toLocaleString()}</td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm font-bold ${s.net >= 0 ? "text-blue-400" : "text-red-400"} font-mono">
-                              ₦${s.net.toLocaleString()}
-                            </td>
-                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">${s.count}</td>
-                          </tr>
-                        `,
-                          )
-                          .join("")
-                      : `<tr><td colspan="5" class="px-6 py-10 text-center text-gray-500">No approved transaction data found for today.</td></tr>`
-                  }
-                </tbody>
-              </table>
-            </div>`
+            <table class="min-w-full divide-y divide-gray-700">
+              <thead class="bg-gray-800/50">
+                <tr>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Staff Member</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Deposits</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Withdrawals</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Net</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Txns</th>
+                </tr>
+              </thead>
+              <tbody class="bg-gray-900/20 divide-y divide-gray-800">
+                ${
+                  staffList.length > 0
+                    ? staffList
+                        .map(
+                          (s) => `
+                    <tr class="hover:bg-gray-800/30 transition-colors">
+                      <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="flex items-center">
+                          <div class="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold mr-3 text-xs">
+                            ${s.name
+                              .split(" ")
+                              .map((n) => n[0])
+                              .join("")}
+                          </div>
+                          <span class="text-sm font-medium text-white">${s.name}</span>
+                        </div>
+                      </td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-green-400 font-mono">₦${s.deposits.toLocaleString()}</td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-orange-400 font-mono">₦${s.withdrawals.toLocaleString()}</td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm font-bold ${s.net >= 0 ? "text-blue-400" : "text-red-400"} font-mono">
+                        ₦${s.net.toLocaleString()}
+                      </td>
+                      <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="flex gap-1 text-xs">
+                          ${s.pendingCount > 0 ? `<span class="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded">${s.pendingCount} ⏳</span>` : ""}
+                          ${s.approvedCount > 0 ? `<span class="px-2 py-0.5 bg-green-500/20 text-green-400 rounded">${s.approvedCount} ✓</span>` : ""}
+                          ${s.rejectedCount > 0 ? `<span class="px-2 py-0.5 bg-red-500/20 text-red-400 rounded">${s.rejectedCount} ✗</span>` : ""}
+                        </div>
+                      </td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">${s.count}</td>
+                    </tr>
+                  `,
+                        )
+                        .join("")
+                    : `<tr><td colspan="6" class="px-6 py-10 text-center text-gray-500">No transaction data found for today.</td></tr>`
+                }
+              </tbody>
+            </table>
+          </div>`
       }
       
       <div class="text-center">
