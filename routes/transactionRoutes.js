@@ -17,7 +17,7 @@ router.get("/transactions/customer/:customerId", getTransactionsByCustomer);
 // POST route
 router.post("/transactions", createTransaction);
 
-router.patch("/transactions/:transactionId/approve", approveTransaction);
-router.patch("/transactions/:transactionId/reject", rejectTransaction);
+router.patch("/:transactionId/approve", approveTransaction);
+router.patch("/:transactionId/reject", rejectTransaction);
 
 module.exports = router;
