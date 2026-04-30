@@ -2575,62 +2575,90 @@ async function processTransaction(
   refreshView = true,
   staffId = null,
 ) {
+  // 1. DEBUG: Log the initial input
+  console.log(
+    `%c[DEBUG] processTransaction started | Action: ${action} | txnId: ${txnId}`,
+    "color: cyan; font-weight: bold;",
+  );
+  console.log("[DEBUG] Input parameters:", {
+    txnId,
+    action,
+    refreshView,
+    staffId,
+  });
+
   try {
+    // 2. Find the transaction in the local state
     const transaction = state.transactions.find((t) => t.id === txnId);
 
     if (!transaction) {
+      console.error(
+        `[DEBUG] ERROR: Transaction with ID ${txnId} not found in state.transactions`,
+      );
       showNotification("Transaction not found", "error");
       return;
     }
 
-    // === REJECTION LOGIC ===
-    if (action === "rejected") {
-      const updateData = {
-        status: "rejected",
-        rejectedBy: state.currentUser.name,
-        rejectedAt: new Date(),
-        // This flag tells your BACKEND not to change any balances
-        isRejection: true,
-      };
+    console.log("[DEBUG] Transaction found in state:", transaction);
 
-      await api.patch(`/transactions/${txnId}`, updateData);
+    // 3. FIX: Determine the specific endpoint based on the action
+    // This ensures we hit: /transactions/TXN123/approve OR /transactions/TXN123/reject
+    const endpoint = action === "approved" ? "/approve" : "/reject";
+
+    // 4. Prepare the base payload
+    let updateData = {
+      status: action,
+      approvedBy: state.currentUser.name, // Used for both approval and rejection
+      approvedAt: new Date(),
+    };
+
+    // 5. ROUTING BRANCH: REJECTION
+    if (action === "rejected") {
+      console.log("[DEBUG] Entering REJECTION branch");
+
+      // Add specific fields required for rejection
+      updateData.rejectedBy = state.currentUser.name;
+      updateData.rejectedAt = new Date();
+      updateData.isRejection = true; // IMPORTANT: Tells backend NOT to change balances
+
+      console.log("[DEBUG] Rejection Payload:", updateData);
+      console.log(`[DEBUG] TARGET URL: /transactions/${txnId}${endpoint}`);
+
+      await api.patch(`/transactions/${txnId}${endpoint}`, updateData);
 
       showNotification(
         `❌ Transaction rejected. Customer balance unchanged.`,
         "error",
       );
 
+      // Cleanup UI
       closeStaffPendingModal();
       closeTransactionModal();
-
-      // 1. Fetch the fresh data from server
       await loadAllData();
 
-      // 2. FIX: Force the UI to re-render the current view so the item disappears
-      navigate(state.currentView);
-      return;
+      // Fixes the "page did not refresh" issue
+      if (refreshView) navigate(state.currentView);
+      return; // Exit early so we don't run approval logic
     }
 
-    // === APPROVAL LOGIC ===
-    const updateData = {
-      status: action,
-      approvedBy: state.currentUser.name,
-      approvedAt: new Date(),
-    };
+    // 6. ROUTING BRANCH: APPROVAL
+    console.log("[DEBUG] Entering APPROVAL branch");
 
-    // If approving a deposit with loan repayment
+    // Handle specific case: Deposit that triggers a Loan Repayment
     if (
       action === "approved" &&
       transaction.type === "deposit" &&
       transaction.loanDeduction > 0
     ) {
+      console.log("[DEBUG] Loan Repayment logic triggered for this approval");
+
       const { loanId, amount, fullyPaid, outstandingAfter } =
         transaction.loanRepaymentInfo;
-
       const customer = state.customers.find(
         (c) => c.id === transaction.customerId,
       );
 
+      // Add loan repayment details to the payload
       updateData.loanRepayment = {
         loanId,
         amount,
@@ -2639,39 +2667,70 @@ async function processTransaction(
         outstandingAfter,
       };
 
+      // Create the detailed description
       updateData.finalDescription =
         `Deposit: ₦${transaction.amount.toLocaleString()} | ` +
         `Charges: ₦${(transaction.charges || 0).toLocaleString()} | ` +
         `Loan Repayment: ₦${amount.toLocaleString()} | ` +
         `Available to Customer: ₦${transaction.netAmount.toLocaleString()}`;
 
+      // Detailed success notification
       let notifMessage = `✅ Approved! ₦${amount.toLocaleString()} deducted for loan repayment.`;
-
       if (fullyPaid) {
-        notifMessage += ` Loan FULLY PAID!`;
+        notifMessage += ` 🎉 Loan FULLY PAID!`;
       } else {
         notifMessage += ` ₦${outstandingAfter.toLocaleString()} remaining.`;
       }
-
       if (customer?.phone) {
         notifMessage += ` SMS sent to ${customer.phone}`;
       }
-
       showNotification(notifMessage, "success");
     } else {
+      // Standard approval notification
       showNotification(`✅ Transaction ${action}!`, "success");
     }
 
-    await api.patch(`/transactions/${txnId}`, updateData);
+    // 7. EXECUTE THE API CALL
+    console.log(
+      `%c[DEBUG] SENDING API PATCH REQUEST TO: /transactions/${txnId}${endpoint}`,
+      "color: yellow; font-weight: bold;",
+    );
+    console.log("[DEBUG] Final Payload being sent:", updateData);
 
+    await api.patch(`/transactions/${txnId}${endpoint}`, updateData);
+
+    console.log(
+      "%c[DEBUG] API CALL SUCCESSFUL",
+      "color: green; font-weight: bold;",
+    );
+
+    // 8. CLEANUP & REFRESH UI
     closeStaffPendingModal();
     closeTransactionModal();
     await loadAllData();
 
-    // Auto-refresh the current view to show updated data
-    navigate(state.currentView);
+    // Fixes the "page did not refresh" issue
+    if (refreshView) navigate(state.currentView);
   } catch (error) {
-    console.error("Transaction processing error:", error);
+    // 9. DEEP ERROR LOGGING
+    console.error(
+      "%c[DEBUG] TRANSACTION PROCESSING FAILED",
+      "color: red; font-weight: bold;",
+    );
+    console.error("[DEBUG] Full Error Object:", error);
+
+    if (error.response) {
+      console.error(
+        "[DEBUG] Server responded with status:",
+        error.response.status,
+      );
+      console.error(
+        "[DEBUG] Server Response Data (Crucial):",
+        error.response.data,
+      );
+    } else {
+      console.error("[DEBUG] Error message:", error.message);
+    }
 
     showNotification(
       error.response?.data?.message || "Failed to process transaction",

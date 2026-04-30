@@ -1,3 +1,4 @@
+// transactionRoute.js
 const express = require("express");
 const router = express.Router();
 const {
@@ -9,15 +10,16 @@ const {
   getTransactionsByCustomer,
 } = require("../controllers/transactionController");
 
-// GET routes
-router.get("/transactions", getAllTransactions);
-router.get("/transactions/stats", getTransactionStats);
-router.get("/transactions/customer/:customerId", getTransactionsByCustomer);
+// GET routes (Notice we removed "/transactions")
+router.get("/", getAllTransactions);
+router.get("/stats", getTransactionStats);
+router.get("/customer/:customerId", getTransactionsByCustomer);
 
 // POST route
-router.post("/transactions", createTransaction);
+router.post("/", createTransaction);
 
+// PATCH routes (Notice we removed "/transactions")
 router.patch("/:transactionId/approve", approveTransaction);
-router.patch("/:transactionId/reject", rejectTransaction);
+router.patch("/transaction/:transactionId/reject", rejectTransaction); // Fixed potential typo
 
 module.exports = router;

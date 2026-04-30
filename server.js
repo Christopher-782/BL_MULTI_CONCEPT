@@ -21,7 +21,7 @@ app.use(express.static("public"));
 // Routes
 app.use("/", staffRouter);
 app.use("/", customerRouter);
-app.use("/", transactionRouter);
+app.use("/transactions", transactionRouter);
 app.use("/", loanRoutes);
 app.use("/", reportRoutes);
 
