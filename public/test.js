@@ -181,7 +181,12 @@ const menus = {
       id: "staff-reconciliation",
       icon: "fa-file-invoice-dollar",
       label: "Staff Reconciliation",
-    }, // Add this
+    },
+    {
+      id: "repayments",
+      icon: "fa-calendar-check",
+      label: "Repayment Management",
+    },
   ],
   staff: [
     { id: "dashboard", icon: "fa-chart-line", label: "Dashboard" },
@@ -1149,6 +1154,9 @@ function navigate(view) {
     case "staff-reconciliation":
       renderStaffReconciliation(contentArea); // Add this
       break;
+    case "repayments":
+      renderRepaymentManagement(contentArea);
+      break;
     default:
       renderDashboard(contentArea);
   }
@@ -1543,7 +1551,194 @@ function renderDashboard(container) {
   `;
   container.innerHTML = html;
 }
-// ==================== CUSTOMERS VIEW ====================
+
+// ==================== REPAYMENT MANAGEMENT VIEW ====================
+
+function renderRepaymentManagement(container) {
+  const activeLoans =
+    state.loans?.filter(
+      (l) => l.status === "active" || l.status === "overdraft",
+    ) || [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // 1. Extract all due installments from all active loans
+  let dueInstallments = [];
+
+  activeLoans.forEach((loan) => {
+    const customer = state.customers.find((c) => c.id === loan.customerId);
+    if (!customer) return;
+
+    if (loan.repayments && loan.repayments.length > 0) {
+      loan.repayments.forEach((repayment) => {
+        const dueDate = new Date(repayment.dueDate);
+
+        // If repayment is pending/overdue and the date has passed or is today
+        if (repayment.status !== "paid" && dueDate <= today) {
+          dueInstallments.push({
+            loanId: loan.id,
+            repaymentId: repayment.id,
+            customerName: loan.customerName,
+            customerId: loan.customerId,
+            amount: repayment.amount,
+            dueDate: repayment.dueDate,
+            type: loan.type, // 'loan' or 'overdraft'
+            status: repayment.status, // 'pending' or 'overdue'
+          });
+        }
+      });
+    }
+  });
+
+  // Sort: Overdue first, then by date
+  dueInstallments.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+
+  const overdueCount = dueInstallments.filter(
+    (i) => new Date(i.dueDate) < today,
+  ).length;
+  const dueTodayCount = dueInstallments.filter(
+    (i) => new Date(i.dueDate).toDateString() === today.toDateString(),
+  ).length;
+
+  const html = `
+    <div class="space-y-6 animate-fade-in px-4 sm:px-0">
+      <div class="flex justify-between items-center">
+        <div>
+          <h3 class="text-xl font-bold">Repayment Management</h3>
+          <p class="text-sm text-gray-400">Manually collect outstanding installments</p>
+        </div>
+        <button onclick="refreshData()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors">
+          <i class="fas fa-sync-alt mr-2"></i>Refresh
+        </button>
+      </div>
+
+      <!-- Summary Stats -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="glass-panel p-4 rounded-xl border-l-4 border-red-500">
+          <p class="text-xs text-gray-400 uppercase font-bold">Total Overdue</p>
+          <p class="text-2xl font-bold text-red-400">${overdueCount} Installments</p>
+        </div>
+        <div class="glass-panel p-4 rounded-xl border-l-4 border-yellow-500">
+          <p class="text-xs text-gray-400 uppercase font-bold">Due Today</p>
+          <p class="text-2xl font-bold text-yellow-400">${dueTodayCount} Installments</p>
+        </div>
+      </div>
+
+      <!-- Repayment Table -->
+      <div class="glass-panel rounded-2xl overflow-hidden">
+        <table class="min-w-full divide-y divide-gray-700">
+          <thead class="bg-gray-800/50">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Customer</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Type</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Amount Due</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Due Date</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Status</th>
+              <th class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase">Action</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800">
+            ${
+              dueInstallments.length === 0
+                ? `<tr><td colspan="6" class="px-6 py-12 text-center text-gray-500">No pending or overdue repayments found.</td></tr>`
+                : dueInstallments
+                    .map(
+                      (inst) => `
+                <tr class="hover:bg-gray-800/30 transition-colors">
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm font-medium text-white">${inst.customerName}</div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <span class="px-2 py-1 rounded-full text-[10px] font-bold uppercase ${inst.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
+                      ${inst.type}
+                    </span>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap font-mono text-sm text-white">
+                    ₦${inst.amount.toLocaleString()}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
+                    ${formatSimpleDate(inst.dueDate)}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <span class="px-2 py-1 rounded text-xs ${inst.status === "overdue" ? "bg-red-500/20 text-red-400" : "bg-yellow-500/20 text-yellow-400"}">
+                      ${inst.status.toUpperCase()}
+                    </span>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <button onclick="handleManualCollection('${inst.loanId}', '${inst.repaymentId}', '${inst.customerId}', ${inst.amount}, '${inst.customerName}')" 
+                      class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition-all flex items-center justify-center ml-auto gap-2">
+                      <i class="fas fa-hand-holding-usd"></i> Collect
+                    </button>
+                  </td>
+                </tr>
+              `,
+                    )
+                    .join("")
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  container.innerHTML = html;
+}
+
+/**
+ * The logic to perform the manual collection
+ * This performs a withdrawal from the customer and marks the loan repayment as paid
+ */
+async function handleManualCollection(
+  loanId,
+  repaymentId,
+  customerId,
+  amount,
+  customerName,
+) {
+  // 1. Confirmation
+  if (
+    !confirm(`Confirm Collection: 
+  
+  This will deduct ₦${amount.toLocaleString()} from ${customerName}'s balance and record it as a loan repayment.
+  
+  Continue?`)
+  ) {
+    return;
+  }
+
+  try {
+    showNotification("Processing collection...", "info");
+
+    // 2. Call your existing PATCH route
+    // We send 'paidBy' to match your backend: const { paidBy, paymentAmount } = req.body;
+    await api.patch(`/loans/${loanId}/repayments/${repaymentId}`, {
+      paidBy: state.currentUser.name,
+      paymentAmount: amount, // Passing this explicitly ensures the backend uses the correct amount
+    });
+
+    // 3. Success Handling
+    showNotification(
+      `Successfully collected ₦${amount.toLocaleString()} from ${customerName}`,
+      "success",
+    );
+
+    // 4. Refresh all data
+    // This will update the Customer Balance, the Loan Status, and the Transaction History
+    await loadAllData();
+
+    // 5. Re-render the Repayment Management page to clear the item from the list
+    renderRepaymentManagement(document.getElementById("contentArea"));
+  } catch (error) {
+    console.error("Manual collection error:", error);
+
+    // 6. Error Handling
+    // This will catch your backend's "Insufficient funds" error and show it to the Admin
+    const errorMsg =
+      error.response?.data?.error ||
+      "Failed to collect payment. Check customer balance.";
+    showNotification(errorMsg, "error");
+  }
+} // ==================== CUSTOMERS VIEW ====================
 
 function renderCustomers(container) {
   let displayedCustomers = state.customers;
@@ -1938,12 +2133,37 @@ function showAddCustomerModal() {
             <p class="text-xs text-green-400 mt-1">✓ SMS alerts will be sent to this number</p>
           </div>
           <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">Initial Deposit (₦)</label>
+            <input type="number" name="initialDeposit" id="adminInitialDeposit" min="0" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 text-base" placeholder="0.00" oninput="updateAdminRegistrationNet()">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">
+              Charge Amount (₦) <span class="text-xs text-yellow-400">- Optional, default 0</span>
+            </label>
+            <input type="number" name="charges" id="adminCharges" value="0" min="0" step="0.01" 
+              oninput="updateAdminRegistrationNet()"
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white font-mono focus:border-blue-500 transition-colors text-base" 
+              placeholder="0.00">
+          </div>
+          <div id="adminNetDisplay" class="p-3 bg-gray-800/50 border border-gray-700 rounded-xl hidden">
+            <div class="flex justify-between items-center">
+              <span class="text-sm text-gray-400">Net Balance:</span>
+              <span class="text-xl font-bold font-mono text-blue-400" id="adminNetAmount">₦0</span>
+            </div>
+          </div>
+          <div id="adminChargeWarning" class="hidden p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+            <p class="text-xs text-red-300 flex items-center gap-2">
+              <i class="fas fa-exclamation-circle"></i>
+              <span>Charges cannot exceed the initial deposit</span>
+            </p>
+          </div>
+          <div>
             <label class="block text-sm font-medium text-gray-300 mb-2">Address</label>
             <textarea name="address" rows="2" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 text-base"></textarea>
           </div>
           <div class="flex flex-col sm:flex-row gap-4 pt-4">
             <button type="button" onclick="closeCustomerModal()" class="flex-1 px-6 py-3 border border-gray-600 rounded-xl hover:bg-gray-800">Cancel</button>
-            <button type="submit" class="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl">Add Customer</button>
+            <button type="submit" id="adminSubmitBtn" class="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl">Add Customer</button>
           </div>
         </form>
       </div>
@@ -1955,9 +2175,96 @@ function showAddCustomerModal() {
   document.body.appendChild(modalContainer);
 }
 
-function closeCustomerModal() {
-  const modal = document.getElementById("customerModal");
-  if (modal) modal.remove();
+function updateAdminRegistrationNet() {
+  const deposit = parseFloat(
+    document.getElementById("adminInitialDeposit")?.value || 0,
+  );
+  const charges = parseFloat(
+    document.getElementById("adminCharges")?.value || 0,
+  );
+  const net = deposit - charges;
+
+  const netDisplay = document.getElementById("adminNetDisplay");
+  const netAmount = document.getElementById("adminNetAmount");
+  const warning = document.getElementById("adminChargeWarning");
+  const submitBtn = document.getElementById("adminSubmitBtn");
+
+  if (deposit > 0 || charges > 0) {
+    netDisplay.classList.remove("hidden");
+    netAmount.textContent = "₦" + net.toLocaleString();
+  } else {
+    netDisplay.classList.add("hidden");
+  }
+
+  if (charges > deposit) {
+    warning.classList.remove("hidden");
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.classList.add("opacity-50", "cursor-not-allowed");
+    }
+  } else {
+    warning.classList.add("hidden");
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.classList.remove("opacity-50", "cursor-not-allowed");
+    }
+  }
+}
+
+async function handleAddCustomer(e) {
+  e.preventDefault();
+
+  const formData = new FormData(e.target);
+  const currentStaff = state.currentUser;
+
+  const initialDeposit = parseFloat(formData.get("initialDeposit")) || 0;
+  const charges = parseFloat(formData.get("charges")) || 0;
+  const netBalance = initialDeposit - charges;
+
+  if (charges > initialDeposit) {
+    showNotification(
+      "Charges cannot exceed the initial deposit amount",
+      "error",
+    );
+    return;
+  }
+
+  const customerData = {
+    name: formData.get("name"),
+    email: formData.get("email"),
+    phone: formData.get("phone"),
+    cashBalance: netBalance,
+    initialDeposit: initialDeposit,
+    charges: charges,
+    loanBalance: 0,
+    address: formData.get("address"),
+    staffId: currentStaff?.id,
+    staffName: currentStaff?.name,
+    staffEmail: currentStaff?.email,
+  };
+
+  try {
+    const response = await api.post("/customers", customerData);
+    const newCustomer = response.data.customer || response.data;
+    await loadAllData();
+
+    let successMsg = `✅ Customer added successfully! SMS alerts will be sent to ${newCustomer.phone}`;
+    if (initialDeposit > 0) {
+      successMsg += ` | Deposit: ₦${initialDeposit.toLocaleString()}`;
+      if (charges > 0) {
+        successMsg += ` | Charges: ₦${charges.toLocaleString()} | Net: ₦${netBalance.toLocaleString()}`;
+      }
+    }
+
+    showNotification(successMsg, "success");
+    closeCustomerModal();
+  } catch (error) {
+    console.error("Error adding customer:", error);
+    showNotification(
+      error.response?.data?.error || "Failed to add customer",
+      "error",
+    );
+  }
 }
 
 async function handleAddCustomer(e) {
@@ -1997,6 +2304,8 @@ async function handleAddCustomer(e) {
 }
 
 // New Customer Form (for staff)
+// ==================== NEW CUSTOMER FORM (for staff) ====================
+
 function renderNewCustomer(container) {
   const html = `
     <div class="max-w-2xl mx-auto animate-fade-in px-4 sm:px-0">
@@ -2028,8 +2337,39 @@ function renderNewCustomer(container) {
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-300 mb-2">Initial Deposit (₦)</label>
-              <input type="number" name="initialDeposit" min="0" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors text-base" placeholder="0.00">
+              <input type="number" name="initialDeposit" id="regInitialDeposit" min="0" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors text-base" placeholder="0.00" oninput="updateRegistrationNet()">
             </div>
+          </div>
+
+          <!-- Charges Field -->
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">
+              Charge Amount (₦) <span class="text-xs text-yellow-400">- Optional, default 0</span>
+            </label>
+            <input type="number" name="charges" id="regCharges" value="0" min="0" step="0.01" 
+              oninput="updateRegistrationNet()"
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white font-mono focus:border-blue-500 transition-colors text-base" 
+              placeholder="0.00">
+            <p class="text-xs text-gray-400 mt-1">This charge will be deducted from the initial deposit</p>
+          </div>
+
+          <!-- Net Amount Display -->
+          <div id="regNetDisplay" class="p-4 bg-gradient-to-r from-gray-800 to-gray-800/50 border border-blue-500/30 rounded-xl hidden">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+              <span class="text-gray-300 font-medium text-sm sm:text-base">Net Amount to Customer:</span>
+              <span class="text-2xl sm:text-3xl font-bold text-blue-400 font-mono" id="regNetAmount">₦0</span>
+            </div>
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mt-2 text-xs text-gray-400 gap-1">
+              <span>Initial Deposit - Charges = Net Balance</span>
+            </div>
+          </div>
+
+          <!-- Warning for charges exceeding deposit -->
+          <div id="regChargeWarning" class="hidden p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
+            <p class="text-xs text-red-300 flex items-center gap-2">
+              <i class="fas fa-exclamation-circle"></i>
+              <span>Charges cannot exceed the initial deposit amount</span>
+            </p>
           </div>
 
           <div>
@@ -2044,7 +2384,7 @@ function renderNewCustomer(container) {
 
           <div class="flex flex-col sm:flex-row gap-4 pt-4">
             <button type="button" onclick="navigate('customers')" class="flex-1 px-6 py-3 border border-gray-600 rounded-xl hover:bg-gray-800 transition-colors">Cancel</button>
-            <button type="submit" class="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-medium transition-colors">Register Customer</button>
+            <button type="submit" id="regSubmitBtn" class="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-medium transition-colors">Register Customer</button>
           </div>
         </form>
       </div>
@@ -2053,16 +2393,66 @@ function renderNewCustomer(container) {
   container.innerHTML = html;
 }
 
+function updateRegistrationNet() {
+  const deposit = parseFloat(
+    document.getElementById("regInitialDeposit")?.value || 0,
+  );
+  const charges = parseFloat(document.getElementById("regCharges")?.value || 0);
+  const net = deposit - charges;
+
+  const netDisplay = document.getElementById("regNetDisplay");
+  const netAmount = document.getElementById("regNetAmount");
+  const warning = document.getElementById("regChargeWarning");
+  const submitBtn = document.getElementById("regSubmitBtn");
+
+  if (deposit > 0 || charges > 0) {
+    netDisplay.classList.remove("hidden");
+    netAmount.textContent = "₦" + net.toLocaleString();
+  } else {
+    netDisplay.classList.add("hidden");
+  }
+
+  // Validate: charges cannot exceed deposit
+  if (charges > deposit) {
+    warning.classList.remove("hidden");
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.classList.add("opacity-50", "cursor-not-allowed");
+    }
+  } else {
+    warning.classList.add("hidden");
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.classList.remove("opacity-50", "cursor-not-allowed");
+    }
+  }
+}
+
 async function handleNewCustomer(e) {
   e.preventDefault();
   const formData = new FormData(e.target);
   const currentStaff = state.currentUser;
 
+  const initialDeposit = parseFloat(formData.get("initialDeposit")) || 0;
+  const charges = parseFloat(formData.get("charges")) || 0;
+  const netBalance = initialDeposit - charges;
+
+  // Validate charges don't exceed deposit
+  if (charges > initialDeposit) {
+    showNotification(
+      "Charges cannot exceed the initial deposit amount",
+      "error",
+    );
+    return;
+  }
+
   const customerData = {
     name: formData.get("fullName"),
     email: formData.get("email"),
     phone: formData.get("phone"),
-    cashBalance: parseFloat(formData.get("initialDeposit")) || 0,
+    cashBalance: netBalance, // Net amount after charges
+    initialDeposit: initialDeposit, // Original deposit amount (for records)
+    charges: charges, // Charges deducted
     loanBalance: 0,
     address: formData.get("address"),
     staffId: currentStaff?.id,
@@ -2074,10 +2464,16 @@ async function handleNewCustomer(e) {
     const response = await api.post("/customers", customerData);
     const newCustomer = response.data.customer || response.data;
     state.customers.push(newCustomer);
-    showNotification(
-      `✅ Customer registered successfully! ID: ${newCustomer.id}\n📱 SMS alerts will be sent to ${newCustomer.phone}`,
-      "success",
-    );
+
+    let successMsg = `✅ Customer registered successfully! ID: ${newCustomer.id}\n📱 SMS alerts will be sent to ${newCustomer.phone}`;
+    if (initialDeposit > 0) {
+      successMsg += `\n💰 Deposit: ₦${initialDeposit.toLocaleString()}`;
+      if (charges > 0) {
+        successMsg += ` | Charges: ₦${charges.toLocaleString()} | Net: ₦${netBalance.toLocaleString()}`;
+      }
+    }
+
+    showNotification(successMsg, "success");
     navigate("customers");
   } catch (error) {
     console.error("Customer registration error:", error);
