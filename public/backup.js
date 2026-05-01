@@ -9,7 +9,99 @@ const state = {
   staff: [],
   notifications: [],
   isLoading: false,
+  lastTransactionCount: 0,
+  pollingInterval: null,
 };
+
+// ==================== REAL-TIME POLLING ====================
+
+function startTransactionPolling() {
+  // Stop any existing polling
+  if (state.pollingInterval) {
+    clearInterval(state.pollingInterval);
+  }
+
+  // Only poll if user is logged in and is admin
+  if (!state.currentUser || state.role !== "admin") {
+    return;
+  }
+
+  // Poll every 10 seconds for new transactions
+  state.pollingInterval = setInterval(async () => {
+    try {
+      const response = await api.get("/transactions");
+      const freshTransactions = response.data;
+
+      // Count pending transactions
+      const freshPendingCount = freshTransactions.filter(
+        (t) => t.status === "pending",
+      ).length;
+
+      const oldPendingCount = state.transactions.filter(
+        (t) => t.status === "pending",
+      ).length;
+
+      // Check if new pending transactions arrived
+      if (freshPendingCount > oldPendingCount) {
+        const newCount = freshPendingCount - oldPendingCount;
+
+        // Update state with fresh data
+        state.transactions = freshTransactions;
+        state.transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        // Show notification about new pending transactions
+        showNotification(
+          `🔔 ${newCount} new transaction${newCount > 1 ? "s" : ""} pending approval from staff`,
+          "warning",
+        );
+
+        // Update notification badge
+        const badge = document.getElementById("notifBadge");
+        if (badge && freshPendingCount > 0) {
+          badge.classList.remove("hidden");
+        }
+
+        // If admin is on transactions page, auto-refresh it
+        if (state.currentView === "transactions") {
+          renderSidebar(); // Update badge count
+          navigate("transactions"); // Re-render the page
+        } else {
+          // Just update sidebar badge
+          renderSidebar();
+        }
+
+        // Add to notifications panel
+        state.notifications.unshift({
+          id: Date.now(),
+          message: `${newCount} new transaction${newCount > 1 ? "s" : ""} pending approval`,
+          time: "Just now",
+          unread: true,
+        });
+        updateNotificationList();
+      }
+
+      // Also update lastTransactionCount for tracking
+      state.lastTransactionCount = freshTransactions.length;
+    } catch (error) {
+      // Silently fail on polling errors - don't spam user
+      console.warn("Polling error:", error.message);
+    }
+  }, 10000); // Poll every 10 seconds
+}
+
+function stopTransactionPolling() {
+  if (state.pollingInterval) {
+    clearInterval(state.pollingInterval);
+    state.pollingInterval = null;
+  }
+}
+
+// Start polling when app initializes
+function initRealTimeUpdates() {
+  if (state.role === "admin") {
+    startTransactionPolling();
+  }
+}
 
 // Axios Configuration
 const api = axios.create({
@@ -85,6 +177,11 @@ const menus = {
     { id: "reports", icon: "fa-file-alt", label: "Reports" },
     { id: "customer-reports", icon: "fa-chart-pie", label: "Customer Reports" },
     { id: "settings", icon: "fa-cog", label: "Settings" },
+    {
+      id: "staff-reconciliation",
+      icon: "fa-file-invoice-dollar",
+      label: "Staff Reconciliation",
+    }, // Add this
   ],
   staff: [
     { id: "dashboard", icon: "fa-chart-line", label: "Dashboard" },
@@ -735,6 +832,18 @@ async function handleQuickTransaction(e) {
   submitBtn.innerHTML =
     '<i class="fas fa-spinner fa-spin mr-2"></i>Processing...';
 
+  // === FIRST DEPOSIT CHARGE RULE FOR QUICK TRANSACTIONS ===
+  const customerBalance = customer.cashBalance || customer.balance || 0;
+  if (type === "deposit" && customerBalance === 0 && charges <= 0) {
+    showNotification(
+      "⚠️ Charges are required for first deposit when account balance is zero. Please enter a charge amount.",
+      "error",
+    );
+    submitBtn.innerHTML = originalText;
+    submitBtn.disabled = false;
+    return;
+  }
+
   const txnData = {
     customerId,
     customerName: customer.name,
@@ -841,6 +950,7 @@ async function login() {
     document.getElementById("app").classList.remove("hidden");
 
     await initializeApp();
+    initRealTimeUpdates(); // Start polling for admin
   } catch (error) {
     console.error("Login error:", error);
     if (error.code === "ECONNABORTED") {
@@ -864,6 +974,7 @@ async function initializeApp() {
   navigate("dashboard");
   startClock();
   initMobileMenu();
+  initRealTimeUpdates(); // Start real-time polling for admin
 }
 
 async function loadAllData() {
@@ -1034,6 +1145,9 @@ function navigate(view) {
       break;
     case "customer-reports":
       renderCustomerReports(contentArea);
+      break;
+    case "staff-reconciliation":
+      renderStaffReconciliation(contentArea); // Add this
       break;
     default:
       renderDashboard(contentArea);
@@ -2336,8 +2450,18 @@ async function handleNewTransaction(e) {
     return;
   }
 
-  // Check for withdrawal validity (validation only - no state changes)
+  // === FIRST DEPOSIT CHARGE RULE ===
+  // If customer balance is exactly 0 and this is a deposit, charges MUST be included
   const availableBalance = customer.cashBalance || customer.balance || 0;
+  if (type === "deposit" && availableBalance === 0 && charges <= 0) {
+    showNotification(
+      "⚠️ Charges are required for first deposit when account balance is zero. Please enter a charge amount before submitting.",
+      "error",
+    );
+    return;
+  }
+
+  // Check for withdrawal validity (validation only - no state changes)
   if (type === "withdrawal" && netAmount > availableBalance) {
     showNotification(
       `Insufficient funds! Customer balance: ₦${availableBalance.toLocaleString()}. Required: ₦${netAmount.toLocaleString()}`,
@@ -2401,9 +2525,6 @@ async function handleNewTransaction(e) {
 
   try {
     await api.post("/transactions", txnData);
-
-    // Refresh data from backend to ensure frontend state is in sync
-    // This prevents any stale state issues
     await loadAllData();
 
     let successMessage = `✅ Transaction request submitted! `;
@@ -2421,9 +2542,25 @@ async function handleNewTransaction(e) {
     } else {
       successMessage += `Withdrawal ₦${amount.toLocaleString()}`;
     }
-
     showNotification(successMessage, "success");
-    navigate("history");
+
+    // Trigger background data refresh so admin sees it immediately
+    setTimeout(async () => {
+      try {
+        await loadAllData();
+        // If admin has this page open in another tab/window, they'll see it on next poll
+      } catch (err) {
+        console.warn("Background refresh failed", err);
+      }
+    }, 1000);
+
+    e.target.reset();
+    document.getElementById("selectedCustomerId").value = "";
+    document.getElementById("selectedCustomerDisplay").classList.add("hidden");
+    document.getElementById("customerBalanceDisplay").classList.add("hidden");
+    document.getElementById("netAmount").textContent = "₦0";
+    window.selectedCustomerId = null;
+    window.selectedCustomerBalance = null;
   } catch (error) {
     console.error("Transaction submission error:", error);
     showNotification(
@@ -2438,82 +2575,172 @@ async function processTransaction(
   refreshView = true,
   staffId = null,
 ) {
+  // 1. DEBUG: Log the initial input
+  console.log(
+    `%c[DEBUG] processTransaction started | Action: ${action} | txnId: ${txnId}`,
+    "color: cyan; font-weight: bold;",
+  );
+  console.log("[DEBUG] Input parameters:", {
+    txnId,
+    action,
+    refreshView,
+    staffId,
+  });
+
   try {
+    // 2. Find the transaction in the local state
     const transaction = state.transactions.find((t) => t.id === txnId);
+
     if (!transaction) {
+      console.error(
+        `[DEBUG] ERROR: Transaction with ID ${txnId} not found in state.transactions`,
+      );
       showNotification("Transaction not found", "error");
       return;
     }
 
-    const updateData = {
+    console.log("[DEBUG] Transaction found in state:", transaction);
+
+    // 3. FIX: Determine the specific endpoint based on the action
+    // This ensures we hit: /transactions/TXN123/approve OR /transactions/TXN123/reject
+    const endpoint = action === "approved" ? "/approve" : "/reject";
+
+    // 4. Prepare the base payload
+    let updateData = {
       status: action,
       approvedBy: state.currentUser.name,
       approvedAt: new Date(),
     };
 
-    // If approving a deposit with loan repayment
+    // 5. ROUTING BRANCH: REJECTION
+    if (action === "rejected") {
+      console.log("[DEBUG] Entering REJECTION branch");
+
+      // Add specific fields required for rejection
+      updateData.rejectedBy = state.currentUser.name;
+      updateData.rejectedAt = new Date();
+      updateData.isRejection = true; // IMPORTANT: Tells backend NOT to change balances
+
+      console.log("[DEBUG] Rejection Payload:", updateData);
+      console.log(`[DEBUG] TARGET URL: /transactions/${txnId}${endpoint}`);
+
+      await api.patch(`/transactions/${txnId}${endpoint}`, updateData);
+
+      showNotification(`TRANSACTION REJECTED.`, "error");
+
+      // Cleanup UI
+      closeStaffPendingModal();
+      closeTransactionModal();
+      await loadAllData();
+
+      // Fixes the "page did not refresh" issue
+      if (refreshView) navigate(state.currentView);
+      return; // Exit early so we don't run approval logic
+    }
+
+    // 6. ROUTING BRANCH: APPROVAL
+    console.log("[DEBUG] Entering APPROVAL branch");
+
+    // Handle specific case: Deposit that triggers a Loan Repayment
     if (
       action === "approved" &&
       transaction.type === "deposit" &&
       transaction.loanDeduction > 0
     ) {
+      console.log("[DEBUG] Loan Repayment logic triggered for this approval");
+
       const { loanId, amount, fullyPaid, outstandingAfter } =
         transaction.loanRepaymentInfo;
       const customer = state.customers.find(
         (c) => c.id === transaction.customerId,
       );
 
+      // Add loan repayment details to the payload
       updateData.loanRepayment = {
-        loanId: loanId,
-        amount: amount,
+        loanId,
+        amount,
         recordedAt: new Date(),
-        fullyPaid: fullyPaid,
-        outstandingAfter: outstandingAfter,
+        fullyPaid,
+        outstandingAfter,
       };
 
+      // Create the detailed description
       updateData.finalDescription =
         `Deposit: ₦${transaction.amount.toLocaleString()} | ` +
         `Charges: ₦${(transaction.charges || 0).toLocaleString()} | ` +
         `Loan Repayment: ₦${amount.toLocaleString()} | ` +
         `Available to Customer: ₦${transaction.netAmount.toLocaleString()}`;
 
-      // Show detailed notification
-      let notifMessage = `✅ Approved! ₦${amount.toLocaleString()} deducted for loan repayment.`;
+      // Detailed success notification
+      let notifMessage = `Approved! ₦${amount.toLocaleString()} deducted for loan repayment.`;
       if (fullyPaid) {
-        notifMessage += ` 🎉 Loan FULLY PAID!`;
+        notifMessage += ` Loan FULLY PAID!`;
       } else {
         notifMessage += ` ₦${outstandingAfter.toLocaleString()} remaining.`;
       }
       if (customer?.phone) {
         notifMessage += ` SMS sent to ${customer.phone}`;
       }
-
       showNotification(notifMessage, "success");
-    } else if (action === "rejected") {
-      showNotification(`❌ Transaction rejected`, "error");
     } else {
+      // Standard approval notification
       showNotification(`✅ Transaction ${action}!`, "success");
     }
 
-    await api.patch(`/transactions/${txnId}`, updateData);
+    // 7. EXECUTE THE API CALL
+    console.log(
+      `%c[DEBUG] SENDING API PATCH REQUEST TO: /transactions/${txnId}${endpoint}`,
+      "color: yellow; font-weight: bold;",
+    );
+    console.log("[DEBUG] Final Payload being sent:", updateData);
 
+    await api.patch(`/transactions/${txnId}${endpoint}`, updateData);
+
+    console.log(
+      "%c[DEBUG] API CALL SUCCESSFUL",
+      "color: green; font-weight: bold;",
+    );
+
+    // 8. CLEANUP & REFRESH UI
     closeStaffPendingModal();
     closeTransactionModal();
     await loadAllData();
-    if (refreshView) navigate(staffId ? "staff" : "transactions");
+
+    // Fixes the "page did not refresh" issue
+    if (refreshView) navigate(state.currentView);
   } catch (error) {
-    console.error("Transaction processing error:", error);
+    // 9. DEEP ERROR LOGGING
+    console.error(
+      "%c[DEBUG] TRANSACTION PROCESSING FAILED",
+      "color: red; font-weight: bold;",
+    );
+    console.error("[DEBUG] Full Error Object:", error);
+
+    if (error.response) {
+      console.error(
+        "[DEBUG] Server responded with status:",
+        error.response.status,
+      );
+      console.error(
+        "[DEBUG] Server Response Data (Crucial):",
+        error.response.data,
+      );
+    } else {
+      console.error("[DEBUG] Error message:", error.message);
+    }
+
     showNotification(
       error.response?.data?.message || "Failed to process transaction",
       "error",
     );
   }
 }
-
 // ==================== LOGOUT FUNCTION ====================
 
 function logout() {
+  stopTransactionPolling(); // Stop polling on logout
   localStorage.removeItem("token");
+  localStorage.removeItem("cachedUser");
   state.currentUser = null;
   state.role = null;
   state.customers = [];
@@ -2522,6 +2749,7 @@ function logout() {
   state.staff = [];
   state.notifications = [];
   state.currentView = "dashboard";
+  state.lastTransactionCount = 0;
   document.getElementById("app").classList.add("hidden");
   document.getElementById("loginScreen").classList.remove("hidden");
   document.getElementById("passwordInput").value = "";
@@ -3661,31 +3889,6 @@ function closeApproveLoanModal() {
   if (modal) modal.remove();
 }
 
-async function approveLoan(loanId) {
-  try {
-    const response = await api.patch(`/loans/${loanId}/approve`, {
-      approvedBy: {
-        id: state.currentUser.id,
-        name: state.currentUser.name,
-      },
-    });
-
-    showNotification(
-      "Loan approved! Customer debited and interest recorded as revenue.",
-      "success",
-    );
-    closeApproveLoanModal();
-    await loadAllData();
-    navigate("loans");
-  } catch (error) {
-    console.error("Approve loan error:", error);
-    showNotification(
-      error.response?.data?.error || "Failed to approve loan",
-      "error",
-    );
-  }
-}
-
 async function rejectLoan(loanId) {
   const reason = prompt("Reason for rejection (optional):");
   try {
@@ -4410,7 +4613,192 @@ async function renderRevenueReports(container) {
       </div>
     `;
   }
-} // ==================== DORMANT CUSTOMERS SECTION ====================
+}
+function renderStaffReconciliation(container) {
+  // Get today's date as YYYY-MM-DD in local time
+  const now = new Date();
+  const todayStr = now.toLocaleDateString("en-CA");
+
+  // Include ALL transactions submitted today (pending, approved, rejected)
+  // This shows what staff actually did today, regardless of approval status
+  const todayTransactions = state.transactions.filter((t) => {
+    const txnDate = new Date(t.date || t.approvedAt || t.createdAt);
+    const txnDateStr = txnDate.toLocaleDateString("en-CA");
+    return txnDateStr === todayStr;
+  });
+
+  // Grouping logic
+  const staffStats = {};
+
+  todayTransactions.forEach((t) => {
+    const sId = t.requestedById || t.staffId || "unknown";
+    const sName = t.staffName || t.requestedBy || "Unknown Staff";
+
+    if (!staffStats[sId]) {
+      staffStats[sId] = {
+        name: sName,
+        deposits: 0,
+        withdrawals: 0,
+        net: 0,
+        count: 0,
+        pendingCount: 0,
+        approvedCount: 0,
+        rejectedCount: 0,
+      };
+    }
+
+    const amount = t.amount || 0;
+    if (t.type === "deposit") {
+      staffStats[sId].deposits += amount;
+    } else if (t.type === "withdrawal") {
+      staffStats[sId].withdrawals += amount;
+    }
+
+    staffStats[sId].count++;
+
+    // Track status breakdown
+    const status = t.status?.toString().toLowerCase();
+    if (status === "pending") staffStats[sId].pendingCount++;
+    else if (status === "approved") staffStats[sId].approvedCount++;
+    else if (status === "rejected") staffStats[sId].rejectedCount++;
+  });
+
+  const staffList = Object.values(staffStats).map((stat) => {
+    stat.net = stat.deposits - stat.withdrawals;
+    return stat;
+  });
+
+  const totalSystemDeposits = staffList.reduce((sum, s) => sum + s.deposits, 0);
+  const totalSystemWithdrawals = staffList.reduce(
+    (sum, s) => sum + s.withdrawals,
+    0,
+  );
+
+  const totalPending = todayTransactions.filter(
+    (t) => t.status?.toString().toLowerCase() === "pending",
+  ).length;
+  const totalApproved = todayTransactions.filter(
+    (t) => t.status?.toString().toLowerCase() === "approved",
+  ).length;
+  const totalRejected = todayTransactions.filter(
+    (t) => t.status?.toString().toLowerCase() === "rejected",
+  ).length;
+
+  const html = `
+    <div class="space-y-6 animate-fade-in px-4 sm:px-0">
+      <div class="flex justify-between items-center">
+        <h3 class="text-lg font-semibold">End-of-Day Staff Reconciliation</h3>
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-gray-400 bg-gray-800 px-3 py-1 rounded-full">
+            <i class="fas fa-calendar-day mr-1"></i>${now.toLocaleDateString("en-GB")}
+          </span>
+          <button onclick="refreshData()" class="text-blue-400 hover:text-blue-300 text-sm">
+            <i class="fas fa-sync-alt mr-1"></i> Refresh
+          </button>
+        </div>
+      </div>
+
+      <!-- Summary Cards -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="glass-panel p-4 rounded-xl border-l-4 border-green-500">
+          <p class="text-xs text-gray-400">Today's Deposits</p>
+          <p class="text-xl font-bold text-green-400">₦${totalSystemDeposits.toLocaleString()}</p>
+          <p class="text-xs text-gray-500 mt-1">${todayTransactions.filter((t) => t.type === "deposit").length} deposits</p>
+        </div>
+        <div class="glass-panel p-4 rounded-xl border-l-4 border-orange-500">
+          <p class="text-xs text-gray-400">Today's Withdrawals</p>
+          <p class="text-xl font-bold text-orange-400">₦${totalSystemWithdrawals.toLocaleString()}</p>
+          <p class="text-xs text-gray-500 mt-1">${todayTransactions.filter((t) => t.type === "withdrawal").length} withdrawals</p>
+        </div>
+        <div class="glass-panel p-4 rounded-xl border-l-4 border-blue-500">
+          <p class="text-xs text-gray-400">Net Position</p>
+          <p class="text-xl font-bold text-blue-400">₦${(totalSystemDeposits - totalSystemWithdrawals).toLocaleString()}</p>
+          <p class="text-xs text-gray-500 mt-1">${todayTransactions.length} total</p>
+        </div>
+        <div class="glass-panel p-4 rounded-xl border-l-4 border-purple-500">
+          <p class="text-xs text-gray-400">Status Breakdown</p>
+          <div class="flex gap-2 mt-2 text-xs">
+            <span class="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded-full">${totalPending} pending</span>
+            <span class="px-2 py-1 bg-green-500/20 text-green-400 rounded-full">${totalApproved} approved</span>
+            <span class="px-2 py-1 bg-red-500/20 text-red-400 rounded-full">${totalRejected} rejected</span>
+          </div>
+        </div>
+      </div>
+
+      ${
+        todayTransactions.length === 0
+          ? `<div class="glass-panel rounded-2xl p-8 text-center">
+            <div class="w-16 h-16 mx-auto bg-gray-800 rounded-full flex items-center justify-center mb-4">
+              <i class="fas fa-clipboard-check text-gray-500 text-2xl"></i>
+            </div>
+            <h4 class="text-lg font-semibold mb-2">No Transactions Today</h4>
+            <p class="text-sm text-gray-400">No transactions recorded for today yet.</p>
+          </div>`
+          : `<div class="glass-panel rounded-2xl overflow-hidden">
+            <table class="min-w-full divide-y divide-gray-700">
+              <thead class="bg-gray-800/50">
+                <tr>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Staff Member</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Deposits</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Withdrawals</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Net</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Txns</th>
+                </tr>
+              </thead>
+              <tbody class="bg-gray-900/20 divide-y divide-gray-800">
+                ${
+                  staffList.length > 0
+                    ? staffList
+                        .map(
+                          (s) => `
+                    <tr class="hover:bg-gray-800/30 transition-colors">
+                      <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="flex items-center">
+                          <div class="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold mr-3 text-xs">
+                            ${s.name
+                              .split(" ")
+                              .map((n) => n[0])
+                              .join("")}
+                          </div>
+                          <span class="text-sm font-medium text-white">${s.name}</span>
+                        </div>
+                      </td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-green-400 font-mono">₦${s.deposits.toLocaleString()}</td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-orange-400 font-mono">₦${s.withdrawals.toLocaleString()}</td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm font-bold ${s.net >= 0 ? "text-blue-400" : "text-red-400"} font-mono">
+                        ₦${s.net.toLocaleString()}
+                      </td>
+                      <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="flex gap-1 text-xs">
+                          ${s.pendingCount > 0 ? `<span class="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded">${s.pendingCount} ⏳</span>` : ""}
+                          ${s.approvedCount > 0 ? `<span class="px-2 py-0.5 bg-green-500/20 text-green-400 rounded">${s.approvedCount} ✓</span>` : ""}
+                          ${s.rejectedCount > 0 ? `<span class="px-2 py-0.5 bg-red-500/20 text-red-400 rounded">${s.rejectedCount} ✗</span>` : ""}
+                        </div>
+                      </td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">${s.count}</td>
+                    </tr>
+                  `,
+                        )
+                        .join("")
+                    : `<tr><td colspan="6" class="px-6 py-10 text-center text-gray-500">No transaction data found for today.</td></tr>`
+                }
+              </tbody>
+            </table>
+          </div>`
+      }
+      
+      <div class="text-center">
+        <button onclick="window.print()" class="px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition-colors">
+          <i class="fas fa-print mr-2"></i>Print Report
+        </button>
+      </div>
+    </div>
+  `;
+
+  container.innerHTML = html;
+}
+// ==================== DORMANT CUSTOMERS SECTION ====================
 
 function renderDormantCustomers(container) {
   const thirtyDaysAgo = new Date();
@@ -5628,7 +6016,6 @@ async function approveAllStaffTransactions(staffIdentifier) {
     );
   }
   closeStaffPendingModal();
-  navigate("transactions");
 }
 async function approveAllPendingTransactions() {
   const pending = state.transactions.filter((t) => t.status === "pending");
@@ -5666,7 +6053,6 @@ async function approveAllPendingTransactions() {
       `Approved ${approved} transactions, ${failed} failed`,
       "warning",
     );
-  navigate("transactions");
 }
 
 function viewTransactionDetails(txnId) {
@@ -5762,43 +6148,78 @@ function closeModal() {
 
 async function checkAuth() {
   const token = localStorage.getItem("token");
-  if (token) {
-    try {
-      const response = await api.get("/verify");
-      state.currentUser = response.data.user;
-      state.role = response.data.user.role;
+  const cachedUser = localStorage.getItem("cachedUser");
 
+  // If no token at all, stay on login screen
+  if (!token) {
+    return;
+  }
+
+  // Immediately restore from cache to prevent logout flicker
+  if (cachedUser) {
+    try {
+      const user = JSON.parse(cachedUser);
+      state.currentUser = user;
+      state.role = user.role;
       document.getElementById("loginScreen").classList.add("hidden");
       document.getElementById("app").classList.remove("hidden");
+      // Initialize UI immediately so user sees dashboard right away
+      updateUserInfo();
+      renderSidebar();
+      startClock();
+      initMobileMenu();
+    } catch (e) {
+      console.error("Failed to parse cached user", e);
+    }
+  }
 
-      await initializeApp();
-    } catch (error) {
-      console.error("Auth verification failed:", error);
-      // Only clear token if it's actually invalid (401), not for network errors
-      if (error.response?.status === 401) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("cachedUser");
-        state.currentUser = null;
-        state.role = null;
-      } else {
-        // For network errors, keep the token and show app (will retry)
-        showNotification(
-          "Connection issue. Some features may be limited.",
-          "warning",
-        );
-        // Try to use cached user data if available
-        const cachedUser = localStorage.getItem("cachedUser");
-        if (cachedUser) {
-          try {
-            const user = JSON.parse(cachedUser);
-            state.currentUser = user;
-            state.role = user.role;
-            document.getElementById("loginScreen").classList.add("hidden");
-            document.getElementById("app").classList.remove("hidden");
-            await initializeApp();
-          } catch (e) {
-            console.error("Failed to restore cached user", e);
-          }
+  // Try to verify with server in background
+  try {
+    const response = await api.get("/verify");
+    const user = response.data.user || response.data;
+    state.currentUser = user;
+    state.role = user.role;
+
+    // Update cache with fresh data
+    localStorage.setItem("cachedUser", JSON.stringify(user));
+
+    // Ensure UI is showing app (in case cache restore failed)
+    document.getElementById("loginScreen").classList.add("hidden");
+    document.getElementById("app").classList.remove("hidden");
+
+    // Load fresh data and render
+    await initializeApp();
+  } catch (error) {
+    console.error("Auth verification failed:", error);
+
+    if (error.response?.status === 401) {
+      // Token is invalid - clear everything and force re-login
+      localStorage.removeItem("token");
+      localStorage.removeItem("cachedUser");
+      state.currentUser = null;
+      state.role = null;
+      document.getElementById("loginScreen").classList.remove("hidden");
+      document.getElementById("app").classList.add("hidden");
+      showNotification("Session expired. Please login again.", "error");
+    } else {
+      // Network error (server waking up, timeout, etc.)
+      // Keep the cached session alive - DON'T logout
+      showNotification(
+        "Server connection issue. Using cached session. Will retry...",
+        "warning",
+      );
+
+      // If we already restored from cache, just load data
+      if (state.currentUser) {
+        try {
+          await loadAllData();
+          navigate("dashboard");
+          initRealTimeUpdates(); // Start polling for admin
+        } catch (loadError) {
+          console.warn(
+            "Could not load fresh data, using cached state",
+            loadError,
+          );
         }
       }
     }
@@ -5831,3 +6252,25 @@ window.onload = () => {
   selectRole("admin");
   checkAuth();
 };
+
+// Also run checkAuth on DOMContentLoaded for faster restore
+document.addEventListener("DOMContentLoaded", () => {
+  const token = localStorage.getItem("token");
+  const cachedUser = localStorage.getItem("cachedUser");
+  if (token && cachedUser) {
+    try {
+      const user = JSON.parse(cachedUser);
+      state.currentUser = user;
+      state.role = user.role;
+      // Pre-hide login screen before window.onload fires
+      const loginScreen = document.getElementById("loginScreen");
+      const app = document.getElementById("app");
+      if (loginScreen && app) {
+        loginScreen.classList.add("hidden");
+        app.classList.remove("hidden");
+      }
+    } catch (e) {
+      console.error("Early auth restore failed", e);
+    }
+  }
+});

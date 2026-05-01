@@ -133,7 +133,7 @@
         }
       }
 
-      /* Mobile Responsive Styles */
+      /* Mobile Responsive Styles - Optimized for screens below 500px */
       @media (max-width: 820px) {
         .glass-panel {
           padding: 0.75rem !important;
@@ -209,7 +209,30 @@
         }
       }
 
-      /* Mobile Sidebar Styles */
+      /* Touch-friendly improvements */
+      button,
+      .sidebar-item,
+      .modal-close,
+      .notification-item {
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      /* Smooth scrolling */
+      html {
+        scroll-behavior: smooth;
+      }
+
+      /* Better table scrolling on mobile */
+      @media (max-width: 820px) {
+        .overflow-x-auto {
+          -webkit-overflow-scrolling: touch;
+          margin: 0 -0.75rem;
+          padding: 0 0.75rem;
+        }
+      }
+
+      /* Mobile Sidebar Styles - Works on all screens below 820px */
       @media (max-width: 820px) {
         .sidebar {
           position: fixed;
@@ -222,15 +245,23 @@
           z-index: 1000;
           background: #1e293b;
           box-shadow: 2px 0 10px rgba(0, 0, 0, 0.3);
-          pointer-events: auto !important;
+          pointer-events: auto !important; /* Ensure sidebar receives clicks */
         }
 
         .sidebar.open {
           transform: translateX(0) !important;
           pointer-events: auto !important;
-          z-index: 1002 !important;
+          z-index: 1002 !important; /* Higher than overlay */
         }
 
+        .sidebar.open .sidebar-item {
+          pointer-events: auto !important;
+          cursor: pointer !important;
+          position: relative; /* Ensure proper stacking */
+          z-index: 1003 !important; /* Above sidebar */
+        }
+
+        /* Sidebar menu container */
         #sidebarMenu {
           position: relative;
           z-index: 1003 !important;
@@ -259,9 +290,9 @@
           right: 0;
           bottom: 0;
           background: rgba(0, 0, 0, 0.6);
-          z-index: 999;
+          z-index: 999; /* Below sidebar (1000) but above content */
           transition: opacity 0.3s ease;
-          pointer-events: auto !important;
+          pointer-events: auto !important; /* Block clicks on main content */
         }
 
         #sidebarOverlay.hidden {
@@ -281,6 +312,7 @@
           margin-left: 48px !important;
         }
       }
+      /* Search dropdown styles */
       .customer-search-dropdown {
         max-height: 300px;
         overflow-y: auto;
@@ -330,15 +362,10 @@
         class="w-full max-w-md p-6 sm:p-8 glass-panel rounded-2xl shadow-2xl border border-gray-700 animate-fade-in"
       >
         <div class="text-center mb-6 sm:mb-8">
-          <!-- UPDATED LOGO CONTAINER -->
           <div
-            class="w-24 h-24 sm:w-32 sm:h-32 mx-auto mb-4 flex items-center justify-center animate-bounce-slight"
+            class="w-16 h-16 sm:w-20 sm:h-20 mx-auto bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mb-4 shadow-lg animate-bounce-slight"
           >
-            <img
-              src="https://res.cloudinary.com/deoqw88yb/image/upload/v1777630542/ChatGPT_Image_May_1_2026_11_14_16_AM_zugl2j.avif"
-              alt="VaultFlow Logo"
-              class="w-full h-full object-contain"
-            />
+            <i class="fas fa-vault text-2xl sm:text-3xl text-white"></i>
           </div>
           <h1 class="text-2xl sm:text-3xl font-bold gradient-text mb-2">
             BL MULTI CONCEPT
@@ -442,15 +469,10 @@
       >
         <div class="p-4 sm:p-6 border-b border-gray-700">
           <div class="flex items-center gap-3">
-            <!-- UPDATED SIDEBAR LOGO -->
             <div
-              class="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center"
+              class="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center"
             >
-              <img
-                src="https://res.cloudinary.com/deoqw88yb/image/upload/v1777629071/bl-removebg-preview_m1tpsg.avif"
-                alt="Logo"
-                class="w-full h-full object-contain"
-              />
+              <i class="fas fa-vault text-white text-sm sm:text-base"></i>
             </div>
             <div>
               <h2 class="font-bold text-base sm:text-lg">VaultFlow</h2>
