@@ -33,10 +33,9 @@ router.patch("/loans/:loanId/reject", rejectLoan);
 
 // ========== REPAYMENT (FIXED: PATCH instead of POST) ==========
 router.patch("/loans/:loanId/repayments/:repaymentId", recordRepayment);
-router
-  .post("/loans/:loanId/collect-repayment")
-  // ========== REPORTS & DASHBOARD ==========
-  .router.get("/reports/revenue", getRevenueReports);
+
+// ========== REPORTS & DASHBOARD ==========
+router.get("/reports/revenue", getRevenueReports);
 router.get("/dashboard/summary", getDashboardSummary);
 router.get("/loans/summary", getLoanSummary);
 router.get("/loans/customer/:customerId/summary", getCustomerLoanSummary);
