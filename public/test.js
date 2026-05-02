@@ -4076,11 +4076,11 @@ function updateLoanType() {
   const interestHint = document.getElementById("interestRateHint");
 
   if (type === "overdraft") {
-    // Overdraft: Fixed 40% interest, non-editable
-    interestInput.value = 40;
+    // Overdraft: Fixed 6.45% interest, non-editable
+    interestInput.value = 6.45;
     interestInput.readOnly = true;
     interestInput.classList.add("bg-gray-700", "cursor-not-allowed");
-    interestHint.textContent = "Fixed at 40% for overdraft facilities";
+    interestHint.textContent = "Fixed at 6.45% for overdraft facilities";
     interestHint.classList.add("text-orange-400");
   } else {
     // Loan: Configurable interest
@@ -4157,7 +4157,7 @@ async function handleLoanRequest(e) {
     phone: customer.phone,
     type: type,
     amount: amount,
-    interestRate: interestRate, // 40% fixed for overdraft, configurable for loan
+    interestRate: interestRate,
     repaymentPeriod: repaymentPeriod,
     numberOfInstallments: numberOfInstallments,
     repaymentStartDate: repaymentStartDate,
@@ -4256,10 +4256,6 @@ function clearSelectedCustomerForLoan() {
   document.getElementById("selectedCustomerId").value = "";
   document.getElementById("selectedCustomer").classList.add("hidden");
   window.selectedCustomerForLoan = null;
-}
-
-function updateLoanType() {
-  calculateLoanDetails();
 }
 
 function calculateLoanDetails() {
