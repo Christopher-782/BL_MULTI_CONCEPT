@@ -26,24 +26,8 @@ const validateLoanRequest = async (req, res, next) => {
         });
       }
     } else if (type === "overdraft") {
-      // Rule: Customer must have 10+ approved deposits
-      const depositCount = await Transaction.countDocuments({
-        customerId: customerId,
-        type: "deposit",
-        status: "approved",
-      });
-
-      if (depositCount < 10) {
-        return res.status(400).json({
-          error: "Overdraft eligibility failed",
-          rule: "Customer must have at least 10 approved deposits",
-          required: 10,
-          available: depositCount,
-          shortfall: 10 - depositCount,
-        });
-      }
-
-      // Force interest rate to 40% for overdraft
+      // No credibility check for overdraft - admin will review manually
+      // Force interest rate to 6.45% for overdraft
       req.body.interestRate = 6.45;
     }
 
@@ -58,9 +42,9 @@ const validateLoanRequest = async (req, res, next) => {
 
 // Middleware to enforce overdraft interest rate on approval
 const enforceOverdraftRate = (req, res, next) => {
-  // If approving an overdraft, ensure interest rate is 40%
+  // If approving an overdraft, ensure interest rate is 6.45%
   if (req.body.type === "overdraft" || req.loan?.type === "overdraft") {
-    req.body.interestRate = 40;
+    req.body.interestRate = 6.45;
   }
   next();
 };
