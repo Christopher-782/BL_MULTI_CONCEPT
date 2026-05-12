@@ -38,6 +38,7 @@ exports.createLoanRequest = async (req, res) => {
       interestRate,
       repaymentPeriod,
       numberOfInstallments,
+      paymentDeadline,
       repaymentStartDate,
       purpose,
       notes,
