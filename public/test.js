@@ -4435,6 +4435,7 @@ function renderAdminLoans(container) {
           <div class="space-y-4">
             ${pendingLoans
               .map((loan) => {
+                const isOverdraft = loan.type === "overdraft";
                 const interest = (loan.totalPayable || 0) - (loan.amount || 0);
                 const processingCharges = loan.processingCharges || 0;
 
@@ -4443,7 +4444,7 @@ function renderAdminLoans(container) {
                   <div class="flex flex-wrap justify-between items-start gap-4">
                     <div class="flex-1">
                       <div class="flex items-center gap-3 mb-2">
-                        <span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
+                        <span class="px-2 py-1 rounded text-xs ${isOverdraft ? "bg-orange-500/20 text-orange-400" : "bg-green-500/20 text-green-400"}">
                           ${loan.type.toUpperCase()}
                         </span>
                         <span class="text-sm text-gray-400">Requested by: ${loan.requestedBy?.staffName || "Staff"}</span>
@@ -4454,6 +4455,44 @@ function renderAdminLoans(container) {
                       <p class="font-semibold text-lg">${loan.customerName}</p>
                       <p class="text-sm text-gray-400">#${loan.customerNumber || "---"} • ${loan.phone || "No phone"}</p>
                       
+                      ${
+                        isOverdraft
+                          ? `
+                      <!-- OVERDRAFT PENDING DISPLAY -->
+                      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
+                        <div>
+                          <p class="text-gray-400">Amount</p>
+                          <p class="font-mono font-bold text-green-400">₦${(loan.amount || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p class="text-gray-400">Processing Charges</p>
+                          <p class="font-mono text-red-400">₦${processingCharges.toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p class="text-gray-400">Total to Repay</p>
+                          <p class="font-mono text-blue-400 font-bold">₦${(loan.totalPayable || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p class="text-gray-400">Repayment</p>
+                          <p class="font-mono">1 (Lump Sum)</p>
+                        </div>
+                      </div>
+                      
+                      ${
+                        loan.paymentDeadline
+                          ? `
+                      <div class="mt-2 p-2 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+                        <p class="text-xs text-orange-400">
+                          <i class="fas fa-calendar-times mr-1"></i>
+                          Payment Deadline: ${new Date(loan.paymentDeadline).toLocaleDateString("en-GB")}
+                        </p>
+                      </div>
+                      `
+                          : ""
+                      }
+                      `
+                          : `
+                      <!-- LOAN PENDING DISPLAY -->
                       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
                         <div>
                           <p class="text-gray-400">Principal</p>
@@ -4482,18 +4521,7 @@ function renderAdminLoans(container) {
                           <p class="font-mono">${loan.numberOfInstallments} (${loan.repaymentPeriod})</p>
                         </div>
                       </div>
-                      
-                      ${
-                        loan.paymentDeadline
-                          ? `
-                      <div class="mt-2 p-2 bg-red-500/10 border border-red-500/20 rounded-lg">
-                        <p class="text-xs text-red-400">
-                          <i class="fas fa-calendar-times mr-1"></i>
-                          Payment Deadline: ${new Date(loan.paymentDeadline).toLocaleDateString("en-GB")}
-                        </p>
-                      </div>
                       `
-                          : ""
                       }
                       
                       ${loan.purpose ? `<p class="text-sm text-gray-300 mt-2">Purpose: ${loan.purpose}</p>` : ""}
@@ -4530,6 +4558,7 @@ function renderAdminLoans(container) {
           <div class="space-y-4">
             ${activeLoans
               .map((loan) => {
+                const isOverdraft = loan.type === "overdraft";
                 const interest = (loan.totalPayable || 0) - (loan.amount || 0);
                 const progress =
                   ((loan.amountRepaid || 0) / (loan.totalPayable || 1)) * 100;
@@ -4542,15 +4571,39 @@ function renderAdminLoans(container) {
                   <div class="flex flex-wrap justify-between items-start gap-4">
                     <div class="flex-1">
                       <div class="flex items-center gap-3 mb-2">
-                        <span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
+                        <span class="px-2 py-1 rounded text-xs ${isOverdraft ? "bg-orange-500/20 text-orange-400" : "bg-green-500/20 text-green-400"}">
                           ${loan.type.toUpperCase()}
                         </span>
                         <span class="text-xs text-gray-400">Started: ${loan.approvedBy?.approvedAt ? new Date(loan.approvedBy.approvedAt).toLocaleDateString() : "Unknown"}</span>
-                        ${loan.type === "overdraft" ? `<span class="px-2 py-1 rounded text-xs bg-orange-500/20 text-orange-400">${loan.interestRate || 6.45}% Interest</span>` : ""}
                         ${isOverdue ? '<span class="px-2 py-1 rounded text-xs bg-red-500/20 text-red-400 animate-pulse"><i class="fas fa-exclamation-circle mr-1"></i>OVERDUE</span>' : ""}
                       </div>
                       <p class="font-semibold">${loan.customerName}</p>
                       
+                      ${
+                        isOverdraft
+                          ? `
+                      <!-- OVERDRAFT ACTIVE DISPLAY -->
+                      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
+                        <div>
+                          <p class="text-gray-400">Amount</p>
+                          <p class="font-mono text-green-400">₦${(loan.amount || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p class="text-gray-400">Charges</p>
+                          <p class="font-mono text-red-400">₦${(loan.processingCharges || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p class="text-gray-400">Total to Repay</p>
+                          <p class="font-mono text-blue-400 font-bold">₦${(loan.totalPayable || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p class="text-gray-400">Outstanding</p>
+                          <p class="font-mono text-red-400">₦${(loan.outstandingBalance || 0).toLocaleString()}</p>
+                        </div>
+                      </div>
+                      `
+                          : `
+                      <!-- LOAN ACTIVE DISPLAY -->
                       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
                         <div>
                           <p class="text-gray-400">Total Payable</p>
@@ -4569,6 +4622,8 @@ function renderAdminLoans(container) {
                           <p class="font-mono text-yellow-400">₦${interest.toLocaleString()}</p>
                         </div>
                       </div>
+                      `
+                      }
                       
                       ${
                         loan.paymentDeadline
@@ -4611,8 +4666,10 @@ function showApproveLoanModal(loanId) {
   const loan = state.loans?.find((l) => l.id === loanId);
   if (!loan) return;
 
-  const interest =
-    loan.totalInterest || (loan.totalPayable || 0) - (loan.amount || 0);
+  const isOverdraft = loan.type === "overdraft";
+  const interest = isOverdraft
+    ? 0
+    : (loan.totalPayable || 0) - (loan.amount || 0);
   const processingCharges = loan.processingCharges || 0;
   const customer = state.customers.find((c) => c.id === loan.customerId);
   const customerBalance = customer?.cashBalance || customer?.balance || 0;
@@ -4621,9 +4678,9 @@ function showApproveLoanModal(loanId) {
     <div id="approveLoanModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
       <div class="bg-gray-900 rounded-2xl p-4 sm:p-8 max-w-md w-full mx-auto animate-slideIn">
         <div class="flex justify-between items-center mb-4 sm:mb-6">
-          <h3 class="text-lg sm:text-xl font-semibold text-green-400">
+          <h3 class="text-lg sm:text-xl font-semibold ${isOverdraft ? "text-orange-400" : "text-green-400"}">
             <i class="fas fa-hand-holding-usd mr-2"></i>
-            Approve ${loan.type === "overdraft" ? "Overdraft" : "Loan"}
+            Approve ${isOverdraft ? "Overdraft" : "Loan"}
           </h3>
           <button onclick="closeApproveLoanModal()" class="text-gray-400 hover:text-white p-2">
             <i class="fas fa-times text-lg"></i>
@@ -4648,6 +4705,41 @@ function showApproveLoanModal(loanId) {
             </div>
           </div>
           
+          ${
+            isOverdraft
+              ? `
+          <!-- OVERDRAFT DETAILS -->
+          <div class="bg-orange-500/10 border border-orange-500/30 p-3 rounded-lg">
+            <p class="text-sm text-orange-400 mb-2">Overdraft Details</p>
+            <div class="space-y-1 text-sm">
+              <div class="flex justify-between">
+                <span>Principal:</span>
+                <span class="font-mono text-green-400">₦${(loan.amount || 0).toLocaleString()}</span>
+              </div>
+              <div class="flex justify-between">
+                <span>Processing Charges:</span>
+                <span class="font-mono text-red-400">₦${processingCharges.toLocaleString()}</span>
+              </div>
+              <div class="flex justify-between pt-2 border-t border-gray-700 font-bold">
+                <span>Total to Repay:</span>
+                <span class="font-mono text-blue-400">₦${(loan.totalPayable || 0).toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+          
+          <div class="bg-red-500/10 border border-red-500/30 p-3 rounded-lg">
+            <div class="flex items-start gap-2">
+              <i class="fas fa-calendar-times text-red-400 mt-0.5"></i>
+              <div class="text-sm">
+                <p class="font-semibold text-red-400">Payment Deadline</p>
+                <p class="font-mono text-lg font-bold">${loan.paymentDeadline ? new Date(loan.paymentDeadline).toLocaleDateString("en-GB") : "Not set"}</p>
+                <p class="text-xs text-red-300 mt-1">Must be fully repaid by this date</p>
+              </div>
+            </div>
+          </div>
+              `
+              : `
+          <!-- LOAN DETAILS -->
           <div class="bg-gray-800/50 p-3 rounded-lg">
             <p class="text-sm text-gray-400 mb-2">Repayment Details</p>
             <div class="space-y-1 text-sm">
@@ -4676,23 +4768,6 @@ function showApproveLoanModal(loanId) {
             </div>
           </div>
           
-          ${
-            loan.paymentDeadline
-              ? `
-          <div class="bg-red-500/10 border border-red-500/30 p-3 rounded-lg">
-            <div class="flex items-start gap-2">
-              <i class="fas fa-calendar-times text-red-400 mt-0.5"></i>
-              <div class="text-sm">
-                <p class="font-semibold text-red-400">Payment Deadline</p>
-                <p class="font-mono text-lg font-bold">${new Date(loan.paymentDeadline).toLocaleDateString("en-GB")}</p>
-                <p class="text-xs text-red-300 mt-1">Overdraft must be fully repaid by this date</p>
-              </div>
-            </div>
-          </div>
-          `
-              : ""
-          }
-          
           <div class="bg-blue-500/10 border border-blue-500/30 p-3 rounded-lg">
             <div class="flex items-start gap-2">
               <i class="fas fa-info-circle text-blue-400 mt-0.5"></i>
@@ -4701,16 +4776,17 @@ function showApproveLoanModal(loanId) {
                 <p>✓ ₦${(loan.amount || 0).toLocaleString()} will be <strong class="text-green-400">ADDED</strong> to customer's cash balance</p>
                 <p>✓ Customer will repay in ${loan.numberOfInstallments} ${loan.repaymentPeriod}ly installments</p>
                 <p>✓ Each installment: ₦${(loan.installmentAmount || 0).toLocaleString()}</p>
-                ${loan.paymentDeadline ? `<p>✓ <strong class="text-red-400">Must be fully repaid by ${new Date(loan.paymentDeadline).toLocaleDateString("en-GB")}</strong></p>` : ""}
               </div>
             </div>
           </div>
+          `
+          }
           
           <div class="flex gap-4 pt-4">
             <button onclick="closeApproveLoanModal()" class="flex-1 px-6 py-3 border border-gray-600 rounded-xl hover:bg-gray-800">
               Cancel
             </button>
-            <button onclick="approveLoan('${loan.id}')" class="flex-1 px-6 py-3 bg-green-600 hover:bg-green-500 rounded-xl">
+            <button onclick="approveLoan('${loan.id}')" class="flex-1 px-6 py-3 ${isOverdraft ? "bg-orange-600 hover:bg-orange-500" : "bg-green-600 hover:bg-green-500"} rounded-xl">
               <i class="fas fa-check mr-2"></i>Approve & Disburse
             </button>
           </div>
@@ -5012,11 +5088,16 @@ function renderMyLoans(container) {
               const progress =
                 ((loan.amountRepaid || 0) / (loan.totalPayable || 1)) * 100;
 
+              // OVERDRAFT SPECIFIC CALCULATIONS
+              const isOverdraft = loan.type === "overdraft";
+              const processingCharges = loan.processingCharges || 0;
+              const totalWithCharges = loan.amount + processingCharges;
+
               return `<div class="bg-gray-800/50 p-4 rounded-xl border ${isOverdue ? "border-red-500/50" : "border-gray-700"}">
               <div class="flex flex-wrap justify-between items-start gap-4">
                 <div class="flex-1">
                   <div class="flex items-center gap-3 mb-2">
-                    <span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
+                    <span class="px-2 py-1 rounded text-xs ${isOverdraft ? "bg-orange-500/20 text-orange-400" : "bg-green-500/20 text-green-400"}">
                       ${loan.type.toUpperCase()}
                     </span>
                     <span class="px-2 py-1 rounded text-xs ${loan.status === "pending" ? "bg-yellow-500/20 text-yellow-400" : loan.status === "active" ? "bg-green-500/20 text-green-400" : loan.status === "completed" ? "bg-blue-500/20 text-blue-400" : "bg-red-500/20 text-red-400"}">
@@ -5025,27 +5106,75 @@ function renderMyLoans(container) {
                     ${isOverdue ? '<span class="px-2 py-1 rounded text-xs bg-red-500/20 text-red-400 animate-pulse"><i class="fas fa-exclamation-circle mr-1"></i>OVERDUE</span>' : ""}
                   </div>
                   <p class="font-semibold">${loan.customerName}</p>
-                  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
-                    <div>
-                      <p class="text-gray-400">Amount</p>
-                      <p class="font-mono text-green-400">₦${loan.amount.toLocaleString()}</p>
-                    </div>
-                    <div>
-                      <p class="text-gray-400">Interest</p>
-                      <p class="font-mono">${loan.interestRate}%</p>
-                    </div>
-                    <div>
-                      <p class="text-gray-400">Total Payable</p>
-                      <p class="font-mono text-blue-400">₦${loan.totalPayable.toLocaleString()}</p>
-                    </div>
-                    <div>
-                      <p class="text-gray-400">Installments</p>
-                      <p class="font-mono">${loan.numberOfInstallments} (${loan.repaymentPeriod})</p>
-                    </div>
-                  </div>
                   
                   ${
-                    loan.paymentDeadline
+                    isOverdraft
+                      ? `
+                    <!-- OVERDRAFT DISPLAY -->
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mt-3 text-sm">
+                      <div>
+                        <p class="text-gray-400">Amount</p>
+                        <p class="font-mono text-green-400">₦${loan.amount.toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p class="text-gray-400">Processing Charges</p>
+                        <p class="font-mono text-red-400">₦${processingCharges.toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p class="text-gray-400">Total to Repay</p>
+                        <p class="font-mono text-blue-400 font-bold">₦${totalWithCharges.toLocaleString()}</p>
+                      </div>
+                    </div>
+                    
+                    ${
+                      loan.paymentDeadline
+                        ? `
+                    <div class="mt-3 p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg">
+                      <div class="flex items-center gap-2">
+                        <i class="fas fa-calendar-times text-orange-400"></i>
+                        <div>
+                          <p class="text-sm font-semibold text-orange-400">Payment Deadline</p>
+                          <p class="text-lg font-mono font-bold text-white">${new Date(loan.paymentDeadline).toLocaleDateString("en-GB")}</p>
+                          <p class="text-xs text-gray-400">${Math.ceil((new Date(loan.paymentDeadline) - new Date()) / (1000 * 60 * 60 * 24))} days remaining</p>
+                        </div>
+                      </div>
+                    </div>
+                    `
+                        : ""
+                    }
+                    
+                    <div class="mt-2 p-2 bg-gray-900/50 rounded-lg">
+                      <p class="text-xs text-orange-300">
+                        <i class="fas fa-info-circle mr-1"></i>
+                        Overdraft must be repaid in full by the deadline. Interest: 6.45% (fixed)
+                      </p>
+                    </div>
+                  `
+                      : `
+                    <!-- REGULAR LOAN DISPLAY -->
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
+                      <div>
+                        <p class="text-gray-400">Amount</p>
+                        <p class="font-mono text-green-400">₦${loan.amount.toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p class="text-gray-400">Interest</p>
+                        <p class="font-mono">${loan.interestRate}%</p>
+                      </div>
+                      <div>
+                        <p class="text-gray-400">Total Payable</p>
+                        <p class="font-mono text-blue-400">₦${loan.totalPayable.toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p class="text-gray-400">Installments</p>
+                        <p class="font-mono">${loan.numberOfInstallments} (${loan.repaymentPeriod})</p>
+                      </div>
+                    </div>
+                  `
+                  }
+                  
+                  ${
+                    loan.paymentDeadline && !isOverdraft
                       ? `
                   <div class="mt-2 p-2 ${isOverdue ? "bg-red-500/10 border-red-500/20" : "bg-orange-500/10 border-orange-500/20"} border rounded-lg">
                     <p class="text-xs ${isOverdue ? "text-red-400" : "text-orange-400"}">
@@ -5066,8 +5195,8 @@ function renderMyLoans(container) {
                       <div class="bg-green-500 h-2 rounded-full" style="width: ${progress || 0}%"></div>
                     </div>
                     <div class="flex justify-between text-xs mt-1">
-                      <span>₦${loan.amountRepaid.toLocaleString()} repaid</span>
-                      <span>₦${loan.outstandingBalance.toLocaleString()} remaining</span>
+                      <span>₦${(loan.amountRepaid || 0).toLocaleString()} repaid</span>
+                      <span>₦${(loan.outstandingBalance || 0).toLocaleString()} remaining</span>
                     </div>
                   </div>
                   `
