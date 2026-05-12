@@ -181,7 +181,12 @@ const menus = {
       id: "staff-reconciliation",
       icon: "fa-file-invoice-dollar",
       label: "Staff Reconciliation",
-    }, // Add this
+    },
+    {
+      id: "repayments",
+      icon: "fa-calendar-check",
+      label: "Repayment Management",
+    },
   ],
   staff: [
     { id: "dashboard", icon: "fa-chart-line", label: "Dashboard" },
@@ -1149,6 +1154,9 @@ function navigate(view) {
     case "staff-reconciliation":
       renderStaffReconciliation(contentArea); // Add this
       break;
+    case "repayments":
+      renderRepaymentManagement(contentArea);
+      break;
     default:
       renderDashboard(contentArea);
   }
@@ -1543,7 +1551,194 @@ function renderDashboard(container) {
   `;
   container.innerHTML = html;
 }
-// ==================== CUSTOMERS VIEW ====================
+
+// ==================== REPAYMENT MANAGEMENT VIEW ====================
+
+function renderRepaymentManagement(container) {
+  const activeLoans =
+    state.loans?.filter(
+      (l) => l.status === "active" || l.status === "overdraft",
+    ) || [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // 1. Extract all due installments from all active loans
+  let dueInstallments = [];
+
+  activeLoans.forEach((loan) => {
+    const customer = state.customers.find((c) => c.id === loan.customerId);
+    if (!customer) return;
+
+    if (loan.repayments && loan.repayments.length > 0) {
+      loan.repayments.forEach((repayment) => {
+        const dueDate = new Date(repayment.dueDate);
+
+        // If repayment is pending/overdue and the date has passed or is today
+        if (repayment.status !== "paid" && dueDate <= today) {
+          dueInstallments.push({
+            loanId: loan.id,
+            repaymentId: repayment.id,
+            customerName: loan.customerName,
+            customerId: loan.customerId,
+            amount: repayment.amount,
+            dueDate: repayment.dueDate,
+            type: loan.type, // 'loan' or 'overdraft'
+            status: repayment.status, // 'pending' or 'overdue'
+          });
+        }
+      });
+    }
+  });
+
+  // Sort: Overdue first, then by date
+  dueInstallments.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+
+  const overdueCount = dueInstallments.filter(
+    (i) => new Date(i.dueDate) < today,
+  ).length;
+  const dueTodayCount = dueInstallments.filter(
+    (i) => new Date(i.dueDate).toDateString() === today.toDateString(),
+  ).length;
+
+  const html = `
+    <div class="space-y-6 animate-fade-in px-4 sm:px-0">
+      <div class="flex justify-between items-center">
+        <div>
+          <h3 class="text-xl font-bold">Repayment Management</h3>
+          <p class="text-sm text-gray-400">Manually collect outstanding installments</p>
+        </div>
+        <button onclick="refreshData()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors">
+          <i class="fas fa-sync-alt mr-2"></i>Refresh
+        </button>
+      </div>
+
+      <!-- Summary Stats -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div class="glass-panel p-4 rounded-xl border-l-4 border-red-500">
+          <p class="text-xs text-gray-400 uppercase font-bold">Total Overdue</p>
+          <p class="text-2xl font-bold text-red-400">${overdueCount} Installments</p>
+        </div>
+        <div class="glass-panel p-4 rounded-xl border-l-4 border-yellow-500">
+          <p class="text-xs text-gray-400 uppercase font-bold">Due Today</p>
+          <p class="text-2xl font-bold text-yellow-400">${dueTodayCount} Installments</p>
+        </div>
+      </div>
+
+      <!-- Repayment Table -->
+      <div class="glass-panel rounded-2xl overflow-hidden">
+        <table class="min-w-full divide-y divide-gray-700">
+          <thead class="bg-gray-800/50">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Customer</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Type</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Amount Due</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Due Date</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Status</th>
+              <th class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase">Action</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800">
+            ${
+              dueInstallments.length === 0
+                ? `<tr><td colspan="6" class="px-6 py-12 text-center text-gray-500">No pending or overdue repayments found.</td></tr>`
+                : dueInstallments
+                    .map(
+                      (inst) => `
+                <tr class="hover:bg-gray-800/30 transition-colors">
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm font-medium text-white">${inst.customerName}</div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <span class="px-2 py-1 rounded-full text-[10px] font-bold uppercase ${inst.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
+                      ${inst.type}
+                    </span>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap font-mono text-sm text-white">
+                    ₦${inst.amount.toLocaleString()}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
+                    ${formatSimpleDate(inst.dueDate)}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <span class="px-2 py-1 rounded text-xs ${inst.status === "overdue" ? "bg-red-500/20 text-red-400" : "bg-yellow-500/20 text-yellow-400"}">
+                      ${inst.status.toUpperCase()}
+                    </span>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <button onclick="handleManualCollection('${inst.loanId}', '${inst.repaymentId}', '${inst.customerId}', ${inst.amount}, '${inst.customerName}')" 
+                      class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition-all flex items-center justify-center ml-auto gap-2">
+                      <i class="fas fa-hand-holding-usd"></i> Collect
+                    </button>
+                  </td>
+                </tr>
+              `,
+                    )
+                    .join("")
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  container.innerHTML = html;
+}
+
+/**
+ * The logic to perform the manual collection
+ * This performs a withdrawal from the customer and marks the loan repayment as paid
+ */
+async function handleManualCollection(
+  loanId,
+  repaymentId,
+  customerId,
+  amount,
+  customerName,
+) {
+  // 1. Confirmation
+  if (
+    !confirm(`Confirm Collection: 
+  
+  This will deduct ₦${amount.toLocaleString()} from ${customerName}'s balance and record it as a loan repayment.
+  
+  Continue?`)
+  ) {
+    return;
+  }
+
+  try {
+    showNotification("Processing collection...", "info");
+
+    // 2. Call your existing PATCH route
+    // We send 'paidBy' to match your backend: const { paidBy, paymentAmount } = req.body;
+    await api.patch(`/loans/${loanId}/repayments/${repaymentId}`, {
+      paidBy: state.currentUser.name,
+      paymentAmount: amount, // Passing this explicitly ensures the backend uses the correct amount
+    });
+
+    // 3. Success Handling
+    showNotification(
+      `Successfully collected ₦${amount.toLocaleString()} from ${customerName}`,
+      "success",
+    );
+
+    // 4. Refresh all data
+    // This will update the Customer Balance, the Loan Status, and the Transaction History
+    await loadAllData();
+
+    // 5. Re-render the Repayment Management page to clear the item from the list
+    renderRepaymentManagement(document.getElementById("contentArea"));
+  } catch (error) {
+    console.error("Manual collection error:", error);
+
+    // 6. Error Handling
+    // This will catch your backend's "Insufficient funds" error and show it to the Admin
+    const errorMsg =
+      error.response?.data?.error ||
+      "Failed to collect payment. Check customer balance.";
+    showNotification(errorMsg, "error");
+  }
+} // ==================== CUSTOMERS VIEW ====================
 
 function renderCustomers(container) {
   let displayedCustomers = state.customers;
@@ -1938,12 +2133,37 @@ function showAddCustomerModal() {
             <p class="text-xs text-green-400 mt-1">✓ SMS alerts will be sent to this number</p>
           </div>
           <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">Initial Deposit (₦)</label>
+            <input type="number" name="initialDeposit" id="adminInitialDeposit" min="0" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 text-base" placeholder="0.00" oninput="updateAdminRegistrationNet()">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">
+              Charge Amount (₦) <span class="text-xs text-yellow-400">- Optional, default 0</span>
+            </label>
+            <input type="number" name="charges" id="adminCharges" value="0" min="0" step="0.01" 
+              oninput="updateAdminRegistrationNet()"
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white font-mono focus:border-blue-500 transition-colors text-base" 
+              placeholder="0.00">
+          </div>
+          <div id="adminNetDisplay" class="p-3 bg-gray-800/50 border border-gray-700 rounded-xl hidden">
+            <div class="flex justify-between items-center">
+              <span class="text-sm text-gray-400">Net Balance:</span>
+              <span class="text-xl font-bold font-mono text-blue-400" id="adminNetAmount">₦0</span>
+            </div>
+          </div>
+          <div id="adminChargeWarning" class="hidden p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+            <p class="text-xs text-red-300 flex items-center gap-2">
+              <i class="fas fa-exclamation-circle"></i>
+              <span>Charges cannot exceed the initial deposit</span>
+            </p>
+          </div>
+          <div>
             <label class="block text-sm font-medium text-gray-300 mb-2">Address</label>
             <textarea name="address" rows="2" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 text-base"></textarea>
           </div>
           <div class="flex flex-col sm:flex-row gap-4 pt-4">
             <button type="button" onclick="closeCustomerModal()" class="flex-1 px-6 py-3 border border-gray-600 rounded-xl hover:bg-gray-800">Cancel</button>
-            <button type="submit" class="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl">Add Customer</button>
+            <button type="submit" id="adminSubmitBtn" class="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl">Add Customer</button>
           </div>
         </form>
       </div>
@@ -1955,9 +2175,96 @@ function showAddCustomerModal() {
   document.body.appendChild(modalContainer);
 }
 
-function closeCustomerModal() {
-  const modal = document.getElementById("customerModal");
-  if (modal) modal.remove();
+function updateAdminRegistrationNet() {
+  const deposit = parseFloat(
+    document.getElementById("adminInitialDeposit")?.value || 0,
+  );
+  const charges = parseFloat(
+    document.getElementById("adminCharges")?.value || 0,
+  );
+  const net = deposit - charges;
+
+  const netDisplay = document.getElementById("adminNetDisplay");
+  const netAmount = document.getElementById("adminNetAmount");
+  const warning = document.getElementById("adminChargeWarning");
+  const submitBtn = document.getElementById("adminSubmitBtn");
+
+  if (deposit > 0 || charges > 0) {
+    netDisplay.classList.remove("hidden");
+    netAmount.textContent = "₦" + net.toLocaleString();
+  } else {
+    netDisplay.classList.add("hidden");
+  }
+
+  if (charges > deposit) {
+    warning.classList.remove("hidden");
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.classList.add("opacity-50", "cursor-not-allowed");
+    }
+  } else {
+    warning.classList.add("hidden");
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.classList.remove("opacity-50", "cursor-not-allowed");
+    }
+  }
+}
+
+async function handleAddCustomer(e) {
+  e.preventDefault();
+
+  const formData = new FormData(e.target);
+  const currentStaff = state.currentUser;
+
+  const initialDeposit = parseFloat(formData.get("initialDeposit")) || 0;
+  const charges = parseFloat(formData.get("charges")) || 0;
+  const netBalance = initialDeposit - charges;
+
+  if (charges > initialDeposit) {
+    showNotification(
+      "Charges cannot exceed the initial deposit amount",
+      "error",
+    );
+    return;
+  }
+
+  const customerData = {
+    name: formData.get("name"),
+    email: formData.get("email"),
+    phone: formData.get("phone"),
+    cashBalance: netBalance,
+    initialDeposit: initialDeposit,
+    charges: charges,
+    loanBalance: 0,
+    address: formData.get("address"),
+    staffId: currentStaff?.id,
+    staffName: currentStaff?.name,
+    staffEmail: currentStaff?.email,
+  };
+
+  try {
+    const response = await api.post("/customers", customerData);
+    const newCustomer = response.data.customer || response.data;
+    await loadAllData();
+
+    let successMsg = `✅ Customer added successfully! SMS alerts will be sent to ${newCustomer.phone}`;
+    if (initialDeposit > 0) {
+      successMsg += ` | Deposit: ₦${initialDeposit.toLocaleString()}`;
+      if (charges > 0) {
+        successMsg += ` | Charges: ₦${charges.toLocaleString()} | Net: ₦${netBalance.toLocaleString()}`;
+      }
+    }
+
+    showNotification(successMsg, "success");
+    closeCustomerModal();
+  } catch (error) {
+    console.error("Error adding customer:", error);
+    showNotification(
+      error.response?.data?.error || "Failed to add customer",
+      "error",
+    );
+  }
 }
 
 async function handleAddCustomer(e) {
@@ -1997,6 +2304,8 @@ async function handleAddCustomer(e) {
 }
 
 // New Customer Form (for staff)
+// ==================== NEW CUSTOMER FORM (for staff) ====================
+
 function renderNewCustomer(container) {
   const html = `
     <div class="max-w-2xl mx-auto animate-fade-in px-4 sm:px-0">
@@ -2028,8 +2337,39 @@ function renderNewCustomer(container) {
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-300 mb-2">Initial Deposit (₦)</label>
-              <input type="number" name="initialDeposit" min="0" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors text-base" placeholder="0.00">
+              <input type="number" name="initialDeposit" id="regInitialDeposit" min="0" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors text-base" placeholder="0.00" oninput="updateRegistrationNet()">
             </div>
+          </div>
+
+          <!-- Charges Field -->
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">
+              Charge Amount (₦) <span class="text-xs text-yellow-400">- Optional, default 0</span>
+            </label>
+            <input type="number" name="charges" id="regCharges" value="0" min="0" step="0.01" 
+              oninput="updateRegistrationNet()"
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white font-mono focus:border-blue-500 transition-colors text-base" 
+              placeholder="0.00">
+            <p class="text-xs text-gray-400 mt-1">This charge will be deducted from the initial deposit</p>
+          </div>
+
+          <!-- Net Amount Display -->
+          <div id="regNetDisplay" class="p-4 bg-gradient-to-r from-gray-800 to-gray-800/50 border border-blue-500/30 rounded-xl hidden">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+              <span class="text-gray-300 font-medium text-sm sm:text-base">Net Amount to Customer:</span>
+              <span class="text-2xl sm:text-3xl font-bold text-blue-400 font-mono" id="regNetAmount">₦0</span>
+            </div>
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mt-2 text-xs text-gray-400 gap-1">
+              <span>Initial Deposit - Charges = Net Balance</span>
+            </div>
+          </div>
+
+          <!-- Warning for charges exceeding deposit -->
+          <div id="regChargeWarning" class="hidden p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
+            <p class="text-xs text-red-300 flex items-center gap-2">
+              <i class="fas fa-exclamation-circle"></i>
+              <span>Charges cannot exceed the initial deposit amount</span>
+            </p>
           </div>
 
           <div>
@@ -2044,7 +2384,7 @@ function renderNewCustomer(container) {
 
           <div class="flex flex-col sm:flex-row gap-4 pt-4">
             <button type="button" onclick="navigate('customers')" class="flex-1 px-6 py-3 border border-gray-600 rounded-xl hover:bg-gray-800 transition-colors">Cancel</button>
-            <button type="submit" class="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-medium transition-colors">Register Customer</button>
+            <button type="submit" id="regSubmitBtn" class="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-medium transition-colors">Register Customer</button>
           </div>
         </form>
       </div>
@@ -2053,16 +2393,66 @@ function renderNewCustomer(container) {
   container.innerHTML = html;
 }
 
+function updateRegistrationNet() {
+  const deposit = parseFloat(
+    document.getElementById("regInitialDeposit")?.value || 0,
+  );
+  const charges = parseFloat(document.getElementById("regCharges")?.value || 0);
+  const net = deposit - charges;
+
+  const netDisplay = document.getElementById("regNetDisplay");
+  const netAmount = document.getElementById("regNetAmount");
+  const warning = document.getElementById("regChargeWarning");
+  const submitBtn = document.getElementById("regSubmitBtn");
+
+  if (deposit > 0 || charges > 0) {
+    netDisplay.classList.remove("hidden");
+    netAmount.textContent = "₦" + net.toLocaleString();
+  } else {
+    netDisplay.classList.add("hidden");
+  }
+
+  // Validate: charges cannot exceed deposit
+  if (charges > deposit) {
+    warning.classList.remove("hidden");
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.classList.add("opacity-50", "cursor-not-allowed");
+    }
+  } else {
+    warning.classList.add("hidden");
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.classList.remove("opacity-50", "cursor-not-allowed");
+    }
+  }
+}
+
 async function handleNewCustomer(e) {
   e.preventDefault();
   const formData = new FormData(e.target);
   const currentStaff = state.currentUser;
 
+  const initialDeposit = parseFloat(formData.get("initialDeposit")) || 0;
+  const charges = parseFloat(formData.get("charges")) || 0;
+  const netBalance = initialDeposit - charges;
+
+  // Validate charges don't exceed deposit
+  if (charges > initialDeposit) {
+    showNotification(
+      "Charges cannot exceed the initial deposit amount",
+      "error",
+    );
+    return;
+  }
+
   const customerData = {
     name: formData.get("fullName"),
     email: formData.get("email"),
     phone: formData.get("phone"),
-    cashBalance: parseFloat(formData.get("initialDeposit")) || 0,
+    cashBalance: netBalance, // Net amount after charges
+    initialDeposit: initialDeposit, // Original deposit amount (for records)
+    charges: charges, // Charges deducted
     loanBalance: 0,
     address: formData.get("address"),
     staffId: currentStaff?.id,
@@ -2074,10 +2464,16 @@ async function handleNewCustomer(e) {
     const response = await api.post("/customers", customerData);
     const newCustomer = response.data.customer || response.data;
     state.customers.push(newCustomer);
-    showNotification(
-      `✅ Customer registered successfully! ID: ${newCustomer.id}\n📱 SMS alerts will be sent to ${newCustomer.phone}`,
-      "success",
-    );
+
+    let successMsg = `✅ Customer registered successfully! ID: ${newCustomer.id}\n📱 SMS alerts will be sent to ${newCustomer.phone}`;
+    if (initialDeposit > 0) {
+      successMsg += `\n💰 Deposit: ₦${initialDeposit.toLocaleString()}`;
+      if (charges > 0) {
+        successMsg += ` | Charges: ₦${charges.toLocaleString()} | Net: ₦${netBalance.toLocaleString()}`;
+      }
+    }
+
+    showNotification(successMsg, "success");
     navigate("customers");
   } catch (error) {
     console.error("Customer registration error:", error);
@@ -3348,44 +3744,212 @@ function renderNewLoanRequest(container) {
     <div class="max-w-2xl mx-auto animate-fade-in px-4 sm:px-0">
       <div class="glass-panel rounded-2xl p-4 sm:p-8">
         <div class="flex items-center gap-4 mb-6 sm:mb-8">
-          <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0"><i class="fas fa-hand-holding-usd text-green-400 text-base sm:text-xl"></i></div>
-          <div><h3 class="text-lg sm:text-xl font-semibold">Request Loan/Overdraft</h3><p class="text-xs sm:text-sm text-gray-400">Submit loan or overdraft request for customer</p></div>
+          <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-green-500/20 flex items-center justify-center flex-shrink-0">
+            <i class="fas fa-hand-holding-usd text-green-400 text-base sm:text-xl"></i>
+          </div>
+          <div>
+            <h3 class="text-lg sm:text-xl font-semibold">Request Loan/Overdraft</h3>
+            <p class="text-xs sm:text-sm text-gray-400">Submit loan or overdraft request for customer</p>
+            <p class="text-xs text-yellow-400 mt-1">
+              <i class="fas fa-info-circle mr-1"></i>
+              Loans require 40% cash collateral. Overdrafts require 10+ deposits.
+            </p>
+          </div>
         </div>
 
         <form onsubmit="handleLoanRequest(event)" class="space-y-4 sm:space-y-6">
-          <div><label class="block text-sm font-medium text-gray-300 mb-2"><i class="fas fa-search mr-2 text-blue-400"></i>Search Customer</label>
-            <div class="relative"><input type="text" id="customerSearchInput" placeholder="Search by name, email, phone, or 3-digit number..." autocomplete="off" class="w-full px-4 py-3 pl-10 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors text-base" oninput="searchCustomersForLoan(this.value)" /><i class="fas fa-search absolute left-3 top-3.5 text-gray-500"></i></div>
+          <!-- Customer Search -->
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">
+              <i class="fas fa-search mr-2 text-blue-400"></i>Search Customer
+            </label>
+            <div class="relative">
+              <input type="text" id="customerSearchInput" placeholder="Search by name, email, phone, or 3-digit number..." 
+                autocomplete="off" 
+                class="w-full px-4 py-3 pl-10 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors text-base" 
+                oninput="searchCustomersForLoan(this.value)" />
+              <i class="fas fa-search absolute left-3 top-3.5 text-gray-500"></i>
+            </div>
           </div>
 
-          <div id="searchResults" class="hidden glass-panel rounded-xl border border-gray-700 max-h-64 overflow-y-auto"><div id="searchResultsList" class="divide-y divide-gray-700"></div></div>
+          <div id="searchResults" class="hidden glass-panel rounded-xl border border-gray-700 max-h-64 overflow-y-auto">
+            <div id="searchResultsList" class="divide-y divide-gray-700"></div>
+          </div>
 
-          <div id="selectedCustomer" class="hidden p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl"><div class="flex justify-between items-center"><div><p class="text-sm text-gray-300">Selected Customer:</p><div class="flex items-center gap-2 mt-1"><span class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded font-mono text-sm" id="selectedCustomerNumber">-</span><p class="text-base font-semibold text-white" id="selectedCustomerName">-</p></div><p class="text-xs text-gray-400 mt-1" id="selectedCustomerPhone"></p><p class="text-xs text-green-400 mt-1">Cash Balance: <span id="selectedCustomerBalance">₦0</span></p></div><button type="button" onclick="clearSelectedCustomerForLoan()" class="text-red-400 hover:text-red-300"><i class="fas fa-times"></i></button></div></div>
+          <div id="selectedCustomer" class="hidden p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+            <div class="flex justify-between items-center">
+              <div>
+                <p class="text-sm text-gray-300">Selected Customer:</p>
+                <div class="flex items-center gap-2 mt-1">
+                  <span class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded font-mono text-sm" id="selectedCustomerNumber">-</span>
+                  <p class="text-base font-semibold text-white" id="selectedCustomerName">-</p>
+                </div>
+                <p class="text-xs text-gray-400 mt-1" id="selectedCustomerPhone"></p>
+                <p class="text-xs text-green-400 mt-1">Cash Balance: <span id="selectedCustomerBalance">₦0</span></p>
+                <p class="text-xs text-blue-400 mt-1">Total Deposits: <span id="selectedCustomerDepositCount">0</span></p>
+              </div>
+              <button type="button" onclick="clearSelectedCustomerForLoan()" class="text-red-400 hover:text-red-300">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+          </div>
 
           <input type="hidden" id="selectedCustomerId" value="">
 
+          <!-- Loan Type Selection -->
           <div class="grid grid-cols-2 gap-3 sm:gap-4">
-            <label class="cursor-pointer"><input type="radio" name="type" value="loan" checked class="hidden peer" onchange="updateLoanType()"><div class="p-3 sm:p-4 rounded-xl border-2 border-gray-700 peer-checked:border-green-500 peer-checked:bg-green-500/10 transition-all text-center"><i class="fas fa-coins text-green-400 text-xl sm:text-2xl mb-1 sm:mb-2"></i><p class="font-medium text-sm sm:text-base">Loan</p><p class="text-xs text-gray-400">Lump sum with interest</p></div></label>
-            <label class="cursor-pointer"><input type="radio" name="type" value="overdraft" class="hidden peer" onchange="updateLoanType()"><div class="p-3 sm:p-4 rounded-xl border-2 border-gray-700 peer-checked:border-orange-500 peer-checked:bg-orange-500/10 transition-all text-center"><i class="fas fa-credit-card text-orange-400 text-xl sm:text-2xl mb-1 sm:mb-2"></i><p class="font-medium text-sm sm:text-base">Overdraft</p><p class="text-xs text-gray-400">Extended credit facility</p></div></label>
+            <label class="cursor-pointer">
+              <input type="radio" name="type" value="loan" checked class="hidden peer" onchange="updateLoanType()">
+              <div class="p-3 sm:p-4 rounded-xl border-2 border-gray-700 peer-checked:border-green-500 peer-checked:bg-green-500/10 transition-all text-center">
+                <i class="fas fa-coins text-green-400 text-xl sm:text-2xl mb-1 sm:mb-2"></i>
+                <p class="font-medium text-sm sm:text-base">Loan</p>
+                <p class="text-xs text-gray-400">Need 40% cash balance</p>
+              </div>
+            </label>
+            <label class="cursor-pointer">
+              <input type="radio" name="type" value="overdraft" class="hidden peer" onchange="updateLoanType()">
+              <div class="p-3 sm:p-4 rounded-xl border-2 border-gray-700 peer-checked:border-orange-500 peer-checked:bg-orange-500/10 transition-all text-center">
+                <i class="fas fa-credit-card text-orange-400 text-xl sm:text-2xl mb-1 sm:mb-2"></i>
+                <p class="font-medium text-sm sm:text-base">Overdraft</p>
+                <p class="text-xs text-gray-400">Need 10+ deposits</p>
+              </div>
+            </label>
           </div>
 
-          <div><label class="block text-sm font-medium text-gray-300 mb-2">Requested Amount (₦)</label><input type="number" id="loanAmount" name="amount" required min="1000" step="1000" oninput="calculateLoanDetails()" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white text-xl font-mono focus:border-blue-500 transition-colors" placeholder="0.00"></div>
-          <div><label class="block text-sm font-medium text-gray-300 mb-2">Interest Rate (%)</label><input type="number" id="interestRate" name="interestRate" required min="0" step="0.5" value="5" oninput="calculateLoanDetails()" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors"><p class="text-xs text-gray-400 mt-1">Interest will be added to the principal amount</p></div>
-
-          <div class="grid grid-cols-2 gap-3 sm:gap-4">
-            <div><label class="block text-sm font-medium text-gray-300 mb-2">Repayment Period</label><select id="repaymentPeriod" name="repaymentPeriod" onchange="calculateLoanDetails()" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500"><option value="weekly">Weekly</option><option value="bi-weekly">Bi-Weekly (Every 2 weeks)</option><option value="monthly">Monthly</option></select></div>
-            <div><label class="block text-sm font-medium text-gray-300 mb-2">Number of Installments</label><input type="number" id="installments" name="installments" required min="1" max="52" value="4" oninput="calculateLoanDetails()" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors"></div>
+          <!-- Eligibility Check Display -->
+          <div id="eligibilityCheck" class="hidden p-4 bg-gray-800/50 border border-gray-700 rounded-xl">
+            <h4 class="text-sm font-semibold text-gray-300 mb-3">Eligibility Check</h4>
+            <div id="loanEligibility" class="space-y-2">
+              <div class="flex justify-between text-sm">
+                <span class="text-gray-400">Required Balance (40%):</span>
+                <span class="font-mono text-yellow-400" id="requiredBalance">₦0</span>
+              </div>
+              <div class="flex justify-between text-sm">
+                <span class="text-gray-400">Current Balance:</span>
+                <span class="font-mono text-green-400" id="currentBalanceCheck">₦0</span>
+              </div>
+              <div class="flex justify-between text-sm pt-2 border-t border-gray-700">
+                <span class="text-gray-300">Status:</span>
+                <span id="eligibilityStatus" class="font-medium">Checking...</span>
+              </div>
+            </div>
+            <div id="overdraftEligibility" class="hidden space-y-2">
+              <div class="flex justify-between text-sm">
+                <span class="text-gray-400">Required Deposits:</span>
+                <span class="font-mono text-yellow-400">10</span>
+              </div>
+              <div class="flex justify-between text-sm">
+                <span class="text-gray-400">Customer Deposits:</span>
+                <span class="font-mono text-green-400" id="customerDepositCount">0</span>
+              </div>
+              <div class="flex justify-between text-sm pt-2 border-t border-gray-700">
+                <span class="text-gray-300">Status:</span>
+                <span id="overdraftEligibilityStatus" class="font-medium">Checking...</span>
+              </div>
+            </div>
           </div>
 
-          <div><label class="block text-sm font-medium text-gray-300 mb-2">Repayment Start Date</label><input type="date" id="startDate" name="startDate" required class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors"></div>
+          <!-- Amount -->
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">Requested Amount (₦)</label>
+            <input type="number" id="loanAmount" name="amount" required min="1000" step="1000" 
+              oninput="calculateLoanDetails(); checkEligibility();" 
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white text-xl font-mono focus:border-blue-500 transition-colors" 
+              placeholder="0.00">
+          </div>
 
-          <div id="loanSummary" class="p-4 bg-gradient-to-r from-gray-800 to-gray-800/50 border border-blue-500/30 rounded-xl hidden"><h4 class="text-sm font-semibold text-blue-400 mb-3">Loan Summary</h4><div class="space-y-2 text-sm"><div class="flex justify-between"><span class="text-gray-400">Principal Amount:</span><span class="font-mono">₦<span id="summaryPrincipal">0</span></span></div><div class="flex justify-between"><span class="text-gray-400">Interest (at <span id="summaryRate">0</span>%):</span><span class="font-mono text-yellow-400">₦<span id="summaryInterest">0</span></span></div><div class="flex justify-between pt-2 border-t border-gray-700"><span class="text-gray-300 font-semibold">Total Payable:</span><span class="font-mono text-green-400 font-bold">₦<span id="summaryTotal">0</span></span></div><div class="flex justify-between"><span class="text-gray-400">Installment Amount:</span><span class="font-mono text-blue-400">₦<span id="summaryInstallment">0</span></span></div><div class="flex justify-between"><span class="text-gray-400">Number of Installments:</span><span><span id="summaryInstallments">0</span></span></div></div></div>
+          <!-- Interest Rate (Hidden for overdraft - fixed at 40%) -->
+          <div id="interestRateContainer">
+            <label class="block text-sm font-medium text-gray-300 mb-2">Interest Rate (%)</label>
+            <input type="number" id="interestRate" name="interestRate" required min="0" step="0.5" value="5" 
+              oninput="calculateLoanDetails()" 
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
+            <p class="text-xs text-gray-400 mt-1" id="interestRateHint">Interest will be added to the principal amount</p>
+          </div>
 
-          <div><label class="block text-sm font-medium text-gray-300 mb-2">Purpose</label><textarea id="purpose" name="purpose" rows="2" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors" placeholder="What is this loan/overdraft for?"></textarea></div>
-          <div><label class="block text-sm font-medium text-gray-300 mb-2">Additional Notes (Optional)</label><textarea id="notes" name="notes" rows="2" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors"></textarea></div>
+          <!-- Repayment Period -->
+          <div class="grid grid-cols-2 gap-3 sm:gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-300 mb-2">Repayment Period</label>
+              <select id="repaymentPeriod" name="repaymentPeriod" onchange="calculateLoanDetails()" 
+                class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500">
+                <option value="weekly">Weekly</option>
+                <option value="bi-weekly">Bi-Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-300 mb-2">Number of Installments</label>
+              <input type="number" id="installments" name="installments" required min="1" max="52" value="4" 
+                oninput="calculateLoanDetails()" 
+                class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
+            </div>
+          </div>
 
-          <div class="flex items-center gap-3 p-3 sm:p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-xl"><i class="fas fa-exclamation-triangle text-yellow-500 text-sm sm:text-base"></i><p class="text-xs sm:text-sm text-yellow-200">This request will require admin approval. Terms and repayment schedule will be confirmed upon approval.</p></div>
+          <!-- Start Date -->
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">Repayment Start Date</label>
+            <input type="date" id="startDate" name="startDate" required 
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
+          </div>
 
-          <div class="flex flex-col sm:flex-row gap-4 pt-4"><button type="button" onclick="navigate('dashboard')" class="flex-1 px-6 py-3 border border-gray-600 rounded-xl hover:bg-gray-800 transition-colors">Cancel</button><button type="submit" id="submitLoanBtn" class="flex-1 px-6 py-3 bg-green-600 hover:bg-green-500 rounded-xl font-medium transition-colors">Submit Request</button></div>
+          <!-- Loan Summary -->
+          <div id="loanSummary" class="p-4 bg-gradient-to-r from-gray-800 to-gray-800/50 border border-blue-500/30 rounded-xl hidden">
+            <h4 class="text-sm font-semibold text-blue-400 mb-3">Loan Summary</h4>
+            <div class="space-y-2 text-sm">
+              <div class="flex justify-between">
+                <span class="text-gray-400">Principal Amount:</span>
+                <span class="font-mono">₦<span id="summaryPrincipal">0</span></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-400">Interest (at <span id="summaryRate">0</span>%):</span>
+                <span class="font-mono text-yellow-400">₦<span id="summaryInterest">0</span></span>
+              </div>
+              <div class="flex justify-between pt-2 border-t border-gray-700">
+                <span class="text-gray-300 font-semibold">Total Payable:</span>
+                <span class="font-mono text-green-400 font-bold">₦<span id="summaryTotal">0</span></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-400">Installment Amount:</span>
+                <span class="font-mono text-blue-400">₦<span id="summaryInstallment">0</span></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Purpose & Notes -->
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">Purpose</label>
+            <textarea id="purpose" name="purpose" rows="2" 
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors" 
+              placeholder="What is this loan/overdraft for?"></textarea>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">Additional Notes (Optional)</label>
+            <textarea id="notes" name="notes" rows="2" 
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors"></textarea>
+          </div>
+
+          <!-- Warning for ineligible -->
+          <div id="ineligibleWarning" class="hidden p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
+            <p class="text-sm text-red-300 flex items-center gap-2">
+              <i class="fas fa-exclamation-circle"></i>
+              <span id="ineligibleText">Customer does not meet eligibility criteria</span>
+            </p>
+          </div>
+
+          <div class="flex items-center gap-3 p-3 sm:p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-xl">
+            <i class="fas fa-exclamation-triangle text-yellow-500 text-sm sm:text-base"></i>
+            <p class="text-xs sm:text-sm text-yellow-200">
+              This request will require admin approval. Loans: customer must have 40% of amount in cash. Overdrafts: customer must have 10+ deposits.
+            </p>
+          </div>
+
+          <div class="flex flex-col sm:flex-row gap-4 pt-4">
+            <button type="button" onclick="navigate('dashboard')" class="flex-1 px-6 py-3 border border-gray-600 rounded-xl hover:bg-gray-800 transition-colors">Cancel</button>
+            <button type="submit" id="submitLoanBtn" class="flex-1 px-6 py-3 bg-green-600 hover:bg-green-500 rounded-xl font-medium transition-colors">
+              Submit Request
+            </button>
+          </div>
         </form>
       </div>
     </div>
@@ -3398,8 +3962,240 @@ function renderNewLoanRequest(container) {
     .toISOString()
     .split("T")[0];
   calculateLoanDetails();
+  updateLoanType();
 }
 
+// Enhanced customer selection with deposit count tracking
+function selectCustomerForLoan(id, name, balance, phone, customerNumber) {
+  document.getElementById("selectedCustomerId").value = id;
+  document.getElementById("selectedCustomerName").textContent = name;
+  document.getElementById("selectedCustomerNumber").textContent = customerNumber
+    ? "#" + customerNumber
+    : "No number";
+  document.getElementById("selectedCustomerPhone").textContent = phone
+    ? "📱 " + phone
+    : "⚠️ No phone";
+  document.getElementById("selectedCustomerBalance").textContent =
+    "₦" + balance.toLocaleString();
+
+  // Count approved deposits for this customer
+  const depositCount = state.transactions.filter(
+    (t) =>
+      t.customerId === id && t.type === "deposit" && t.status === "approved",
+  ).length;
+
+  document.getElementById("selectedCustomerDepositCount").textContent =
+    depositCount;
+
+  document.getElementById("selectedCustomer").classList.remove("hidden");
+  document.getElementById("searchResults").classList.add("hidden");
+  document.getElementById("customerSearchInput").value = "";
+
+  window.selectedCustomerForLoan = {
+    id,
+    name,
+    balance,
+    phone,
+    customerNumber,
+    depositCount,
+  };
+
+  checkEligibility();
+}
+
+// Check eligibility based on loan type
+function checkEligibility() {
+  const type = document.querySelector('input[name="type"]:checked')?.value;
+  const amount = parseFloat(document.getElementById("loanAmount")?.value) || 0;
+  const customer = window.selectedCustomerForLoan;
+
+  if (!customer || !amount) {
+    document.getElementById("eligibilityCheck").classList.add("hidden");
+    return;
+  }
+
+  document.getElementById("eligibilityCheck").classList.remove("hidden");
+
+  if (type === "loan") {
+    // Loan: Need 40% of requested amount in cash balance
+    document.getElementById("loanEligibility").classList.remove("hidden");
+    document.getElementById("overdraftEligibility").classList.add("hidden");
+
+    const requiredBalance = amount * 0.4;
+    const hasEnough = customer.balance >= requiredBalance;
+
+    document.getElementById("requiredBalance").textContent =
+      "₦" + requiredBalance.toLocaleString();
+    document.getElementById("currentBalanceCheck").textContent =
+      "₦" + customer.balance.toLocaleString();
+
+    const statusEl = document.getElementById("eligibilityStatus");
+    if (hasEnough) {
+      statusEl.textContent = "✓ ELIGIBLE";
+      statusEl.className = "font-medium text-green-400";
+      document.getElementById("ineligibleWarning").classList.add("hidden");
+      document.getElementById("submitLoanBtn").disabled = false;
+    } else {
+      statusEl.textContent = "✗ NOT ELIGIBLE";
+      statusEl.className = "font-medium text-red-400";
+      document.getElementById("ineligibleText").textContent =
+        `Customer needs ₦${requiredBalance.toLocaleString()} (40% of ₦${amount.toLocaleString()}) but only has ₦${customer.balance.toLocaleString()}`;
+      document.getElementById("ineligibleWarning").classList.remove("hidden");
+      document.getElementById("submitLoanBtn").disabled = true;
+    }
+  } else {
+    // Overdraft: Need 10+ approved deposits
+    document.getElementById("loanEligibility").classList.add("hidden");
+    document.getElementById("overdraftEligibility").classList.remove("hidden");
+
+    document.getElementById("customerDepositCount").textContent =
+      customer.depositCount;
+
+    const statusEl = document.getElementById("overdraftEligibilityStatus");
+    if (customer.depositCount >= 10) {
+      statusEl.textContent = "✓ ELIGIBLE";
+      statusEl.className = "font-medium text-green-400";
+      document.getElementById("ineligibleWarning").classList.add("hidden");
+      document.getElementById("submitLoanBtn").disabled = false;
+    } else {
+      statusEl.textContent = "✗ NOT ELIGIBLE";
+      statusEl.className = "font-medium text-red-400";
+      document.getElementById("ineligibleText").textContent =
+        `Customer needs 10+ approved deposits but only has ${customer.depositCount}`;
+      document.getElementById("ineligibleWarning").classList.remove("hidden");
+      document.getElementById("submitLoanBtn").disabled = true;
+    }
+  }
+}
+
+// Update UI when loan type changes
+function updateLoanType() {
+  const type = document.querySelector('input[name="type"]:checked')?.value;
+  const interestContainer = document.getElementById("interestRateContainer");
+  const interestInput = document.getElementById("interestRate");
+  const interestHint = document.getElementById("interestRateHint");
+
+  if (type === "overdraft") {
+    // Overdraft: Fixed 6.45% interest, non-editable
+    interestInput.value = 6.45;
+    interestInput.readOnly = true;
+    interestInput.classList.add("bg-gray-700", "cursor-not-allowed");
+    interestHint.textContent = "Fixed at 6.45% for overdraft facilities";
+    interestHint.classList.add("text-orange-400");
+  } else {
+    // Loan: Configurable interest
+    interestInput.value = 5;
+    interestInput.readOnly = false;
+    interestInput.classList.remove("bg-gray-700", "cursor-not-allowed");
+    interestHint.textContent = "Interest will be added to the principal amount";
+    interestHint.classList.remove("text-orange-400");
+  }
+
+  calculateLoanDetails();
+  checkEligibility();
+}
+
+// Enhanced loan submission with validation
+async function handleLoanRequest(e) {
+  e.preventDefault();
+
+  const customerId = document.getElementById("selectedCustomerId").value;
+  if (!customerId) {
+    showNotification("Please select a customer", "error");
+    return;
+  }
+
+  const type = document.querySelector('input[name="type"]:checked').value;
+  const amount = parseFloat(document.getElementById("loanAmount").value);
+  const interestRate = parseFloat(
+    document.getElementById("interestRate").value,
+  );
+  const repaymentPeriod = document.getElementById("repaymentPeriod").value;
+  const numberOfInstallments = parseInt(
+    document.getElementById("installments").value,
+  );
+  const repaymentStartDate = document.getElementById("startDate").value;
+  const purpose = document.getElementById("purpose").value;
+  const notes = document.getElementById("notes").value;
+
+  if (!amount || amount < 1000) {
+    showNotification("Amount must be at least ₦1,000", "error");
+    return;
+  }
+
+  if (!repaymentStartDate) {
+    showNotification("Please select a start date", "error");
+    return;
+  }
+
+  // Final eligibility check before submission
+  const customer = window.selectedCustomerForLoan;
+
+  if (type === "loan") {
+    const requiredBalance = amount * 0.4;
+    if (customer.balance < requiredBalance) {
+      showNotification(
+        `Loan rejected: Customer needs ₦${requiredBalance.toLocaleString()} (40%) but has ₦${customer.balance.toLocaleString()}`,
+        "error",
+      );
+      return;
+    }
+  } else if (type === "overdraft") {
+    if (customer.depositCount < 10) {
+      showNotification(
+        `Overdraft rejected: Customer needs 10+ deposits but only has ${customer.depositCount}`,
+        "error",
+      );
+      return;
+    }
+  }
+
+  const loanData = {
+    customerId: customerId,
+    customerName: customer.name,
+    customerNumber: customer.customerNumber,
+    phone: customer.phone,
+    type: type,
+    amount: amount,
+    interestRate: interestRate,
+    repaymentPeriod: repaymentPeriod,
+    numberOfInstallments: numberOfInstallments,
+    repaymentStartDate: repaymentStartDate,
+    purpose: purpose,
+    notes: notes,
+    // Add eligibility metadata for admin review
+    eligibility: {
+      customerBalance: customer.balance,
+      requiredBalance: type === "loan" ? amount * 0.4 : 0,
+      depositCount: customer.depositCount,
+      requiredDeposits: type === "overdraft" ? 10 : 0,
+      meetsCriteria:
+        type === "loan"
+          ? customer.balance >= amount * 0.4
+          : customer.depositCount >= 10,
+    },
+    requestedBy: {
+      staffId: state.currentUser?.id || "system",
+      staffName: state.currentUser?.name || "System",
+    },
+  };
+
+  try {
+    const response = await api.post("/loans", loanData);
+    showNotification(
+      `${type === "loan" ? "Loan" : "Overdraft"} request submitted successfully!`,
+      "success",
+    );
+    navigate("my-loans");
+  } catch (error) {
+    console.error("Loan request error:", error);
+    const errorMessage =
+      error.response?.data?.error ||
+      error.response?.data?.message ||
+      "Failed to submit request";
+    showNotification(errorMessage, "error");
+  }
+}
 let searchTimeout;
 function searchCustomersForLoan(searchTerm) {
   clearTimeout(searchTimeout);
@@ -3460,10 +4256,6 @@ function clearSelectedCustomerForLoan() {
   document.getElementById("selectedCustomerId").value = "";
   document.getElementById("selectedCustomer").classList.add("hidden");
   window.selectedCustomerForLoan = null;
-}
-
-function updateLoanType() {
-  calculateLoanDetails();
 }
 
 function calculateLoanDetails() {
@@ -3575,6 +4367,7 @@ function renderAdminLoans(container) {
 
   const html = `
     <div class="space-y-6 animate-fade-in px-4 sm:px-0">
+      <!-- Stats Cards -->
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div class="glass-panel p-4 rounded-xl">
           <div class="flex items-center justify-between mb-2">
@@ -3603,10 +4396,10 @@ function renderAdminLoans(container) {
             <i class="fas fa-chart-line text-green-400"></i>
           </div>
           <p class="text-2xl font-bold text-green-400">₦${totalInterestRevenue.toLocaleString()}</p>
-          <p class="text-xs text-gray-400">From approved loans</p>
         </div>
       </div>
       
+      <!-- Pending Loans Section -->
       ${
         pendingLoans.length > 0
           ? `
@@ -3624,8 +4417,29 @@ function renderAdminLoans(container) {
                 );
                 const customerCash =
                   customer?.cashBalance || customer?.balance || 0;
+
+                // Calculate eligibility
+                const isLoan = loan.type === "loan";
+                const requiredBalance = isLoan ? (loan.amount || 0) * 0.4 : 0;
+                const hasEnoughCash = customerCash >= requiredBalance;
+
+                // Count deposits for overdraft check
+                const depositCount = state.transactions.filter(
+                  (t) =>
+                    t.customerId === loan.customerId &&
+                    t.type === "deposit" &&
+                    t.status === "approved",
+                ).length;
+                const hasEnoughDeposits = depositCount >= 10;
+
+                // Determine if meets criteria
+                const meetsCriteria = isLoan
+                  ? hasEnoughCash
+                  : hasEnoughDeposits;
+                const eligibilityData = loan.eligibility || {};
+
                 return `
-                <div class="bg-gray-800/50 p-4 rounded-xl border border-gray-700">
+                <div class="bg-gray-800/50 p-4 rounded-xl border ${meetsCriteria ? "border-green-500/30" : "border-red-500/30"}">
                   <div class="flex flex-wrap justify-between items-start gap-4">
                     <div class="flex-1">
                       <div class="flex items-center gap-3 mb-2">
@@ -3633,9 +4447,49 @@ function renderAdminLoans(container) {
                           ${loan.type.toUpperCase()}
                         </span>
                         <span class="text-sm text-gray-400">Requested by: ${loan.requestedBy?.staffName || "Staff"}</span>
+                        ${
+                          meetsCriteria
+                            ? '<span class="px-2 py-1 rounded text-xs bg-green-500/20 text-green-400"><i class="fas fa-check mr-1"></i>Meets Criteria</span>'
+                            : '<span class="px-2 py-1 rounded text-xs bg-red-500/20 text-red-400"><i class="fas fa-times mr-1"></i>Does Not Meet Criteria</span>'
+                        }
                       </div>
                       <p class="font-semibold text-lg">${loan.customerName}</p>
                       <p class="text-sm text-gray-400">#${loan.customerNumber || "---"} • ${loan.phone || "No phone"}</p>
+                      
+                      <!-- Eligibility Details -->
+                      <div class="mt-3 p-3 ${meetsCriteria ? "bg-green-500/10 border-green-500/20" : "bg-red-500/10 border-red-500/20"} rounded-lg border">
+                        <p class="text-xs font-semibold ${meetsCriteria ? "text-green-400" : "text-red-400"} mb-2">
+                          <i class="fas fa-shield-alt mr-1"></i>
+                          ${isLoan ? "Loan Rule: 40% Cash Required" : "Overdraft Rule: 10+ Deposits Required"}
+                        </p>
+                        ${
+                          isLoan
+                            ? `
+                          <div class="space-y-1 text-xs">
+                            <div class="flex justify-between">
+                              <span class="text-gray-400">Required (40% of ₦${(loan.amount || 0).toLocaleString()}):</span>
+                              <span class="font-mono text-yellow-400">₦${requiredBalance.toLocaleString()}</span>
+                            </div>
+                            <div class="flex justify-between">
+                              <span class="text-gray-400">Customer Balance:</span>
+                              <span class="font-mono ${hasEnoughCash ? "text-green-400" : "text-red-400"}">₦${customerCash.toLocaleString()}</span>
+                            </div>
+                          </div>
+                        `
+                            : `
+                          <div class="space-y-1 text-xs">
+                            <div class="flex justify-between">
+                              <span class="text-gray-400">Required Deposits:</span>
+                              <span class="font-mono text-yellow-400">10</span>
+                            </div>
+                            <div class="flex justify-between">
+                              <span class="text-gray-400">Customer Deposits:</span>
+                              <span class="font-mono ${hasEnoughDeposits ? "text-green-400" : "text-red-400"}">${depositCount}</span>
+                            </div>
+                          </div>
+                        `
+                        }
+                      </div>
                       
                       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
                         <div>
@@ -3647,7 +4501,7 @@ function renderAdminLoans(container) {
                           <p class="font-mono text-yellow-400">₦${interest.toLocaleString()}</p>
                         </div>
                         <div>
-                          <p class="text-gray-400">Total to Deduct</p>
+                          <p class="text-gray-400">Total to Repay</p>
                           <p class="font-mono text-red-400 font-bold">₦${(loan.totalPayable || 0).toLocaleString()}</p>
                         </div>
                         <div>
@@ -3656,22 +4510,15 @@ function renderAdminLoans(container) {
                         </div>
                       </div>
                       
-                      <div class="mt-2 p-2 ${customerCash >= (loan.totalPayable || 0) ? "bg-green-500/10 border-green-500/20" : "bg-red-500/10 border-red-500/20"} rounded-lg">
-                        <p class="text-xs ${customerCash >= (loan.totalPayable || 0) ? "text-green-300" : "text-red-300"}">
-                          <i class="fas fa-info-circle mr-1"></i>
-                          Customer Cash Balance: ₦${customerCash.toLocaleString()}
-                          ${customerCash >= (loan.totalPayable || 0) ? "✓ Sufficient funds" : `⚠️ Shortfall: ₦${((loan.totalPayable || 0) - customerCash).toLocaleString()}`}
-                        </p>
-                      </div>
-                      
                       ${loan.purpose ? `<p class="text-sm text-gray-300 mt-2">Purpose: ${loan.purpose}</p>` : ""}
                     </div>
                     <div class="flex gap-2">
-                      <button onclick="showApproveLoanModal('${loan.id}')" class="px-4 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-sm">
-                        <i class="fas fa-check mr-1"></i>Approve & Debit
-                      </button>
                       <button onclick="rejectLoan('${loan.id}')" class="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm">
                         <i class="fas fa-times mr-1"></i>Reject
+                      </button>
+                      <button onclick="showApproveLoanModal('${loan.id}')" 
+                        class="px-4 py-2 ${meetsCriteria ? "bg-green-600 hover:bg-green-500" : "bg-yellow-600 hover:bg-yellow-500"} rounded-lg text-sm">
+                        <i class="fas fa-check mr-1"></i>${meetsCriteria ? "Approve" : "Override Approve"}
                       </button>
                     </div>
                   </div>
@@ -3685,6 +4532,7 @@ function renderAdminLoans(container) {
           : ""
       }
       
+      <!-- Active Loans Section -->
       ${
         activeLoans.length > 0
           ? `
@@ -3708,6 +4556,7 @@ function renderAdminLoans(container) {
                           ${loan.type.toUpperCase()}
                         </span>
                         <span class="text-xs text-gray-400">Started: ${loan.approvedBy?.approvedAt ? new Date(loan.approvedBy.approvedAt).toLocaleDateString() : "Unknown"}</span>
+                        ${loan.type === "overdraft" ? '<span class="px-2 py-1 rounded text-xs bg-orange-500/20 text-orange-400">40% Interest</span>' : ""}
                       </div>
                       <p class="font-semibold">${loan.customerName}</p>
                       
@@ -3738,14 +4587,7 @@ function renderAdminLoans(container) {
                         <div class="w-full bg-gray-700 rounded-full h-2">
                           <div class="bg-green-500 h-2 rounded-full" style="width: ${progress}%"></div>
                         </div>
-                        <p class="text-xs text-gray-400 mt-1">
-                          ${(loan.repayments || []).filter((r) => r.status === "paid").length}/${loan.numberOfInstallments} installments paid
-                        </p>
                       </div>
-                      
-                      <button onclick="viewLoanRepaymentSchedule('${loan.id}')" class="mt-3 text-blue-400 hover:text-blue-300 text-sm">
-                        <i class="fas fa-eye mr-1"></i>View Repayment Schedule & Record Payment
-                      </button>
                     </div>
                   </div>
                 </div>
@@ -3761,7 +4603,6 @@ function renderAdminLoans(container) {
   `;
   container.innerHTML = html;
 }
-
 // In renderAdminLoans function - Update showApproveLoanModal
 function showApproveLoanModal(loanId) {
   const loan = state.loans?.find((l) => l.id === loanId);

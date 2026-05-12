@@ -54,21 +54,27 @@ exports.createLoanRequest = async (req, res) => {
     if (!amount || amount <= 0) {
       return res.status(400).json({ error: "Valid amount is required" });
     }
-    if (!interestRate || interestRate < 0) {
-      return res.status(400).json({ error: "Valid interest rate is required" });
-    }
-    if (!repaymentPeriod) {
-      return res.status(400).json({ error: "Repayment period is required" });
-    }
-    if (!numberOfInstallments || numberOfInstallments <= 0) {
-      return res
-        .status(400)
-        .json({ error: "Valid number of installments is required" });
-    }
-    if (!repaymentStartDate) {
-      return res
-        .status(400)
-        .json({ error: "Repayment start date is required" });
+
+    // Loan-specific validations (not required for overdraft)
+    if (type !== "overdraft") {
+      if (!interestRate || interestRate < 0) {
+        return res
+          .status(400)
+          .json({ error: "Valid interest rate is required" });
+      }
+      if (!repaymentPeriod) {
+        return res.status(400).json({ error: "Repayment period is required" });
+      }
+      if (!numberOfInstallments || numberOfInstallments <= 0) {
+        return res
+          .status(400)
+          .json({ error: "Valid number of installments is required" });
+      }
+      if (!repaymentStartDate) {
+        return res
+          .status(400)
+          .json({ error: "Repayment start date is required" });
+      }
     }
 
     // Validate customer exists
@@ -92,45 +98,67 @@ exports.createLoanRequest = async (req, res) => {
       }
     }
 
-    // Calculate loan details
-    const { interest, totalPayable, installmentAmount } = calculateLoanDetails(
-      amount,
-      interestRate,
-      repaymentPeriod,
-      numberOfInstallments,
-    );
+    // Calculate loan details (overdraft: no interest, single lump-sum repayment)
+    let interest = 0;
+    let totalPayable = amount;
+    let installmentAmount = amount;
+    let endDate = new Date();
+    let repayments = [];
 
-    // Calculate end date
-    const startDate = new Date(repaymentStartDate);
-    let endDate = new Date(startDate);
+    if (type !== "overdraft") {
+      // Regular loan with installments
+      const calc = calculateLoanDetails(
+        amount,
+        interestRate,
+        repaymentPeriod,
+        numberOfInstallments,
+      );
+      interest = calc.interest;
+      totalPayable = calc.totalPayable;
+      installmentAmount = calc.installmentAmount;
 
-    if (repaymentPeriod === "weekly") {
-      endDate.setDate(startDate.getDate() + numberOfInstallments * 7);
-    } else if (repaymentPeriod === "bi-weekly") {
-      endDate.setDate(startDate.getDate() + numberOfInstallments * 14);
-    } else if (repaymentPeriod === "monthly") {
-      endDate.setMonth(startDate.getMonth() + numberOfInstallments);
-    }
-
-    // Generate repayment schedule
-    const repayments = [];
-    let currentDate = new Date(startDate);
-
-    for (let i = 0; i < numberOfInstallments; i++) {
-      repayments.push({
-        id: "REPAY" + Date.now() + i + Math.random().toString(36).substr(2, 4),
-        dueDate: new Date(currentDate),
-        amount: installmentAmount,
-        status: "pending",
-      });
+      // Calculate end date
+      const startDate = new Date(repaymentStartDate);
+      endDate = new Date(startDate);
 
       if (repaymentPeriod === "weekly") {
-        currentDate.setDate(currentDate.getDate() + 7);
+        endDate.setDate(startDate.getDate() + numberOfInstallments * 7);
       } else if (repaymentPeriod === "bi-weekly") {
-        currentDate.setDate(currentDate.getDate() + 14);
+        endDate.setDate(startDate.getDate() + numberOfInstallments * 14);
       } else if (repaymentPeriod === "monthly") {
-        currentDate.setMonth(currentDate.getMonth() + 1);
+        endDate.setMonth(startDate.getMonth() + numberOfInstallments);
       }
+
+      // Generate repayment schedule
+      let currentDate = new Date(startDate);
+      for (let i = 0; i < numberOfInstallments; i++) {
+        repayments.push({
+          id:
+            "REPAY" + Date.now() + i + Math.random().toString(36).substr(2, 4),
+          dueDate: new Date(currentDate),
+          amount: installmentAmount,
+          status: "pending",
+        });
+
+        if (repaymentPeriod === "weekly") {
+          currentDate.setDate(currentDate.getDate() + 7);
+        } else if (repaymentPeriod === "bi-weekly") {
+          currentDate.setDate(currentDate.getDate() + 14);
+        } else if (repaymentPeriod === "monthly") {
+          currentDate.setMonth(currentDate.getMonth() + 1);
+        }
+      }
+    } else {
+      // Overdraft: single repayment by deadline
+      endDate = new Date(paymentDeadline || Date.now());
+      repayments = [
+        {
+          id: "REPAY" + Date.now() + Math.random().toString(36).substr(2, 4),
+          dueDate: new Date(endDate),
+          amount: amount,
+          status: "pending",
+        },
+      ];
     }
 
     // Create safe requestedBy object
@@ -148,13 +176,16 @@ exports.createLoanRequest = async (req, res) => {
       phone,
       type: type || "loan",
       amount: Number(amount),
-      interestRate: Number(interestRate),
+      interestRate: type === "overdraft" ? 0 : Number(interestRate),
       totalPayable,
-      repaymentPeriod,
-      numberOfInstallments: Number(numberOfInstallments),
+      repaymentPeriod: type === "overdraft" ? null : repaymentPeriod,
+      numberOfInstallments:
+        type === "overdraft" ? 1 : Number(numberOfInstallments),
       installmentAmount,
-      repaymentStartDate: startDate,
+      repaymentStartDate:
+        type === "overdraft" ? null : new Date(repaymentStartDate),
       repaymentEndDate: endDate,
+      paymentDeadline: type === "overdraft" ? new Date(paymentDeadline) : null,
       repayments,
       status: "pending",
       requestedBy: safeRequestedBy,
