@@ -12,7 +12,7 @@ const loanSchema = new mongoose.Schema(
     interestRate: { type: Number, required: true },
     totalPayable: { type: Number, required: true },
 
-    // FIX: Made optional - only required for regular loans
+    // FIX: Removed required, added default: null for overdraft compatibility
     repaymentPeriod: {
       type: String,
       enum: ["weekly", "bi-weekly", "monthly"],
@@ -21,7 +21,7 @@ const loanSchema = new mongoose.Schema(
     numberOfInstallments: { type: Number, default: 1 },
     installmentAmount: { type: Number, default: 0 },
 
-    // FIX: Made optional for overdraft
+    // FIX: Removed required, added default: null
     repaymentStartDate: { type: Date, default: null },
     repaymentEndDate: { type: Date, default: null },
 

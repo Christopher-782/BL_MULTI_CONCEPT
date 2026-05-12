@@ -22,13 +22,13 @@ console.log("Middleware check:", validateLoanRequest);
 console.log("Controller check:", createLoanRequest);
 
 // ========== LOAN ROUTES ==========
-router.post("/loans", validateLoanRequest, createLoanRequest);
+router.post("/loans", createLoanRequest);
 router.get("/loans", getAllLoans);
 router.get("/loans/staff/:staffId", getLoansByStaff);
 router.get("/loans/customer/:customerId", getLoansByCustomer);
 
 // ========== LOAN ACTIONS ==========
-router.patch("/loans/:loanId/approve", enforceOverdraftRate, approveLoan);
+router.patch("/loans/:loanId/approve", approveLoan);
 router.patch("/loans/:loanId/reject", rejectLoan);
 
 // ========== REPAYMENT (FIXED: PATCH instead of POST) ==========
