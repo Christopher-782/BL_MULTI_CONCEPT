@@ -4180,9 +4180,10 @@ async function handleLoanRequest(e) {
     document.getElementById("installments").value,
   );
   const repaymentStartDate = document.getElementById("startDate").value;
-  const processingCharges =
-    parseFloat(document.getElementById("processingCharges")?.value) || 0;
+
+  // ✅ FIX: Add .value to get the string, not the DOM element
   const paymentDeadline = document.getElementById("paymentDeadline")?.value;
+
   const purpose = document.getElementById("purpose").value;
   const notes = document.getElementById("notes").value;
 
@@ -4220,34 +4221,32 @@ async function handleLoanRequest(e) {
     return;
   }
 
-  const customer = window.selectedCustomerForLoan;
-
   const loanData = {
     customerId: customerId,
-    customerName: customer.name,
-    customerNumber: customer.customerNumber,
-    phone: customer.phone,
+    customerName: window.selectedCustomerForLoan.name,
+    customerNumber: window.selectedCustomerForLoan.customerNumber,
+    phone: window.selectedCustomerForLoan.phone,
     type: type,
     amount: amount,
-    interestRate: interestRate,
-    processingCharges: processingCharges, // NEW: Manual charges
-    repaymentPeriod: repaymentPeriod,
-    numberOfInstallments: numberOfInstallments,
-    repaymentStartDate: repaymentStartDate,
-    paymentDeadline: type === "overdraft" ? paymentDeadline : null, // NEW: Deadline for overdraft
+    interestRate: type === "loan" ? interestRate : 0,
+    repaymentPeriod: type === "loan" ? repaymentPeriod : null,
+    numberOfInstallments: type === "loan" ? numberOfInstallments : 1,
+    repaymentStartDate: type === "loan" ? repaymentStartDate : null,
+    paymentDeadline: type === "overdraft" ? paymentDeadline : null, // ✅ Now a string
     purpose: purpose,
     notes: notes,
-    // No eligibility checks - admin will review manually
     requestedBy: {
       staffId: state.currentUser?.id || "system",
       staffName: state.currentUser?.name || "System",
     },
   };
 
+  console.log("Sending loan data:", loanData);
+
   try {
     const response = await api.post("/loans", loanData);
     showNotification(
-      `${type === "loan" ? "Loan" : "Overdraft"} request submitted successfully! Awaiting admin approval.`,
+      `${type === "loan" ? "Loan" : "Overdraft"} request submitted successfully!`,
       "success",
     );
     navigate("my-loans");
@@ -4369,100 +4368,6 @@ function calculateLoanDetails() {
   }
 
   document.getElementById("loanSummary").classList.remove("hidden");
-}
-async function handleLoanRequest(e) {
-  e.preventDefault();
-
-  const customerId = document.getElementById("selectedCustomerId").value;
-  if (!customerId) {
-    showNotification("Please select a customer", "error");
-    return;
-  }
-
-  const type = document.querySelector('input[name="type"]:checked').value;
-  const amount = parseFloat(document.getElementById("loanAmount").value);
-  const interestRate = parseFloat(
-    document.getElementById("interestRate").value,
-  );
-  const repaymentPeriod = document.getElementById("repaymentPeriod").value;
-  const numberOfInstallments = parseInt(
-    document.getElementById("installments").value,
-  );
-  const repaymentStartDate = document.getElementById("startDate").value;
-  const purpose = document.getElementById("purpose").value;
-  const notes = document.getElementById("notes").value;
-
-  if (!amount || amount < 1000) {
-    showNotification("Amount must be at least ₦1,000", "error");
-    return;
-  }
-
-  // Validate processing charges for overdraft
-  if (type === "overdraft") {
-    const processingCharges = parseFloat(
-      document.getElementById("processingCharges")?.value,
-    );
-    if (isNaN(processingCharges) || processingCharges <= 0) {
-      showNotification(
-        "Processing charges are required for overdraft. Please enter an amount.",
-        "error",
-      );
-      return;
-    }
-  }
-
-  // For loan, start date is required
-  if (type === "loan" && !repaymentStartDate) {
-    showNotification("Please select a start date", "error");
-    return;
-  }
-
-  // For overdraft, deadline is required
-  if (type === "overdraft" && !paymentDeadline) {
-    showNotification(
-      "Please set a payment deadline for the overdraft",
-      "error",
-    );
-    return;
-  }
-
-  const loanData = {
-    customerId: customerId,
-    customerName: window.selectedCustomerForLoan.name,
-    customerNumber: window.selectedCustomerForLoan.customerNumber,
-    phone: window.selectedCustomerForLoan.phone,
-    type: type,
-    amount: amount,
-    interestRate: type === "loan" ? interestRate : 0,
-    repaymentPeriod: type === "loan" ? repaymentPeriod : null,
-    numberOfInstallments: type === "loan" ? numberOfInstallments : 1,
-    repaymentStartDate: type === "loan" ? repaymentStartDate : null,
-    paymentDeadline: type === "overdraft" ? paymentDeadline : null,
-    purpose: purpose,
-    notes: notes,
-    requestedBy: {
-      staffId: state.currentUser?.id || "system",
-      staffName: state.currentUser?.name || "System",
-    },
-  };
-
-  console.log("Sending loan data:", loanData);
-
-  try {
-    const response = await api.post("/loans", loanData);
-    showNotification(
-      `${type === "loan" ? "Loan" : "Overdraft"} request submitted successfully!`,
-      "success",
-    );
-    navigate("my-loans");
-  } catch (error) {
-    console.error("Loan request error:", error);
-    const errorMessage =
-      error.response?.data?.error ||
-      error.response?.data?.message ||
-      "Failed to submit request";
-    showNotification(errorMessage, "error");
-  }
 }
 
 // ==================== ADMIN LOANS VIEW ====================

@@ -8,25 +8,31 @@ const loanSchema = new mongoose.Schema(
     customerNumber: { type: String },
     phone: { type: String },
     type: { type: String, enum: ["loan", "overdraft"], required: true },
-    amount: { type: Number, required: true }, // Principal amount
+    amount: { type: Number, required: true },
     interestRate: { type: Number, required: true },
-    totalPayable: { type: Number, required: true }, // Principal + total interest
+    totalPayable: { type: Number, required: true },
+
+    // FIX: Made optional - only required for regular loans
     repaymentPeriod: {
       type: String,
       enum: ["weekly", "bi-weekly", "monthly"],
-      required: true,
+      default: null,
     },
-    numberOfInstallments: { type: Number, required: true },
-    installmentAmount: { type: Number, required: true },
-    repaymentStartDate: { type: Date, required: true },
-    repaymentEndDate: { type: Date, required: true },
+    numberOfInstallments: { type: Number, default: 1 },
+    installmentAmount: { type: Number, default: 0 },
 
-    // ENHANCED: Repayments with interest tracking per installment
+    // FIX: Made optional for overdraft
+    repaymentStartDate: { type: Date, default: null },
+    repaymentEndDate: { type: Date, default: null },
+
+    // NEW: Payment deadline for overdraft
+    paymentDeadline: { type: Date, default: null },
+
     repayments: [
       {
         id: { type: String },
         dueDate: { type: Date },
-        amount: { type: Number }, // Total installment amount
+        amount: { type: Number },
         paidDate: { type: Date },
         status: {
           type: String,
@@ -34,10 +40,9 @@ const loanSchema = new mongoose.Schema(
           default: "pending",
         },
         paidBy: { type: String },
-        // NEW: Track principal/interest breakdown per installment
-        principalPortion: { type: Number, default: 0 }, // Principal in this payment
-        interestPortion: { type: Number, default: 0 }, // Interest in this payment
-        interestRevenue: { type: Number, default: 0 }, // Revenue recognized (same as interestPortion)
+        principalPortion: { type: Number, default: 0 },
+        interestPortion: { type: Number, default: 0 },
+        interestRevenue: { type: Number, default: 0 },
       },
     ],
 
@@ -64,13 +69,10 @@ const loanSchema = new mongoose.Schema(
       approvedAt: { type: Date },
     },
     amountDisbursed: { type: Number, default: 0 },
-    amountRepaid: { type: Number, default: 0 }, // Total paid (principal + interest)
+    amountRepaid: { type: Number, default: 0 },
     outstandingBalance: { type: Number, default: 0 },
-
-    // NEW: Track cumulative amounts from actual payments
-    principalRepaidToDate: { type: Number, default: 0 }, // Principal actually collected
-    interestEarnedToDate: { type: Number, default: 0 }, // Interest actually earned (revenue)
-
+    principalRepaidToDate: { type: Number, default: 0 },
+    interestEarnedToDate: { type: Number, default: 0 },
     purpose: { type: String },
     notes: { type: String },
   },
@@ -79,7 +81,6 @@ const loanSchema = new mongoose.Schema(
   },
 );
 
-// NEW: Index for revenue reporting queries
 loanSchema.index({ status: 1, "repayments.status": 1 });
 loanSchema.index({ interestEarnedToDate: 1 });
 
