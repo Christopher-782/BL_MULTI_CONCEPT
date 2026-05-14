@@ -12,6 +12,9 @@ const loanSchema = new mongoose.Schema(
     interestRate: { type: Number, required: true },
     totalPayable: { type: Number, required: true },
 
+    // NEW: Processing charges for overdraft (and loans)
+    processingCharges: { type: Number, default: 0 },
+
     // FIX: Removed required, added default: null for overdraft compatibility
     repaymentPeriod: {
       type: String,
@@ -43,6 +46,7 @@ const loanSchema = new mongoose.Schema(
         principalPortion: { type: Number, default: 0 },
         interestPortion: { type: Number, default: 0 },
         interestRevenue: { type: Number, default: 0 },
+        chargesPortion: { type: Number, default: 0 }, // Also add this for overdraft tracking
       },
     ],
 
@@ -71,8 +75,12 @@ const loanSchema = new mongoose.Schema(
     amountDisbursed: { type: Number, default: 0 },
     amountRepaid: { type: Number, default: 0 },
     outstandingBalance: { type: Number, default: 0 },
+    outstandingPrincipal: { type: Number, default: 0 },
+    outstandingInterest: { type: Number, default: 0 },
+    outstandingCharges: { type: Number, default: 0 }, // Also add this
     principalRepaidToDate: { type: Number, default: 0 },
     interestEarnedToDate: { type: Number, default: 0 },
+    chargesPaidToDate: { type: Number, default: 0 }, // Also add this
     purpose: { type: String },
     notes: { type: String },
   },

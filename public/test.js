@@ -4286,7 +4286,9 @@ async function handleLoanRequest(e) {
     repaymentPeriod: type === "loan" ? repaymentPeriod : null,
     numberOfInstallments: type === "loan" ? numberOfInstallments : 1,
     repaymentStartDate: type === "loan" ? repaymentStartDate : null,
-    paymentDeadline: type === "overdraft" ? paymentDeadline : null, // ✅ Now a string
+    paymentDeadline: type === "overdraft" ? paymentDeadline : null,
+    processingCharges:
+      parseFloat(document.getElementById("processingCharges")?.value) || 0,
     purpose: purpose,
     notes: notes,
     requestedBy: {
@@ -4382,8 +4384,9 @@ function calculateLoanDetails() {
     parseFloat(document.getElementById("processingCharges")?.value) || 0;
   const deadlineInput = document.getElementById("paymentDeadline");
 
+  // In calculateLoanDetails(), replace the overdraft section with:
+
   if (type === "overdraft") {
-    // Overdraft: No interest, no installments - just amount + charges
     const total = amount + processingCharges;
 
     // Update deadline display
@@ -4392,9 +4395,27 @@ function calculateLoanDetails() {
         deadlineInput.value,
       ).toLocaleDateString("en-GB");
     }
-    return; // Don't show loan summary for overdraft
-  }
 
+    // Show simplified overdraft summary
+    document.getElementById("summaryPrincipal").textContent =
+      amount.toLocaleString();
+    document.getElementById("summaryRate").textContent = "0"; // No interest for overdraft
+    document.getElementById("summaryInterest").textContent = "0";
+    document.getElementById("summaryCharges").textContent =
+      processingCharges.toLocaleString();
+    document.getElementById("summaryTotal").textContent =
+      total.toLocaleString();
+    document.getElementById("summaryInstallment").textContent = "1 (Lump Sum)";
+
+    // Show/hide charges row
+    const chargesRow = document.getElementById("summaryChargesRow");
+    if (chargesRow) {
+      chargesRow.style.display = processingCharges > 0 ? "flex" : "none";
+    }
+
+    document.getElementById("loanSummary").classList.remove("hidden");
+    return;
+  }
   // Loan: Calculate with interest and installments
   const rate = parseFloat(document.getElementById("interestRate").value) || 0;
   const installments =
@@ -4491,8 +4512,11 @@ function renderAdminLoans(container) {
               .map((loan) => {
                 const isOverdraft = loan.type === "overdraft";
                 const interest = (loan.totalPayable || 0) - (loan.amount || 0);
-                const processingCharges = loan.processingCharges || 0;
-
+                const processingCharges = Number(
+                  loan.processingCharges || loan.processing_charges || 0,
+                );
+                console.log("Loan data:", loan);
+                console.log("Processing charges raw:", loan.processingCharges);
                 return `
                 <div class="bg-gray-800/50 p-4 rounded-xl border border-yellow-500/30">
                   <div class="flex flex-wrap justify-between items-start gap-4">
