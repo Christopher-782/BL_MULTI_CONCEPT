@@ -4,10 +4,22 @@ const transactionSchema = new mongoose.Schema({
   id: { type: String, unique: true },
   customerId: String,
   customerName: String,
-  customerPhone: String, // <-- ADD THIS (for SMS)
+  customerPhone: String,
   amount: Number,
   charges: { type: Number, default: 0 },
   netAmount: Number,
+
+  // ADD THESE FIELDS for loan/overdraft tracking
+  principalPortion: { type: Number, default: 0 },
+  interestPortion: { type: Number, default: 0 },
+  interestRevenue: { type: Number, default: 0 },
+  chargesPortion: { type: Number, default: 0 },
+  loanId: { type: String, default: null },
+  repaymentId: { type: String, default: null },
+  isOverdraftSettlement: { type: Boolean, default: false },
+  isRevenue: { type: Boolean, default: false },
+  revenueType: { type: String, default: null },
+
   status: {
     type: String,
     enum: ["pending", "approved", "rejected"],
@@ -19,34 +31,36 @@ const transactionSchema = new mongoose.Schema({
       "deposit",
       "withdrawal",
       "loan_disbursement",
+      "overdraft_disbursement", // ← ADD THIS
       "loan_repayment",
+      "overdraft_repayment", // ← ADD THIS
       "interest_revenue",
+      "overdraft_charges_revenue", // ← ADD THIS
+      "manual_charge", // ← ADD THIS (if used)
     ],
     required: true,
   },
   date: { type: Date, default: Date.now },
   approvedBy: String,
-  approvedAt: Date, // <-- ADD THIS
-  rejectedBy: String, // <-- ADD THIS
-  rejectedAt: Date, // <-- ADD THIS
-  rejectionReason: String, // <-- ADD THIS
+  approvedAt: Date,
+  rejectedBy: String,
+  rejectedAt: Date,
+  rejectionReason: String,
   description: String,
-
-  // STAFF FIELDS - ADD THESE
-  requestedBy: { type: String, default: "System" }, // Staff name
-  requestedById: { type: String, default: null }, // Staff ID <-- KEY FIX
-  staffName: { type: String, default: "System" }, // Alias for frontend
-  staffId: { type: String, default: null }, // Alias for frontend
-
+  requestedBy: { type: String, default: "System" },
+  requestedById: { type: String, default: null },
+  staffName: { type: String, default: "System" },
+  staffId: { type: String, default: null },
   requestedAt: Date,
-  finalBalance: Number, // <-- ADD THIS (track balance after approval)
+  finalBalance: Number,
   createdAt: { type: Date, default: Date.now },
 });
 
-// Better indexes for common queries
 transactionSchema.index({ date: -1 });
-transactionSchema.index({ status: 1, requestedById: 1 }); // <-- ADD THIS for staff grouping
+transactionSchema.index({ status: 1, requestedById: 1 });
 transactionSchema.index({ customerId: 1, date: -1 });
+transactionSchema.index({ type: 1, status: 1 }); // ← ADD THIS
+transactionSchema.index({ loanId: 1 }); // ← ADD THIS
 
 module.exports = mongoose.model(
   "Transaction",
