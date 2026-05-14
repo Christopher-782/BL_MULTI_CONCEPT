@@ -43,6 +43,7 @@ exports.createLoanRequest = async (req, res) => {
       purpose,
       notes,
       requestedBy,
+      processingCharges,
     } = req.body;
 
     // Validate required fields
@@ -99,7 +100,7 @@ exports.createLoanRequest = async (req, res) => {
       }
     }
 
-    // Calculate loan details (overdraft: no interest, single lump-sum repayment)
+    // Calculate loan details
     let interest = 0;
     let totalPayable = amount;
     let installmentAmount = amount;
@@ -150,13 +151,18 @@ exports.createLoanRequest = async (req, res) => {
         }
       }
     } else {
-      // Overdraft: single repayment by deadline
+      // Overdraft: single repayment by deadline including charges
+      const charges = Number(processingCharges) || 0;
+      totalPayable = Number(amount) + charges;
       endDate = new Date(paymentDeadline || Date.now());
+
       repayments = [
         {
           id: "REPAY" + Date.now() + Math.random().toString(36).substr(2, 4),
           dueDate: new Date(endDate),
-          amount: amount,
+          amount: totalPayable,
+          principalPortion: Number(amount),
+          chargesPortion: charges,
           status: "pending",
         },
       ];
@@ -187,6 +193,8 @@ exports.createLoanRequest = async (req, res) => {
         type === "overdraft" ? null : new Date(repaymentStartDate),
       repaymentEndDate: endDate,
       paymentDeadline: type === "overdraft" ? new Date(paymentDeadline) : null,
+      processingCharges:
+        type === "overdraft" ? Number(processingCharges) || 0 : 0,
       repayments,
       status: "pending",
       requestedBy: safeRequestedBy,
@@ -208,6 +216,8 @@ exports.createLoanRequest = async (req, res) => {
         id: loan.id,
         customerName: loan.customerName,
         amount: loan.amount,
+        processingCharges: loan.processingCharges,
+        totalPayable: loan.totalPayable,
         status: loan.status,
         createdAt: loan.createdAt,
       },
@@ -258,7 +268,7 @@ exports.getLoansByCustomer = async (req, res) => {
   }
 };
 
-// Approve loan with SMS notification
+// Approve loan with enhanced overdraft charges support
 exports.approveLoan = async (req, res) => {
   try {
     const { loanId } = req.params;
@@ -278,7 +288,15 @@ exports.approveLoan = async (req, res) => {
       return res.status(404).json({ error: "Customer not found" });
     }
 
-    const interest = loan.totalPayable - loan.amount;
+    const isOverdraft = loan.type === "overdraft";
+    const processingCharges = loan.processingCharges || 0;
+
+    // For overdraft: totalPayable = amount + processingCharges (no interest)
+    // For loan: totalPayable = amount + interest
+    const interest = isOverdraft ? 0 : loan.totalPayable - loan.amount;
+    const totalPayable = isOverdraft
+      ? loan.amount + processingCharges
+      : loan.totalPayable;
 
     // Update loan status
     loan.status = "active";
@@ -288,9 +306,11 @@ exports.approveLoan = async (req, res) => {
       approvedAt: new Date(),
     };
     loan.amountDisbursed = loan.amount;
-    loan.outstandingBalance = loan.totalPayable;
+    loan.outstandingBalance = totalPayable;
     loan.outstandingPrincipal = loan.amount;
     loan.outstandingInterest = interest;
+    loan.outstandingCharges = isOverdraft ? processingCharges : 0;
+    loan.totalPayable = totalPayable;
     loan.autoDebitEnabled = true;
 
     await loan.save();
@@ -300,11 +320,13 @@ exports.approveLoan = async (req, res) => {
       id: "TXN" + Date.now() + Math.random(),
       customerId: loan.customerId,
       customerName: loan.customerName,
-      type: "loan_disbursement",
+      type: isOverdraft ? "overdraft_disbursement" : "loan_disbursement",
       amount: loan.amount,
       charges: 0,
       netAmount: loan.amount,
-      description: `Loan disbursement - ${loan.id}`,
+      description: isOverdraft
+        ? `Overdraft disbursement - ${loan.id} (Charges: ₦${processingCharges.toLocaleString()} due on settlement)`
+        : `Loan disbursement - ${loan.id}`,
       status: "approved",
       requestedBy: approvedBy.name,
       approvedBy: approvedBy.name,
@@ -312,7 +334,7 @@ exports.approveLoan = async (req, res) => {
     });
     await disbursementTransaction.save();
 
-    // Credit customer's account
+    // Credit customer's account with principal only (charges are NOT disbursed)
     const newCashBalance = (customer.cashBalance || 0) + loan.amount;
     await Customer.findOneAndUpdate(
       { id: loan.customerId },
@@ -320,6 +342,8 @@ exports.approveLoan = async (req, res) => {
         $set: {
           cashBalance: newCashBalance,
           balance: newCashBalance,
+          hasActiveLoan: true,
+          activeLoanId: loan.id,
         },
         $inc: {
           loanBalance: loan.amount,
@@ -329,20 +353,27 @@ exports.approveLoan = async (req, res) => {
       },
     );
 
-    // Send SMS notification
+    // Send SMS
     if (customer.phone) {
       try {
-        await smsService.sendLoanDisbursementAlert(
-          customer.phone,
-          loan.amount,
-          newCashBalance,
-          loan.id,
-          loan.interestRate,
-          loan.totalPayable,
-          loan.numberOfInstallments,
-          loan.repaymentPeriod,
-          loan.installmentAmount,
-        );
+        if (isOverdraft) {
+          await smsService.sendSMS({
+            to: customer.phone,
+            message: `VaultFlow: Dear ${customer.name}, your overdraft of ₦${loan.amount.toLocaleString()} has been approved. Processing charges: ₦${processingCharges.toLocaleString()}. Total due by ${new Date(loan.paymentDeadline).toLocaleDateString("en-GB")}: ₦${totalPayable.toLocaleString()}. New balance: ₦${newCashBalance.toLocaleString()}.`,
+          });
+        } else {
+          await smsService.sendLoanDisbursementAlert(
+            customer.phone,
+            loan.amount,
+            newCashBalance,
+            loan.id,
+            loan.interestRate,
+            loan.totalPayable,
+            loan.numberOfInstallments,
+            loan.repaymentPeriod,
+            loan.installmentAmount,
+          );
+        }
       } catch (smsError) {
         console.error("SMS failed:", smsError.message);
       }
@@ -350,12 +381,16 @@ exports.approveLoan = async (req, res) => {
 
     res.json({
       success: true,
-      message: `✅ Loan approved! ₦${loan.amount.toLocaleString()} disbursed to ${customer.name}'s account.`,
+      message: isOverdraft
+        ? `✅ Overdraft approved! ₦${loan.amount.toLocaleString()} disbursed to ${customer.name}. Charges: ₦${processingCharges.toLocaleString()}. Total due: ₦${totalPayable.toLocaleString()}.`
+        : `✅ Loan approved! ₦${loan.amount.toLocaleString()} disbursed to ${customer.name}'s account.`,
       loan: {
         id: loan.id,
         amount: loan.amount,
-        totalPayable: loan.totalPayable,
+        processingCharges: isOverdraft ? processingCharges : undefined,
+        totalPayable: totalPayable,
         status: loan.status,
+        paymentDeadline: isOverdraft ? loan.paymentDeadline : undefined,
       },
       customer: {
         id: customer.id,
@@ -423,14 +458,20 @@ exports.rejectLoan = async (req, res) => {
   }
 };
 
-// Record repayment with interest revenue tracking
+// Record repayment with FULL overdraft charges tracking
 exports.recordRepayment = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const { loanId, repaymentId } = req.params;
-    const { paidBy, paymentAmount } = req.body;
+    const {
+      paidBy,
+      paymentAmount,
+      isFullSettlement,
+      totalPayable,
+      processingCharges,
+    } = req.body;
 
     const loan = await Loan.findOne({ id: loanId }).session(session);
     if (!loan) {
@@ -438,6 +479,161 @@ exports.recordRepayment = async (req, res) => {
       return res.status(404).json({ error: "Loan not found" });
     }
 
+    const customer = await Customer.findOne({ id: loan.customerId }).session(
+      session,
+    );
+    if (!customer) {
+      await session.abortTransaction();
+      return res.status(404).json({ error: "Customer not found" });
+    }
+
+    // ========== OVERDRAFT FULL SETTLEMENT ==========
+    if (loan.type === "overdraft" && isFullSettlement) {
+      const totalDue = totalPayable || loan.totalPayable;
+      const chargesDue = processingCharges || loan.processingCharges || 0;
+      const principalDue = loan.amount || 0;
+      const availableBalance = customer.cashBalance || customer.balance || 0;
+
+      // Validate: customer must have enough for FULL amount (principal + charges)
+      if (availableBalance < totalDue) {
+        await session.abortTransaction();
+        return res.status(400).json({
+          error: "Insufficient funds to settle overdraft",
+          required: totalDue,
+          available: availableBalance,
+          shortfall: totalDue - availableBalance,
+          breakdown: {
+            principal: principalDue,
+            charges: chargesDue,
+            total: totalDue,
+          },
+        });
+      }
+
+      // Mark the single overdraft repayment as paid
+      const repayment = loan.repayments[0];
+      repayment.status = "paid";
+      repayment.paidDate = new Date();
+      repayment.paidBy = paidBy || "Admin";
+      repayment.paidAmount = totalDue;
+      repayment.principalPortion = principalDue;
+      repayment.chargesPortion = chargesDue;
+      repayment.interestPortion = 0;
+
+      // Update loan status to completed
+      loan.status = "completed";
+      loan.amountRepaid = totalDue;
+      loan.outstandingBalance = 0;
+      loan.outstandingPrincipal = 0;
+      loan.outstandingInterest = 0;
+      loan.completedAt = new Date();
+      loan.principalRepaidToDate = principalDue;
+      loan.chargesPaidToDate = chargesDue;
+      loan.interestEarnedToDate = 0;
+
+      // Deduct FULL amount from customer (principal + charges)
+      const updatedCustomer = await Customer.findOneAndUpdate(
+        { id: loan.customerId },
+        {
+          $inc: {
+            cashBalance: -totalDue,
+            balance: -totalDue,
+            loanBalance: -principalDue,
+            totalRepaid: totalDue,
+          },
+          $set: {
+            hasActiveLoan: false,
+            activeLoanId: null,
+          },
+        },
+        { returnDocument: "after", session },
+      );
+
+      await loan.save({ session });
+
+      // Create overdraft repayment transaction (shows full breakdown)
+      const transaction = new Transaction({
+        id: "TXN" + Date.now() + Math.random().toString(36).substr(2, 4),
+        customerId: loan.customerId,
+        customerName: loan.customerName,
+        customerPhone: customer.phone || null,
+        type: "overdraft_repayment",
+        amount: totalDue,
+        principalPortion: principalDue,
+        chargesPortion: chargesDue,
+        interestPortion: 0,
+        charges: chargesDue,
+        netAmount: -totalDue,
+        description: `Overdraft settlement: Principal ₦${principalDue.toLocaleString()} + Processing Charges ₦${chargesDue.toLocaleString()} = ₦${totalDue.toLocaleString()}`,
+        status: "approved",
+        requestedBy: paidBy || "Admin",
+        approvedBy: paidBy || "Admin",
+        date: new Date().toISOString(),
+        loanId: loan.id,
+        repaymentId: repaymentId,
+        isOverdraftSettlement: true,
+      });
+      await transaction.save({ session });
+
+      // Create separate CHARGES REVENUE transaction for accounting
+      if (chargesDue > 0) {
+        const chargesRevenueTransaction = new Transaction({
+          id: "REV" + Date.now() + Math.random().toString(36).substr(2, 4),
+          customerId: loan.customerId,
+          customerName: loan.customerName,
+          type: "overdraft_charges_revenue",
+          amount: chargesDue,
+          netAmount: chargesDue,
+          description: `Overdraft processing charges revenue from ${loan.customerName} - Loan ${loan.id}`,
+          status: "approved",
+          approvedBy: "System",
+          date: new Date().toISOString(),
+          loanId: loan.id,
+          isRevenue: true,
+          revenueType: "overdraft_charges",
+        });
+        await chargesRevenueTransaction.save({ session });
+      }
+
+      await session.commitTransaction();
+
+      // Send SMS
+      if (customer.phone) {
+        try {
+          await smsService.sendSMS({
+            to: customer.phone,
+            message: `VaultFlow: Dear ${customer.name}, your overdraft of ₦${principalDue.toLocaleString()} has been fully settled. Charges: ₦${chargesDue.toLocaleString()}. Total deducted: ₦${totalDue.toLocaleString()}. New balance: ₦${updatedCustomer.cashBalance.toLocaleString()}.`,
+          });
+        } catch (smsError) {
+          console.error("SMS failed:", smsError.message);
+        }
+      }
+
+      return res.json({
+        success: true,
+        message: "🎉 Overdraft fully settled!",
+        loan: {
+          id: loan.id,
+          status: "completed",
+          amountRepaid: totalDue,
+          principalRepaid: principalDue,
+          chargesPaid: chargesDue,
+          outstandingBalance: 0,
+        },
+        settlement: {
+          principal: principalDue,
+          charges: chargesDue,
+          totalPaid: totalDue,
+        },
+        customer: {
+          newCashBalance: updatedCustomer.cashBalance,
+          loanBalance: updatedCustomer.loanBalance,
+          amountDeducted: totalDue,
+        },
+      });
+    }
+
+    // ========== REGULAR LOAN REPAYMENT ==========
     const repaymentIndex = loan.repayments.findIndex(
       (r) => r.id === repaymentId,
     );
@@ -455,14 +651,6 @@ exports.recordRepayment = async (req, res) => {
       });
     }
 
-    const customer = await Customer.findOne({ id: loan.customerId }).session(
-      session,
-    );
-    if (!customer) {
-      await session.abortTransaction();
-      return res.status(404).json({ error: "Customer not found" });
-    }
-
     const repaymentAmount = paymentAmount || repayment.amount || 0;
     const availableBalance = customer.cashBalance || customer.balance || 0;
 
@@ -476,15 +664,14 @@ exports.recordRepayment = async (req, res) => {
       });
     }
 
-    // Calculate interest revenue for THIS installment only
+    // Calculate interest revenue for THIS installment
     const totalInterest = loan.totalPayable - loan.amount;
     const interestRatio = totalInterest / loan.totalPayable;
 
-    // Interest portion for this specific payment
     const interestPortion = repaymentAmount * interestRatio;
     const principalPortion = repaymentAmount - interestPortion;
 
-    // Update repayment record with breakdown
+    // Update repayment record
     repayment.status = "paid";
     repayment.paidDate = new Date();
     repayment.paidBy = paidBy || "Customer";
@@ -492,6 +679,7 @@ exports.recordRepayment = async (req, res) => {
     repayment.principalPortion = principalPortion;
     repayment.interestPortion = interestPortion;
     repayment.interestRevenue = interestPortion;
+    repayment.chargesPortion = 0;
 
     // Update loan totals
     loan.amountRepaid = (loan.amountRepaid || 0) + repaymentAmount;
@@ -499,15 +687,11 @@ exports.recordRepayment = async (req, res) => {
       0,
       loan.totalPayable - loan.amountRepaid,
     );
-
-    // Track cumulative principal and interest separately
     loan.principalRepaidToDate =
       (loan.principalRepaidToDate || 0) + principalPortion;
     loan.interestEarnedToDate =
       (loan.interestEarnedToDate || 0) + interestPortion;
 
-    // Check completion
-    const wasCompleted = loan.status === "completed";
     if (
       loan.outstandingBalance <= 0 ||
       loan.amountRepaid >= loan.totalPayable
@@ -517,7 +701,6 @@ exports.recordRepayment = async (req, res) => {
       loan.outstandingBalance = 0;
     }
 
-    // Deduct from customer balance - FIXED: use returnDocument instead of new
     const updatedCustomer = await Customer.findOneAndUpdate(
       { id: loan.customerId },
       {
@@ -556,7 +739,7 @@ exports.recordRepayment = async (req, res) => {
     });
     await transaction.save({ session });
 
-    // Record interest revenue transaction for accounting
+    // Record interest revenue transaction
     if (interestPortion > 0) {
       const revenueTransaction = new Transaction({
         id: "REV" + Date.now() + Math.random().toString(36).substr(2, 4),
@@ -572,16 +755,16 @@ exports.recordRepayment = async (req, res) => {
         loanId: loan.id,
         repaymentId: repaymentId,
         isRevenue: true,
+        revenueType: "loan_interest",
       });
       await revenueTransaction.save({ session });
     }
 
     await session.commitTransaction();
 
-    // Send SMS notifications
+    // Send SMS
     if (customer.phone) {
       try {
-        // Debit alert for repayment
         await smsService.sendDebitAlert(
           customer.phone,
           repaymentAmount,
@@ -589,12 +772,10 @@ exports.recordRepayment = async (req, res) => {
           transaction.id,
           0,
         );
-
-        // Loan completion notification
-        if (loan.status === "completed" && !wasCompleted) {
+        if (loan.status === "completed") {
           await smsService.sendSMS({
             to: customer.phone,
-            message: `VaultFlow: Congratulations ${customer.name}! Your loan ${loan.id} has been fully repaid. Total paid: ₦${loan.amountRepaid.toLocaleString()}. Thank you for banking with us!`,
+            message: `VaultFlow: Congratulations ${customer.name}! Your loan ${loan.id} has been fully repaid. Total paid: ₦${loan.amountRepaid.toLocaleString()}.`,
           });
         }
       } catch (smsError) {
@@ -615,14 +796,12 @@ exports.recordRepayment = async (req, res) => {
         amountRepaid: loan.amountRepaid,
         principalRepaidToDate: loan.principalRepaidToDate,
         interestEarnedToDate: loan.interestEarnedToDate,
-        progress: Math.round((loan.amountRepaid / loan.totalPayable) * 100),
       },
       thisRepayment: {
         installmentNumber: repaymentIndex + 1,
         totalPaid: repaymentAmount,
         principalPortion: principalPortion,
         interestPortion: interestPortion,
-        interestRevenue: interestPortion,
       },
       customer: {
         newCashBalance: updatedCustomer.cashBalance,
@@ -738,6 +917,35 @@ exports.getRevenueReports = async (req, res) => {
       ]);
     }
 
+    // Overdraft charges revenue
+    let overdraftChargesRevenue = [];
+    if (!type || type === "all" || type === "overdraft_charges") {
+      overdraftChargesRevenue = await Transaction.aggregate([
+        {
+          $match: {
+            type: "overdraft_charges_revenue",
+            status: "approved",
+            createdAt: { $gte: startDate },
+          },
+        },
+        {
+          $group: {
+            _id:
+              period === "daily"
+                ? { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } }
+                : period === "monthly"
+                  ? { $dateToString: { format: "%Y-%m", date: "$createdAt" } }
+                  : period === "yearly"
+                    ? { $year: "$createdAt" }
+                    : null,
+            totalChargesRevenue: { $sum: "$amount" },
+            count: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]);
+    }
+
     const totalInterest = interestRevenue.reduce(
       (sum, item) => sum + (item.totalInterest || 0),
       0,
@@ -746,22 +954,29 @@ exports.getRevenueReports = async (req, res) => {
       (sum, item) => sum + (item.totalCharges || 0),
       0,
     );
+    const totalOverdraftCharges = overdraftChargesRevenue.reduce(
+      (sum, item) => sum + (item.totalChargesRevenue || 0),
+      0,
+    );
 
     res.json({
       success: true,
       period: period || "all",
-      totalRevenue: totalInterest + totalCharges,
+      totalRevenue: totalInterest + totalCharges + totalOverdraftCharges,
       summary: {
         interestRevenue: totalInterest,
         transactionCharges: totalCharges,
+        overdraftChargesRevenue: totalOverdraftCharges,
       },
       breakdown: {
         interest: interestRevenue,
         charges: transactionCharges,
+        overdraftCharges: overdraftChargesRevenue,
       },
       dashboard: {
         totalInterestEarned: totalInterest,
         totalChargesEarned: totalCharges,
+        totalOverdraftChargesEarned: totalOverdraftCharges,
         activeLoansCount: await Loan.countDocuments({ status: "active" }),
         completedLoansCount: await Loan.countDocuments({ status: "completed" }),
         totalUnearnedInterest: await Loan.aggregate([
@@ -976,17 +1191,41 @@ exports.getDashboardSummary = async (req, res) => {
       { $group: { _id: null, total: { $sum: "$charges" } } },
     ]);
 
+    const overdraftChargesToday = await Transaction.aggregate([
+      {
+        $match: {
+          type: "overdraft_charges_revenue",
+          status: "approved",
+          createdAt: { $gte: today },
+        },
+      },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]);
+
+    const overdraftChargesMonth = await Transaction.aggregate([
+      {
+        $match: {
+          type: "overdraft_charges_revenue",
+          status: "approved",
+          createdAt: { $gte: thisMonth },
+        },
+      },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]);
+
     res.json({
       success: true,
       today: {
         interestRevenue: todayRevenue[0]?.interest || 0,
         transactionCharges: chargesToday[0]?.total || 0,
+        overdraftChargesRevenue: overdraftChargesToday[0]?.total || 0,
         newLoans: todayRevenue[0]?.count || 0,
       },
       thisMonth: {
         interestRevenue: monthRevenue[0]?.interest || 0,
         principalDisbursed: monthRevenue[0]?.principal || 0,
         transactionCharges: chargesMonth[0]?.total || 0,
+        overdraftChargesRevenue: overdraftChargesMonth[0]?.total || 0,
         newLoans: monthRevenue[0]?.count || 0,
       },
       allTime: {

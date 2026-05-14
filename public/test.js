@@ -1562,18 +1562,42 @@ function renderRepaymentManagement(container) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // 1. Extract all due installments from all active loans
   let dueInstallments = [];
 
   activeLoans.forEach((loan) => {
     const customer = state.customers.find((c) => c.id === loan.customerId);
     if (!customer) return;
 
+    // === OVERDRAFT SPECIAL HANDLING ===
+    if (loan.type === "overdraft") {
+      // Overdraft is a single lump-sum repayment
+      // Check if it has a repayment record or create a virtual one
+      const outstanding = loan.outstandingBalance || loan.totalPayable || 0;
+
+      if (outstanding > 0) {
+        dueInstallments.push({
+          loanId: loan.id,
+          repaymentId: loan.repayments?.[0]?.id || "overdraft-full",
+          customerName: loan.customerName,
+          customerId: loan.customerId,
+          amount: outstanding, // This now INCLUDES charges
+          principalAmount: loan.amount || 0,
+          chargesAmount: loan.processingCharges || 0,
+          dueDate:
+            loan.paymentDeadline || loan.repaymentStartDate || new Date(),
+          type: "overdraft",
+          status:
+            new Date(loan.paymentDeadline) < today ? "overdue" : "pending",
+          isFullSettlement: true,
+        });
+      }
+      return;
+    }
+
+    // Regular loan repayments
     if (loan.repayments && loan.repayments.length > 0) {
       loan.repayments.forEach((repayment) => {
         const dueDate = new Date(repayment.dueDate);
-
-        // If repayment is pending/overdue and the date has passed or is today
         if (repayment.status !== "paid" && dueDate <= today) {
           dueInstallments.push({
             loanId: loan.id,
@@ -1581,16 +1605,18 @@ function renderRepaymentManagement(container) {
             customerName: loan.customerName,
             customerId: loan.customerId,
             amount: repayment.amount,
+            principalAmount: null, // Not applicable for regular loans
+            chargesAmount: null,
             dueDate: repayment.dueDate,
-            type: loan.type, // 'loan' or 'overdraft'
-            status: repayment.status, // 'pending' or 'overdue'
+            type: loan.type,
+            status: repayment.status,
+            isFullSettlement: false,
           });
         }
       });
     }
   });
 
-  // Sort: Overdue first, then by date
   dueInstallments.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
 
   const overdueCount = dueInstallments.filter(
@@ -1605,7 +1631,7 @@ function renderRepaymentManagement(container) {
       <div class="flex justify-between items-center">
         <div>
           <h3 class="text-xl font-bold">Repayment Management</h3>
-          <p class="text-sm text-gray-400">Manually collect outstanding installments</p>
+          <p class="text-sm text-gray-400">Manually collect outstanding installments & overdrafts</p>
         </div>
         <button onclick="refreshData()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors">
           <i class="fas fa-sync-alt mr-2"></i>Refresh
@@ -1616,11 +1642,11 @@ function renderRepaymentManagement(container) {
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="glass-panel p-4 rounded-xl border-l-4 border-red-500">
           <p class="text-xs text-gray-400 uppercase font-bold">Total Overdue</p>
-          <p class="text-2xl font-bold text-red-400">${overdueCount} Installments</p>
+          <p class="text-2xl font-bold text-red-400">${overdueCount} Items</p>
         </div>
         <div class="glass-panel p-4 rounded-xl border-l-4 border-yellow-500">
           <p class="text-xs text-gray-400 uppercase font-bold">Due Today</p>
-          <p class="text-2xl font-bold text-yellow-400">${dueTodayCount} Installments</p>
+          <p class="text-2xl font-bold text-yellow-400">${dueTodayCount} Items</p>
         </div>
       </div>
 
@@ -1642,8 +1668,21 @@ function renderRepaymentManagement(container) {
               dueInstallments.length === 0
                 ? `<tr><td colspan="6" class="px-6 py-12 text-center text-gray-500">No pending or overdue repayments found.</td></tr>`
                 : dueInstallments
-                    .map(
-                      (inst) => `
+                    .map((inst) => {
+                      // Overdraft-specific amount display with charges breakdown
+                      const isOverdraft = inst.type === "overdraft";
+                      const amountDisplay = isOverdraft
+                        ? `<div>
+                            <div class="font-mono text-sm text-white">₦${inst.amount.toLocaleString()}</div>
+                            <div class="text-xs text-gray-400 mt-1">
+                              <span class="text-green-400">P: ₦${(inst.principalAmount || 0).toLocaleString()}</span>
+                              <span class="mx-1">+</span>
+                              <span class="text-red-400">C: ₦${(inst.chargesAmount || 0).toLocaleString()}</span>
+                            </div>
+                           </div>`
+                        : `<span class="font-mono text-sm text-white">₦${inst.amount.toLocaleString()}</span>`;
+
+                      return `
                 <tr class="hover:bg-gray-800/30 transition-colors">
                   <td class="px-6 py-4 whitespace-nowrap">
                     <div class="text-sm font-medium text-white">${inst.customerName}</div>
@@ -1653,8 +1692,8 @@ function renderRepaymentManagement(container) {
                       ${inst.type}
                     </span>
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap font-mono text-sm text-white">
-                    ₦${inst.amount.toLocaleString()}
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    ${amountDisplay}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
                     ${formatSimpleDate(inst.dueDate)}
@@ -1667,12 +1706,12 @@ function renderRepaymentManagement(container) {
                   <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <button onclick="handleManualCollection('${inst.loanId}', '${inst.repaymentId}', '${inst.customerId}', ${inst.amount}, '${inst.customerName}')" 
                       class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition-all flex items-center justify-center ml-auto gap-2">
-                      <i class="fas fa-hand-holding-usd"></i> Collect
+                      <i class="fas fa-hand-holding-usd"></i> ${isOverdraft ? "Settle" : "Collect"}
                     </button>
                   </td>
                 </tr>
-              `,
-                    )
+              `;
+                    })
                     .join("")
             }
           </tbody>
@@ -1683,7 +1722,6 @@ function renderRepaymentManagement(container) {
 
   container.innerHTML = html;
 }
-
 /**
  * The logic to perform the manual collection
  * This performs a withdrawal from the customer and marks the loan repayment as paid
@@ -1695,50 +1733,66 @@ async function handleManualCollection(
   amount,
   customerName,
 ) {
-  // 1. Confirmation
-  if (
-    !confirm(`Confirm Collection: 
-  
-  This will deduct ₦${amount.toLocaleString()} from ${customerName}'s balance and record it as a loan repayment.
-  
-  Continue?`)
-  ) {
+  // Get the full loan details to check for charges
+  const loan = state.loans?.find((l) => l.id === loanId);
+  const isOverdraft = loan?.type === "overdraft";
+
+  // For overdraft: amount should be the FULL totalPayable (principal + charges)
+  // The backend needs to know this is a complete payoff including charges
+  const totalToCollect = isOverdraft ? loan?.totalPayable || amount : amount;
+
+  const confirmationMessage = isOverdraft
+    ? `Confirm Overdraft Collection:\n\nThis will deduct ₦${totalToCollect.toLocaleString()} from ${customerName}'s balance.\n\nBreakdown:\n• Principal: ₦${(loan?.amount || 0).toLocaleString()}\n• Processing Charges: ₦${(loan?.processingCharges || 0).toLocaleString()}\n• Total Due: ₦${totalToCollect.toLocaleString()}\n\nThis will fully settle the overdraft. Continue?`
+    : `Confirm Collection: \n\nThis will deduct ₦${amount.toLocaleString()} from ${customerName}'s balance and record it as a loan repayment.\n\nContinue?`;
+
+  if (!confirm(confirmationMessage)) {
     return;
   }
 
   try {
-    showNotification("Processing collection...", "info");
-
-    // 2. Call your existing PATCH route
-    // We send 'paidBy' to match your backend: const { paidBy, paymentAmount } = req.body;
-    await api.patch(`/loans/${loanId}/repayments/${repaymentId}`, {
-      paidBy: state.currentUser.name,
-      paymentAmount: amount, // Passing this explicitly ensures the backend uses the correct amount
-    });
-
-    // 3. Success Handling
     showNotification(
-      `Successfully collected ₦${amount.toLocaleString()} from ${customerName}`,
-      "success",
+      isOverdraft
+        ? "Processing overdraft settlement..."
+        : "Processing collection...",
+      "info",
     );
 
-    // 4. Refresh all data
-    // This will update the Customer Balance, the Loan Status, and the Transaction History
-    await loadAllData();
+    // Enhanced payload for overdraft - explicitly marks as full settlement
+    const payload = {
+      paidBy: state.currentUser.name,
+      paymentAmount: amount, // The installment/repayment amount
+      isFullSettlement: isOverdraft, // Flag for backend to handle charges
+      totalPayable: isOverdraft ? loan?.totalPayable : undefined,
+      processingCharges: isOverdraft ? loan?.processingCharges : undefined,
+    };
 
-    // 5. Re-render the Repayment Management page to clear the item from the list
+    await api.patch(`/loans/${loanId}/repayments/${repaymentId}`, payload);
+
+    // Success notification with breakdown
+    if (isOverdraft) {
+      showNotification(
+        `✅ Overdraft fully settled! ₦${totalToCollect.toLocaleString()} collected from ${customerName}\n` +
+          `(Principal: ₦${(loan?.amount || 0).toLocaleString()} + Charges: ₦${(loan?.processingCharges || 0).toLocaleString()})`,
+        "success",
+      );
+    } else {
+      showNotification(
+        `Successfully collected ₦${amount.toLocaleString()} from ${customerName}`,
+        "success",
+      );
+    }
+
+    await loadAllData();
     renderRepaymentManagement(document.getElementById("contentArea"));
   } catch (error) {
     console.error("Manual collection error:", error);
-
-    // 6. Error Handling
-    // This will catch your backend's "Insufficient funds" error and show it to the Admin
     const errorMsg =
       error.response?.data?.error ||
       "Failed to collect payment. Check customer balance.";
     showNotification(errorMsg, "error");
   }
-} // ==================== CUSTOMERS VIEW ====================
+}
+// ==================== CUSTOMERS VIEW ====================
 
 function renderCustomers(container) {
   let displayedCustomers = state.customers;
@@ -4584,23 +4638,25 @@ function renderAdminLoans(container) {
                           ? `
                       <!-- OVERDRAFT ACTIVE DISPLAY -->
                       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
-                        <div>
-                          <p class="text-gray-400">Amount</p>
-                          <p class="font-mono text-green-400">₦${(loan.amount || 0).toLocaleString()}</p>
-                        </div>
-                        <div>
-                          <p class="text-gray-400">Charges</p>
-                          <p class="font-mono text-red-400">₦${(loan.processingCharges || 0).toLocaleString()}</p>
-                        </div>
-                        <div>
-                          <p class="text-gray-400">Total to Repay</p>
-                          <p class="font-mono text-blue-400 font-bold">₦${(loan.totalPayable || 0).toLocaleString()}</p>
-                        </div>
-                        <div>
-                          <p class="text-gray-400">Outstanding</p>
-                          <p class="font-mono text-red-400">₦${(loan.outstandingBalance || 0).toLocaleString()}</p>
-                        </div>
-                      </div>
+  <div>
+    <p class="text-gray-400">Principal Amount</p>
+    <p class="font-mono text-green-400">₦${(loan.amount || 0).toLocaleString()}</p>
+  </div>
+  <div>
+    <p class="text-gray-400">Processing Charges</p>
+    <p class="font-mono text-red-400">₦${(loan.processingCharges || 0).toLocaleString()}</p>
+  </div>
+  <div>
+    <p class="text-gray-400">Total Outstanding</p>
+    <p class="font-mono text-blue-400 font-bold">₦${(loan.outstandingBalance || loan.totalPayable || 0).toLocaleString()}</p>
+  </div>
+  <div>
+    <p class="text-gray-400">Deadline</p>
+    <p class="font-mono ${isOverdue ? "text-red-400" : "text-orange-400"}">
+      ${loan.paymentDeadline ? new Date(loan.paymentDeadline).toLocaleDateString("en-GB") : "Not set"}
+    </p>
+  </div>
+</div>
                       `
                           : `
                       <!-- LOAN ACTIVE DISPLAY -->
@@ -5144,11 +5200,11 @@ function renderMyLoans(container) {
                     }
                     
                     <div class="mt-2 p-2 bg-gray-900/50 rounded-lg">
-                      <p class="text-xs text-orange-300">
-                        <i class="fas fa-info-circle mr-1"></i>
-                        Overdraft must be repaid in full by the deadline. Interest: 6.45% (fixed)
-                      </p>
-                    </div>
+  <p class="text-xs text-orange-300">
+    <i class="fas fa-info-circle mr-1"></i>
+    Overdraft must be repaid in full by the deadline. Processing charges apply.
+  </p>
+</div>
                   `
                       : `
                     <!-- REGULAR LOAN DISPLAY -->
@@ -5309,7 +5365,6 @@ async function renderRevenueReports(container) {
       // Calculate interest from loan repayments in this period
       let totalInterest = 0;
 
-      // Look at all approved loans and sum up interest from repayments made in this period
       allLoans.forEach((loan) => {
         if (loan.repayments && loan.repayments.length > 0) {
           loan.repayments.forEach((repayment) => {
@@ -5326,6 +5381,45 @@ async function renderRevenueReports(container) {
       return totalInterest;
     };
 
+    // Calculate overdraft charges for a period
+    const calculateOverdraftCharges = (period) => {
+      const now = new Date();
+      let startDate;
+      switch (period) {
+        case "daily":
+          startDate = new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate(),
+          );
+          break;
+        case "weekly":
+          startDate = new Date(now);
+          startDate.setDate(now.getDate() - 7);
+          break;
+        case "monthly":
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          break;
+        case "yearly":
+          startDate = new Date(now.getFullYear(), 0, 1);
+          break;
+        default:
+          startDate = new Date(0);
+      }
+
+      // Calculate from overdraft charges revenue transactions
+      const charges = state.transactions
+        .filter(
+          (t) =>
+            t.type === "overdraft_charges_revenue" &&
+            t.status === "approved" &&
+            new Date(t.date) >= startDate,
+        )
+        .reduce((sum, t) => sum + (t.amount || 0), 0);
+
+      return charges;
+    };
+
     // Calculate transaction charges for each period
     const dailyTxnCharges = calculateTransactionCharges("daily");
     const weeklyTxnCharges = calculateTransactionCharges("weekly");
@@ -5337,6 +5431,12 @@ async function renderRevenueReports(container) {
     const weeklyLoanInterest = calculateLoanInterestCollected("weekly");
     const monthlyLoanInterest = calculateLoanInterestCollected("monthly");
     const yearlyLoanInterest = calculateLoanInterestCollected("yearly");
+
+    // Calculate overdraft charges for each period
+    const dailyOverdraftCharges = calculateOverdraftCharges("daily");
+    const weeklyOverdraftCharges = calculateOverdraftCharges("weekly");
+    const monthlyOverdraftCharges = calculateOverdraftCharges("monthly");
+    const yearlyOverdraftCharges = calculateOverdraftCharges("yearly");
 
     // Calculate totals from all data
     const totalTransactionCharges = state.transactions
@@ -5364,12 +5464,21 @@ async function renderRevenueReports(container) {
       return sum;
     }, 0);
 
-    // Calculate total revenue
+    // Calculate total overdraft charges from transactions
+    const totalOverdraftCharges = state.transactions
+      .filter(
+        (t) =>
+          t.type === "overdraft_charges_revenue" && t.status === "approved",
+      )
+      .reduce((sum, t) => sum + (t.amount || 0), 0);
+
+    // Calculate total revenue for each period
     const totalRevenue = {
-      daily: dailyTxnCharges + dailyLoanInterest,
-      weekly: weeklyTxnCharges + weeklyLoanInterest,
-      monthly: monthlyTxnCharges + monthlyLoanInterest,
-      yearly: yearlyTxnCharges + yearlyLoanInterest,
+      daily: dailyTxnCharges + dailyLoanInterest + dailyOverdraftCharges,
+      weekly: weeklyTxnCharges + weeklyLoanInterest + weeklyOverdraftCharges,
+      monthly:
+        monthlyTxnCharges + monthlyLoanInterest + monthlyOverdraftCharges,
+      yearly: yearlyTxnCharges + yearlyLoanInterest + yearlyOverdraftCharges,
     };
 
     // Get counts for display
@@ -5432,6 +5541,10 @@ async function renderRevenueReports(container) {
                 <span>📈 Interest:</span>
                 <span class="text-green-400">₦${dailyLoanInterest.toLocaleString()}</span>
               </div>
+              <div class="flex justify-between">
+                <span>💳 OD Charges:</span>
+                <span class="text-orange-400">₦${dailyOverdraftCharges.toLocaleString()}</span>
+              </div>
             </div>
           </div>
           
@@ -5449,6 +5562,10 @@ async function renderRevenueReports(container) {
               <div class="flex justify-between">
                 <span>📈 Interest:</span>
                 <span class="text-green-400">₦${weeklyLoanInterest.toLocaleString()}</span>
+              </div>
+              <div class="flex justify-between">
+                <span>💳 OD Charges:</span>
+                <span class="text-orange-400">₦${weeklyOverdraftCharges.toLocaleString()}</span>
               </div>
             </div>
           </div>
@@ -5468,6 +5585,10 @@ async function renderRevenueReports(container) {
                 <span>📈 Interest:</span>
                 <span class="text-green-400">₦${monthlyLoanInterest.toLocaleString()}</span>
               </div>
+              <div class="flex justify-between">
+                <span>💳 OD Charges:</span>
+                <span class="text-orange-400">₦${monthlyOverdraftCharges.toLocaleString()}</span>
+              </div>
             </div>
           </div>
           
@@ -5486,6 +5607,10 @@ async function renderRevenueReports(container) {
                 <span>📈 Interest:</span>
                 <span class="text-green-400">₦${yearlyLoanInterest.toLocaleString()}</span>
               </div>
+              <div class="flex justify-between">
+                <span>💳 OD Charges:</span>
+                <span class="text-orange-400">₦${yearlyOverdraftCharges.toLocaleString()}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -5494,7 +5619,7 @@ async function renderRevenueReports(container) {
         <div class="glass-panel rounded-2xl p-6">
           <h3 class="text-lg font-semibold mb-4">Revenue Breakdown</h3>
           
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
             <div class="bg-gradient-to-br from-blue-500/10 to-blue-600/5 p-5 rounded-xl border border-blue-500/20">
               <div class="flex items-center justify-between mb-3">
                 <h4 class="text-sm font-medium text-gray-400">
@@ -5525,6 +5650,18 @@ async function renderRevenueReports(container) {
                 <span class="px-2 py-1 bg-green-500/20 text-green-300 rounded-full">Active: ${activeLoansCount}</span>
                 <span class="px-2 py-1 bg-blue-500/20 text-blue-300 rounded-full">Completed: ${completedLoansCount}</span>
               </div>
+            </div>
+
+            <div class="bg-gradient-to-br from-orange-500/10 to-orange-600/5 p-5 rounded-xl border border-orange-500/20">
+              <div class="flex items-center justify-between mb-3">
+                <h4 class="text-sm font-medium text-gray-400">
+                  <i class="fas fa-credit-card text-orange-400 mr-2"></i>
+                  Overdraft Charges
+                </h4>
+                <i class="fas fa-hand-holding-usd text-orange-400 text-2xl"></i>
+              </div>
+              <p class="text-4xl font-bold text-orange-400">₦${totalOverdraftCharges.toLocaleString()}</p>
+              <p class="text-xs text-gray-500 mt-2">From settled overdrafts</p>
             </div>
           </div>
 
@@ -5566,14 +5703,17 @@ async function renderRevenueReports(container) {
               <span class="text-gray-300">Revenue Composition</span>
             </div>
             <div class="w-full bg-gray-700 rounded-full h-8 overflow-hidden flex">
-              <div class="bg-blue-500 h-full transition-all duration-500 flex items-center justify-center text-xs text-white font-medium" style="width: ${totalTransactionCharges + totalActualInterest > 0 ? (totalTransactionCharges / (totalTransactionCharges + totalActualInterest)) * 100 : 0}%">
-                ${totalTransactionCharges + totalActualInterest > 0 ? `${((totalTransactionCharges / (totalTransactionCharges + totalActualInterest)) * 100).toFixed(0)}%` : "0%"}
+              <div class="bg-blue-500 h-full transition-all duration-500 flex items-center justify-center text-xs text-white font-medium" style="width: ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? (totalTransactionCharges / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100 : 0}%">
+                ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? `${((totalTransactionCharges / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100).toFixed(0)}%` : "0%"}
               </div>
-              <div class="bg-green-500 h-full transition-all duration-500 flex items-center justify-center text-xs text-white font-medium" style="width: ${totalTransactionCharges + totalActualInterest > 0 ? (totalActualInterest / (totalTransactionCharges + totalActualInterest)) * 100 : 0}%">
-                ${totalTransactionCharges + totalActualInterest > 0 ? `${((totalActualInterest / (totalTransactionCharges + totalActualInterest)) * 100).toFixed(0)}%` : "0%"}
+              <div class="bg-green-500 h-full transition-all duration-500 flex items-center justify-center text-xs text-white font-medium" style="width: ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? (totalActualInterest / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100 : 0}%">
+                ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? `${((totalActualInterest / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100).toFixed(0)}%` : "0%"}
+              </div>
+              <div class="bg-orange-500 h-full transition-all duration-500 flex items-center justify-center text-xs text-white font-medium" style="width: ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? (totalOverdraftCharges / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100 : 0}%">
+                ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? `${((totalOverdraftCharges / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100).toFixed(0)}%` : "0%"}
               </div>
             </div>
-            <div class="flex gap-6 mt-4 text-sm justify-center">
+            <div class="flex gap-6 mt-4 text-sm justify-center flex-wrap">
               <div class="flex items-center gap-2">
                 <div class="w-4 h-4 bg-blue-500 rounded"></div>
                 <span class="text-gray-300">Transaction Charges: ₦${totalTransactionCharges.toLocaleString()}</span>
@@ -5582,6 +5722,10 @@ async function renderRevenueReports(container) {
                 <div class="w-4 h-4 bg-green-500 rounded"></div>
                 <span class="text-gray-300">Loan Interest: ₦${totalActualInterest.toLocaleString()}</span>
               </div>
+              <div class="flex items-center gap-2">
+                <div class="w-4 h-4 bg-orange-500 rounded"></div>
+                <span class="text-gray-300">Overdraft Charges: ₦${totalOverdraftCharges.toLocaleString()}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -5589,7 +5733,7 @@ async function renderRevenueReports(container) {
         <!-- Recent Revenue Activity -->
         <div class="glass-panel rounded-2xl p-6">
           <h3 class="text-lg font-semibold mb-4">Recent Revenue Activity</h3>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div class="bg-blue-500/10 p-4 rounded-lg border border-blue-500/20">
               <p class="text-xs text-gray-400 mb-2">Last 7 Days</p>
               <div class="flex justify-between items-end">
@@ -5611,6 +5755,17 @@ async function renderRevenueReports(container) {
                 <i class="fas fa-hand-holding-usd text-green-400 text-2xl"></i>
               </div>
               <p class="text-xs text-gray-500 mt-2">from loan repayments</p>
+            </div>
+            <div class="bg-orange-500/10 p-4 rounded-lg border border-orange-500/20">
+              <p class="text-xs text-gray-400 mb-2">Last 7 Days</p>
+              <div class="flex justify-between items-end">
+                <div>
+                  <p class="text-sm text-gray-400">Overdraft Charges</p>
+                  <p class="text-2xl font-bold text-orange-400">₦${weeklyOverdraftCharges.toLocaleString()}</p>
+                </div>
+                <i class="fas fa-credit-card text-orange-400 text-2xl"></i>
+              </div>
+              <p class="text-xs text-gray-500 mt-2">from settled overdrafts</p>
             </div>
           </div>
         </div>
@@ -5637,7 +5792,8 @@ async function renderRevenueReports(container) {
                   <th class="pb-3 px-2">Collected</th>
                   <th class="pb-3 px-2">Progress</th>
                   <th class="pb-3 px-2">Status</th>
-                 </thead>
+                </tr>
+              </thead>
               <tbody class="divide-y divide-gray-800">
                 ${
                   activeAndCompletedLoans.length > 0
@@ -5664,12 +5820,12 @@ async function renderRevenueReports(container) {
                       <td class="py-3 px-2">
                         <div class="font-medium text-sm">${loan.customerName}</div>
                         <div class="text-xs text-gray-500">${loan.customerNumber || "N/A"}</div>
-                        </td>
+                      </td>
                       <td class="py-3 px-2">
                         <span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
                           ${loan.type.toUpperCase()}
                         </span>
-                        </td>
+                      </td>
                       <td class="py-3 px-2 font-mono text-sm">₦${(loan.amount || 0).toLocaleString()}</td>
                       <td class="py-3 px-2 text-sm">${loan.interestRate || 0}%</td>
                       <td class="py-3 px-2 font-mono text-yellow-400 text-sm">₦${expectedInterest.toLocaleString()}</td>
@@ -5683,13 +5839,13 @@ async function renderRevenueReports(container) {
                             <div class="bg-green-500 h-2 rounded-full" style="width: ${collectionPercentage}%"></div>
                           </div>
                         </div>
-                        </td>
+                      </td>
                       <td class="py-3 px-2">
                         <span class="px-2 py-1 rounded text-xs ${getStatusStyle(loan.status)}">
                           ${loan.status}
                         </span>
-                        </td>
-                      </tr>
+                      </td>
+                    </tr>
                   `;
                         })
                         .join("")
@@ -5728,7 +5884,7 @@ async function renderRevenueReports(container) {
           <div class="glass-panel p-4 rounded-xl text-center">
             <i class="fas fa-chart-line text-yellow-400 text-2xl mb-2"></i>
             <p class="text-sm text-gray-400">Total Revenue</p>
-            <p class="text-xl font-bold text-green-400">₦${(totalTransactionCharges + totalActualInterest).toLocaleString()}</p>
+            <p class="text-xl font-bold text-green-400">₦${(totalTransactionCharges + totalActualInterest + totalOverdraftCharges).toLocaleString()}</p>
             <p class="text-xs text-gray-500">All time</p>
           </div>
         </div>
