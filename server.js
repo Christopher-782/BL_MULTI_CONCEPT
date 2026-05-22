@@ -3,12 +3,16 @@ const cors = require("cors");
 const dotenv = require("dotenv").config();
 const path = require("path");
 const mongoose = require("mongoose");
+const rateLimit = require("express-rate-limit"); // ADD THIS
+
 const customerRouter = require("./routes/customerRoutes");
 const staffRouter = require("./routes/staffRoutes");
 const transactionRouter = require("./routes/transactionRoutes");
 const loanRoutes = require("./routes/loanRoutes");
 const reportRoutes = require("./routes/reportRoutes");
+
 const app = express();
+
 mongoose
   .connect(process.env.MONGO)
   .then(() => console.log("MONGO IS CONNECTED"))
@@ -17,6 +21,54 @@ mongoose
 app.use(cors());
 app.use(express.json());
 app.use(express.static("public"));
+
+// ==================== RATE LIMITING ====================
+// General API limiter - 100 requests per 15 minutes per IP
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: 429,
+    message:
+      "Too many requests from this IP, please try again after 15 minutes.",
+  },
+});
+
+// Strict limiter for auth routes - 5 attempts per 15 minutes
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: 429,
+    message: "Too many login attempts, please try again after 15 minutes.",
+  },
+});
+
+// Financial operations limiter - 10 requests per minute
+const financialLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    status: 429,
+    message: "Too many financial operations, please slow down.",
+  },
+});
+
+// Apply general limiter to all API routes
+app.use(generalLimiter);
+
+// Apply stricter limits to specific routes
+app.use("/login", authLimiter);
+app.use("/register", authLimiter);
+// Apply to your transaction routes (adjust paths based on your router definitions)
+app.use("/transactions", financialLimiter);
+// ==================== END RATE LIMITING ====================
 
 // Routes
 app.use("/", staffRouter);
@@ -42,7 +94,6 @@ async function createAdmin() {
       role: "admin",
       status: "active",
     });
-
     console.log("Admin user created");
   }
 }
@@ -50,5 +101,5 @@ async function createAdmin() {
 createAdmin();
 
 app.listen(process.env.PORT, () => {
-  console.log(`Server running on port`);
+  console.log(`Server running on port ${process.env.PORT}`);
 });

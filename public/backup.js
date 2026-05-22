@@ -837,16 +837,16 @@ async function handleQuickTransaction(e) {
   submitBtn.innerHTML =
     '<i class="fas fa-spinner fa-spin mr-2"></i>Processing...';
 
-  // === FIRST DEPOSIT CHARGE RULE FOR QUICK TRANSACTIONS ===
-  const customerBalance = customer.cashBalance || customer.balance || 0;
-  if (type === "deposit" && customerBalance === 0 && charges <= 0) {
-    showNotification(
-      "⚠️ Charges are required for first deposit when account balance is zero. Please enter a charge amount.",
-      "error",
+  // === CHARGE CONFIRMATION PROMPT ===
+  if (charges <= 0) {
+    const proceedWithoutCharges = confirm(
+      `No charges have been entered for this ${type}.\n\nDo you want to proceed without adding charges?`,
     );
-    submitBtn.innerHTML = originalText;
-    submitBtn.disabled = false;
-    return;
+    if (!proceedWithoutCharges) {
+      submitBtn.innerHTML = originalText;
+      submitBtn.disabled = false;
+      return;
+    }
   }
 
   const txnData = {
@@ -1562,18 +1562,42 @@ function renderRepaymentManagement(container) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // 1. Extract all due installments from all active loans
   let dueInstallments = [];
 
   activeLoans.forEach((loan) => {
     const customer = state.customers.find((c) => c.id === loan.customerId);
     if (!customer) return;
 
+    // === OVERDRAFT SPECIAL HANDLING ===
+    if (loan.type === "overdraft") {
+      // Overdraft is a single lump-sum repayment
+      // Check if it has a repayment record or create a virtual one
+      const outstanding = loan.outstandingBalance || loan.totalPayable || 0;
+
+      if (outstanding > 0) {
+        dueInstallments.push({
+          loanId: loan.id,
+          repaymentId: loan.repayments?.[0]?.id || "overdraft-full",
+          customerName: loan.customerName,
+          customerId: loan.customerId,
+          amount: outstanding, // This now INCLUDES charges
+          principalAmount: loan.amount || 0,
+          chargesAmount: loan.processingCharges || 0,
+          dueDate:
+            loan.paymentDeadline || loan.repaymentStartDate || new Date(),
+          type: "overdraft",
+          status:
+            new Date(loan.paymentDeadline) < today ? "overdue" : "pending",
+          isFullSettlement: true,
+        });
+      }
+      return;
+    }
+
+    // Regular loan repayments
     if (loan.repayments && loan.repayments.length > 0) {
       loan.repayments.forEach((repayment) => {
         const dueDate = new Date(repayment.dueDate);
-
-        // If repayment is pending/overdue and the date has passed or is today
         if (repayment.status !== "paid" && dueDate <= today) {
           dueInstallments.push({
             loanId: loan.id,
@@ -1581,16 +1605,18 @@ function renderRepaymentManagement(container) {
             customerName: loan.customerName,
             customerId: loan.customerId,
             amount: repayment.amount,
+            principalAmount: null, // Not applicable for regular loans
+            chargesAmount: null,
             dueDate: repayment.dueDate,
-            type: loan.type, // 'loan' or 'overdraft'
-            status: repayment.status, // 'pending' or 'overdue'
+            type: loan.type,
+            status: repayment.status,
+            isFullSettlement: false,
           });
         }
       });
     }
   });
 
-  // Sort: Overdue first, then by date
   dueInstallments.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
 
   const overdueCount = dueInstallments.filter(
@@ -1605,7 +1631,7 @@ function renderRepaymentManagement(container) {
       <div class="flex justify-between items-center">
         <div>
           <h3 class="text-xl font-bold">Repayment Management</h3>
-          <p class="text-sm text-gray-400">Manually collect outstanding installments</p>
+          <p class="text-sm text-gray-400">Manually collect outstanding installments & overdrafts</p>
         </div>
         <button onclick="refreshData()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors">
           <i class="fas fa-sync-alt mr-2"></i>Refresh
@@ -1616,11 +1642,11 @@ function renderRepaymentManagement(container) {
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div class="glass-panel p-4 rounded-xl border-l-4 border-red-500">
           <p class="text-xs text-gray-400 uppercase font-bold">Total Overdue</p>
-          <p class="text-2xl font-bold text-red-400">${overdueCount} Installments</p>
+          <p class="text-2xl font-bold text-red-400">${overdueCount} Items</p>
         </div>
         <div class="glass-panel p-4 rounded-xl border-l-4 border-yellow-500">
           <p class="text-xs text-gray-400 uppercase font-bold">Due Today</p>
-          <p class="text-2xl font-bold text-yellow-400">${dueTodayCount} Installments</p>
+          <p class="text-2xl font-bold text-yellow-400">${dueTodayCount} Items</p>
         </div>
       </div>
 
@@ -1642,8 +1668,21 @@ function renderRepaymentManagement(container) {
               dueInstallments.length === 0
                 ? `<tr><td colspan="6" class="px-6 py-12 text-center text-gray-500">No pending or overdue repayments found.</td></tr>`
                 : dueInstallments
-                    .map(
-                      (inst) => `
+                    .map((inst) => {
+                      // Overdraft-specific amount display with charges breakdown
+                      const isOverdraft = inst.type === "overdraft";
+                      const amountDisplay = isOverdraft
+                        ? `<div>
+                            <div class="font-mono text-sm text-white">₦${inst.amount.toLocaleString()}</div>
+                            <div class="text-xs text-gray-400 mt-1">
+                              <span class="text-green-400">P: ₦${(inst.principalAmount || 0).toLocaleString()}</span>
+                              <span class="mx-1">+</span>
+                              <span class="text-red-400">C: ₦${(inst.chargesAmount || 0).toLocaleString()}</span>
+                            </div>
+                           </div>`
+                        : `<span class="font-mono text-sm text-white">₦${inst.amount.toLocaleString()}</span>`;
+
+                      return `
                 <tr class="hover:bg-gray-800/30 transition-colors">
                   <td class="px-6 py-4 whitespace-nowrap">
                     <div class="text-sm font-medium text-white">${inst.customerName}</div>
@@ -1653,8 +1692,8 @@ function renderRepaymentManagement(container) {
                       ${inst.type}
                     </span>
                   </td>
-                  <td class="px-6 py-4 whitespace-nowrap font-mono text-sm text-white">
-                    ₦${inst.amount.toLocaleString()}
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    ${amountDisplay}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-400">
                     ${formatSimpleDate(inst.dueDate)}
@@ -1667,12 +1706,12 @@ function renderRepaymentManagement(container) {
                   <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <button onclick="handleManualCollection('${inst.loanId}', '${inst.repaymentId}', '${inst.customerId}', ${inst.amount}, '${inst.customerName}')" 
                       class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition-all flex items-center justify-center ml-auto gap-2">
-                      <i class="fas fa-hand-holding-usd"></i> Collect
+                      <i class="fas fa-hand-holding-usd"></i> ${isOverdraft ? "Settle" : "Collect"}
                     </button>
                   </td>
                 </tr>
-              `,
-                    )
+              `;
+                    })
                     .join("")
             }
           </tbody>
@@ -1683,7 +1722,6 @@ function renderRepaymentManagement(container) {
 
   container.innerHTML = html;
 }
-
 /**
  * The logic to perform the manual collection
  * This performs a withdrawal from the customer and marks the loan repayment as paid
@@ -1695,50 +1733,66 @@ async function handleManualCollection(
   amount,
   customerName,
 ) {
-  // 1. Confirmation
-  if (
-    !confirm(`Confirm Collection: 
-  
-  This will deduct ₦${amount.toLocaleString()} from ${customerName}'s balance and record it as a loan repayment.
-  
-  Continue?`)
-  ) {
+  // Get the full loan details to check for charges
+  const loan = state.loans?.find((l) => l.id === loanId);
+  const isOverdraft = loan?.type === "overdraft";
+
+  // For overdraft: amount should be the FULL totalPayable (principal + charges)
+  // The backend needs to know this is a complete payoff including charges
+  const totalToCollect = isOverdraft ? loan?.totalPayable || amount : amount;
+
+  const confirmationMessage = isOverdraft
+    ? `Confirm Overdraft Collection:\n\nThis will deduct ₦${totalToCollect.toLocaleString()} from ${customerName}'s balance.\n\nBreakdown:\n• Principal: ₦${(loan?.amount || 0).toLocaleString()}\n• Processing Charges: ₦${(loan?.processingCharges || 0).toLocaleString()}\n• Total Due: ₦${totalToCollect.toLocaleString()}\n\nThis will fully settle the overdraft. Continue?`
+    : `Confirm Collection: \n\nThis will deduct ₦${amount.toLocaleString()} from ${customerName}'s balance and record it as a loan repayment.\n\nContinue?`;
+
+  if (!confirm(confirmationMessage)) {
     return;
   }
 
   try {
-    showNotification("Processing collection...", "info");
-
-    // 2. Call your existing PATCH route
-    // We send 'paidBy' to match your backend: const { paidBy, paymentAmount } = req.body;
-    await api.patch(`/loans/${loanId}/repayments/${repaymentId}`, {
-      paidBy: state.currentUser.name,
-      paymentAmount: amount, // Passing this explicitly ensures the backend uses the correct amount
-    });
-
-    // 3. Success Handling
     showNotification(
-      `Successfully collected ₦${amount.toLocaleString()} from ${customerName}`,
-      "success",
+      isOverdraft
+        ? "Processing overdraft settlement..."
+        : "Processing collection...",
+      "info",
     );
 
-    // 4. Refresh all data
-    // This will update the Customer Balance, the Loan Status, and the Transaction History
-    await loadAllData();
+    // Enhanced payload for overdraft - explicitly marks as full settlement
+    const payload = {
+      paidBy: state.currentUser.name,
+      paymentAmount: amount, // The installment/repayment amount
+      isFullSettlement: isOverdraft, // Flag for backend to handle charges
+      totalPayable: isOverdraft ? loan?.totalPayable : undefined,
+      processingCharges: isOverdraft ? loan?.processingCharges : undefined,
+    };
 
-    // 5. Re-render the Repayment Management page to clear the item from the list
+    await api.patch(`/loans/${loanId}/repayments/${repaymentId}`, payload);
+
+    // Success notification with breakdown
+    if (isOverdraft) {
+      showNotification(
+        `✅ Overdraft fully settled! ₦${totalToCollect.toLocaleString()} collected from ${customerName}\n` +
+          `(Principal: ₦${(loan?.amount || 0).toLocaleString()} + Charges: ₦${(loan?.processingCharges || 0).toLocaleString()})`,
+        "success",
+      );
+    } else {
+      showNotification(
+        `Successfully collected ₦${amount.toLocaleString()} from ${customerName}`,
+        "success",
+      );
+    }
+
+    await loadAllData();
     renderRepaymentManagement(document.getElementById("contentArea"));
   } catch (error) {
     console.error("Manual collection error:", error);
-
-    // 6. Error Handling
-    // This will catch your backend's "Insufficient funds" error and show it to the Admin
     const errorMsg =
       error.response?.data?.error ||
       "Failed to collect payment. Check customer balance.";
     showNotification(errorMsg, "error");
   }
-} // ==================== CUSTOMERS VIEW ====================
+}
+// ==================== CUSTOMERS VIEW ====================
 
 function renderCustomers(container) {
   let displayedCustomers = state.customers;
@@ -2132,10 +2186,16 @@ function showAddCustomerModal() {
             <input type="tel" name="phone" required class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 text-base" placeholder="08012345678">
             <p class="text-xs text-green-400 mt-1">✓ SMS alerts will be sent to this number</p>
           </div>
+          
+          <!-- Initial Deposit (Requires Approval) -->
           <div>
-            <label class="block text-sm font-medium text-gray-300 mb-2">Initial Deposit (₦)</label>
+            <label class="block text-sm font-medium text-gray-300 mb-2">
+              Initial Deposit (₦) <span class="text-xs text-yellow-400">- Requires admin approval</span>
+            </label>
             <input type="number" name="initialDeposit" id="adminInitialDeposit" min="0" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 text-base" placeholder="0.00" oninput="updateAdminRegistrationNet()">
+            <p class="text-xs text-yellow-400 mt-1">⚠️ This will create a pending deposit request. Customer balance starts at ₦0 until approved.</p>
           </div>
+          
           <div>
             <label class="block text-sm font-medium text-gray-300 mb-2">
               Charge Amount (₦) <span class="text-xs text-yellow-400">- Optional, default 0</span>
@@ -2145,22 +2205,31 @@ function showAddCustomerModal() {
               class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white font-mono focus:border-blue-500 transition-colors text-base" 
               placeholder="0.00">
           </div>
+          
           <div id="adminNetDisplay" class="p-3 bg-gray-800/50 border border-gray-700 rounded-xl hidden">
             <div class="flex justify-between items-center">
-              <span class="text-sm text-gray-400">Net Balance:</span>
+              <span class="text-sm text-gray-400">Net Amount (after approval):</span>
               <span class="text-xl font-bold font-mono text-blue-400" id="adminNetAmount">₦0</span>
             </div>
           </div>
+          
           <div id="adminChargeWarning" class="hidden p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
             <p class="text-xs text-red-300 flex items-center gap-2">
               <i class="fas fa-exclamation-circle"></i>
               <span>Charges cannot exceed the initial deposit</span>
             </p>
           </div>
+          
           <div>
             <label class="block text-sm font-medium text-gray-300 mb-2">Address</label>
             <textarea name="address" rows="2" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 text-base"></textarea>
           </div>
+          
+          <div class="flex items-center gap-3 p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+            <i class="fas fa-info-circle text-blue-400"></i>
+            <p class="text-xs text-blue-200">Customer will be created with ₦0 balance. If initial deposit is entered, a pending transaction will be submitted for admin approval.</p>
+          </div>
+          
           <div class="flex flex-col sm:flex-row gap-4 pt-4">
             <button type="button" onclick="closeCustomerModal()" class="flex-1 px-6 py-3 border border-gray-600 rounded-xl hover:bg-gray-800">Cancel</button>
             <button type="submit" id="adminSubmitBtn" class="flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl">Add Customer</button>
@@ -2221,6 +2290,16 @@ async function handleAddCustomer(e) {
   const charges = parseFloat(formData.get("charges")) || 0;
   const netBalance = initialDeposit - charges;
 
+  // === CHARGE CONFIRMATION PROMPT FOR INITIAL DEPOSIT ===
+  if (initialDeposit > 0 && charges <= 0) {
+    const proceedWithoutCharges = confirm(
+      `No charges have been entered for this initial deposit.\n\nDo you want to proceed without adding charges?`,
+    );
+    if (!proceedWithoutCharges) {
+      return;
+    }
+  }
+
   if (charges > initialDeposit) {
     showNotification(
       "Charges cannot exceed the initial deposit amount",
@@ -2229,13 +2308,12 @@ async function handleAddCustomer(e) {
     return;
   }
 
+  // Create customer with ZERO balance first
   const customerData = {
     name: formData.get("name"),
     email: formData.get("email"),
     phone: formData.get("phone"),
-    cashBalance: netBalance,
-    initialDeposit: initialDeposit,
-    charges: charges,
+    cashBalance: 0, // Start with 0 - deposit requires approval
     loanBalance: 0,
     address: formData.get("address"),
     staffId: currentStaff?.id,
@@ -2246,14 +2324,44 @@ async function handleAddCustomer(e) {
   try {
     const response = await api.post("/customers", customerData);
     const newCustomer = response.data.customer || response.data;
+
+    // If there's an initial deposit, create a PENDING transaction for admin approval
+    let depositTxn = null;
+    if (initialDeposit > 0) {
+      const txnData = {
+        customerId: newCustomer.id,
+        customerName: newCustomer.name,
+        customerPhone: newCustomer.phone,
+        type: "deposit",
+        amount: initialDeposit,
+        charges: charges,
+        netAmount: netBalance,
+        description: `Initial deposit for new customer ${newCustomer.name}`,
+        status: "pending", // PENDING - requires admin approval
+        requestedBy: state.currentUser.name,
+        requestedById: state.currentUser.id,
+        staffName: state.currentUser.name,
+        staffId: state.currentUser.id,
+        requestedAt: new Date(),
+        date: new Date(),
+        isInitialDeposit: true, // Flag to identify this is initial deposit
+      };
+
+      const txnResponse = await api.post("/transactions", txnData);
+      depositTxn = txnResponse.data;
+    }
+
     await loadAllData();
 
     let successMsg = `✅ Customer added successfully! SMS alerts will be sent to ${newCustomer.phone}`;
+    successMsg += ` | Starting balance: ₦0 (deposit requires approval)`;
+
     if (initialDeposit > 0) {
-      successMsg += ` | Deposit: ₦${initialDeposit.toLocaleString()}`;
+      successMsg += ` | Pending deposit: ₦${initialDeposit.toLocaleString()}`;
       if (charges > 0) {
-        successMsg += ` | Charges: ₦${charges.toLocaleString()} | Net: ₦${netBalance.toLocaleString()}`;
+        successMsg += ` | Charges: ₦${charges.toLocaleString()}`;
       }
+      successMsg += ` | Net after approval: ₦${netBalance.toLocaleString()}`;
     }
 
     showNotification(successMsg, "success");
@@ -2266,45 +2374,6 @@ async function handleAddCustomer(e) {
     );
   }
 }
-
-async function handleAddCustomer(e) {
-  e.preventDefault();
-
-  const formData = new FormData(e.target);
-  const currentStaff = state.currentUser;
-
-  const customerData = {
-    name: formData.get("name"),
-    email: formData.get("email"),
-    phone: formData.get("phone"),
-    address: formData.get("address"),
-    cashBalance: 0,
-    loanBalance: 0,
-    staffId: currentStaff?.id,
-    staffName: currentStaff?.name,
-    staffEmail: currentStaff?.email,
-  };
-
-  try {
-    const response = await api.post("/customers", customerData);
-    const newCustomer = response.data.customer || response.data;
-    await loadAllData();
-    showNotification(
-      `✅ Customer added successfully! SMS alerts will be sent to ${newCustomer.phone}`,
-      "success",
-    );
-    closeCustomerModal();
-  } catch (error) {
-    console.error("Error adding customer:", error);
-    showNotification(
-      error.response?.data?.error || "Failed to add customer",
-      "error",
-    );
-  }
-}
-
-// New Customer Form (for staff)
-// ==================== NEW CUSTOMER FORM (for staff) ====================
 
 function renderNewCustomer(container) {
   const html = `
@@ -2336,8 +2405,11 @@ function renderNewCustomer(container) {
               <p class="text-xs text-green-400 mt-1">✓ SMS alerts will be sent to this number for all deposits and withdrawals</p>
             </div>
             <div>
-              <label class="block text-sm font-medium text-gray-300 mb-2">Initial Deposit (₦)</label>
+              <label class="block text-sm font-medium text-gray-300 mb-2">
+                Initial Deposit (₦) <span class="text-xs text-yellow-400">- Requires admin approval</span>
+              </label>
               <input type="number" name="initialDeposit" id="regInitialDeposit" min="0" class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors text-base" placeholder="0.00" oninput="updateRegistrationNet()">
+              <p class="text-xs text-yellow-400 mt-1">⚠️ Customer balance starts at ₦0. Deposit requires admin approval.</p>
             </div>
           </div>
 
@@ -2350,17 +2422,17 @@ function renderNewCustomer(container) {
               oninput="updateRegistrationNet()"
               class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white font-mono focus:border-blue-500 transition-colors text-base" 
               placeholder="0.00">
-            <p class="text-xs text-gray-400 mt-1">This charge will be deducted from the initial deposit</p>
+            <p class="text-xs text-gray-400 mt-1">This charge will be deducted from the initial deposit upon approval</p>
           </div>
 
           <!-- Net Amount Display -->
           <div id="regNetDisplay" class="p-4 bg-gradient-to-r from-gray-800 to-gray-800/50 border border-blue-500/30 rounded-xl hidden">
             <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-              <span class="text-gray-300 font-medium text-sm sm:text-base">Net Amount to Customer:</span>
+              <span class="text-gray-300 font-medium text-sm sm:text-base">Net Amount (after approval):</span>
               <span class="text-2xl sm:text-3xl font-bold text-blue-400 font-mono" id="regNetAmount">₦0</span>
             </div>
             <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mt-2 text-xs text-gray-400 gap-1">
-              <span>Initial Deposit - Charges = Net Balance</span>
+              <span>Initial Deposit - Charges = Net Balance (after admin approval)</span>
             </div>
           </div>
 
@@ -2379,7 +2451,7 @@ function renderNewCustomer(container) {
 
           <div class="flex items-center gap-3 p-3 sm:p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
             <i class="fas fa-info-circle text-blue-400 text-sm sm:text-base"></i>
-            <p class="text-xs sm:text-sm text-blue-200">Customer ID will be generated automatically. SMS alerts will be sent for all deposits and withdrawals.</p>
+            <p class="text-xs sm:text-sm text-blue-200">Customer ID will be generated automatically. Account starts with ₦0 balance. Initial deposit (if any) will be submitted as a pending transaction for admin approval.</p>
           </div>
 
           <div class="flex flex-col sm:flex-row gap-4 pt-4">
@@ -2437,6 +2509,16 @@ async function handleNewCustomer(e) {
   const charges = parseFloat(formData.get("charges")) || 0;
   const netBalance = initialDeposit - charges;
 
+  // === CHARGE CONFIRMATION PROMPT FOR INITIAL DEPOSIT ===
+  if (initialDeposit > 0 && charges <= 0) {
+    const proceedWithoutCharges = confirm(
+      `No charges have been entered for this initial deposit.\n\nDo you want to proceed without adding charges?`,
+    );
+    if (!proceedWithoutCharges) {
+      return;
+    }
+  }
+
   // Validate charges don't exceed deposit
   if (charges > initialDeposit) {
     showNotification(
@@ -2450,9 +2532,7 @@ async function handleNewCustomer(e) {
     name: formData.get("fullName"),
     email: formData.get("email"),
     phone: formData.get("phone"),
-    cashBalance: netBalance, // Net amount after charges
-    initialDeposit: initialDeposit, // Original deposit amount (for records)
-    charges: charges, // Charges deducted
+    cashBalance: 0, // Start with 0 - deposit requires approval
     loanBalance: 0,
     address: formData.get("address"),
     staffId: currentStaff?.id,
@@ -2463,14 +2543,44 @@ async function handleNewCustomer(e) {
   try {
     const response = await api.post("/customers", customerData);
     const newCustomer = response.data.customer || response.data;
+
+    // If there's an initial deposit, create a PENDING transaction
+    let depositTxn = null;
+    if (initialDeposit > 0) {
+      const txnData = {
+        customerId: newCustomer.id,
+        customerName: newCustomer.name,
+        customerPhone: newCustomer.phone,
+        type: "deposit",
+        amount: initialDeposit,
+        charges: charges,
+        netAmount: netBalance,
+        description: `Initial deposit for new customer ${newCustomer.name}`,
+        status: "pending", // PENDING - requires admin approval
+        requestedBy: state.currentUser.name,
+        requestedById: state.currentUser.id,
+        staffName: state.currentUser.name,
+        staffId: state.currentUser.id,
+        requestedAt: new Date(),
+        date: new Date(),
+        isInitialDeposit: true,
+      };
+
+      const txnResponse = await api.post("/transactions", txnData);
+      depositTxn = txnResponse.data;
+    }
+
     state.customers.push(newCustomer);
 
     let successMsg = `✅ Customer registered successfully! ID: ${newCustomer.id}\n📱 SMS alerts will be sent to ${newCustomer.phone}`;
+    successMsg += `\n💰 Starting balance: ₦0`;
+
     if (initialDeposit > 0) {
-      successMsg += `\n💰 Deposit: ₦${initialDeposit.toLocaleString()}`;
+      successMsg += `\n⏳ Pending deposit: ₦${initialDeposit.toLocaleString()}`;
       if (charges > 0) {
-        successMsg += ` | Charges: ₦${charges.toLocaleString()} | Net: ₦${netBalance.toLocaleString()}`;
+        successMsg += ` | Charges: ₦${charges.toLocaleString()}`;
       }
+      successMsg += `\n✅ Net after approval: ₦${netBalance.toLocaleString()}`;
     }
 
     showNotification(successMsg, "success");
@@ -2846,21 +2956,23 @@ async function handleNewTransaction(e) {
     return;
   }
 
-  // === FIRST DEPOSIT CHARGE RULE ===
-  // If customer balance is exactly 0 and this is a deposit, charges MUST be included
-  const availableBalance = customer.cashBalance || customer.balance || 0;
-  if (type === "deposit" && availableBalance === 0 && charges <= 0) {
-    showNotification(
-      "⚠️ Charges are required for first deposit when account balance is zero. Please enter a charge amount before submitting.",
-      "error",
+  // === CHARGE CONFIRMATION PROMPT ===
+  if (charges <= 0) {
+    const proceedWithoutCharges = confirm(
+      `No charges have been entered for this ${type}.\n\nDo you want to proceed without adding charges?`,
     );
-    return;
+    if (!proceedWithoutCharges) {
+      return;
+    }
   }
 
   // Check for withdrawal validity (validation only - no state changes)
-  if (type === "withdrawal" && netAmount > availableBalance) {
+  if (
+    type === "withdrawal" &&
+    netAmount > (customer.cashBalance || customer.balance || 0)
+  ) {
     showNotification(
-      `Insufficient funds! Customer balance: ₦${availableBalance.toLocaleString()}. Required: ₦${netAmount.toLocaleString()}`,
+      `Insufficient funds! Customer balance: ₦${(customer.cashBalance || customer.balance || 0).toLocaleString()}. Required: ₦${netAmount.toLocaleString()}`,
       "error",
     );
     return;
@@ -3167,18 +3279,38 @@ function toggleNotifications() {
 }
 
 function checkPendingNotifications() {
-  const pendingCount = state.transactions.filter(
+  const pendingTxnCount = state.transactions.filter(
     (t) => t.status === "pending",
   ).length;
+  const pendingLoanCount =
+    state.loans?.filter((l) => l.status === "pending").length || 0;
+  const totalPending = pendingTxnCount + pendingLoanCount;
+
   const badge = document.getElementById("notifBadge");
-  if (pendingCount > 0 && state.role === "admin") {
+
+  if (totalPending > 0 && state.role === "admin") {
     badge.classList.remove("hidden");
-    state.notifications.push({
-      id: Date.now(),
-      message: `${pendingCount} transactions pending approval`,
-      time: "Just now",
-      unread: true,
-    });
+
+    // Transaction notification
+    if (pendingTxnCount > 0) {
+      state.notifications.push({
+        id: Date.now(),
+        message: `${pendingTxnCount} transaction${pendingTxnCount > 1 ? "s" : ""} pending approval`,
+        time: "Just now",
+        unread: true,
+      });
+    }
+
+    // Loan notification - FIXED
+    if (pendingLoanCount > 0) {
+      state.notifications.push({
+        id: Date.now() + 1,
+        message: `${pendingLoanCount} loan/overdraft request${pendingLoanCount > 1 ? "s" : ""} pending approval`,
+        time: "Just now",
+        unread: true,
+      });
+    }
+
     updateNotificationList();
   }
 }
@@ -3750,10 +3882,6 @@ function renderNewLoanRequest(container) {
           <div>
             <h3 class="text-lg sm:text-xl font-semibold">Request Loan/Overdraft</h3>
             <p class="text-xs sm:text-sm text-gray-400">Submit loan or overdraft request for customer</p>
-            <p class="text-xs text-yellow-400 mt-1">
-              <i class="fas fa-info-circle mr-1"></i>
-              Loans require 40% cash collateral. Overdrafts require 10+ deposits.
-            </p>
           </div>
         </div>
 
@@ -3786,7 +3914,6 @@ function renderNewLoanRequest(container) {
                 </div>
                 <p class="text-xs text-gray-400 mt-1" id="selectedCustomerPhone"></p>
                 <p class="text-xs text-green-400 mt-1">Cash Balance: <span id="selectedCustomerBalance">₦0</span></p>
-                <p class="text-xs text-blue-400 mt-1">Total Deposits: <span id="selectedCustomerDepositCount">0</span></p>
               </div>
               <button type="button" onclick="clearSelectedCustomerForLoan()" class="text-red-400 hover:text-red-300">
                 <i class="fas fa-times"></i>
@@ -3803,7 +3930,7 @@ function renderNewLoanRequest(container) {
               <div class="p-3 sm:p-4 rounded-xl border-2 border-gray-700 peer-checked:border-green-500 peer-checked:bg-green-500/10 transition-all text-center">
                 <i class="fas fa-coins text-green-400 text-xl sm:text-2xl mb-1 sm:mb-2"></i>
                 <p class="font-medium text-sm sm:text-base">Loan</p>
-                <p class="text-xs text-gray-400">Need 40% cash balance</p>
+                <p class="text-xs text-gray-400">Standard loan facility</p>
               </div>
             </label>
             <label class="cursor-pointer">
@@ -3811,64 +3938,43 @@ function renderNewLoanRequest(container) {
               <div class="p-3 sm:p-4 rounded-xl border-2 border-gray-700 peer-checked:border-orange-500 peer-checked:bg-orange-500/10 transition-all text-center">
                 <i class="fas fa-credit-card text-orange-400 text-xl sm:text-2xl mb-1 sm:mb-2"></i>
                 <p class="font-medium text-sm sm:text-base">Overdraft</p>
-                <p class="text-xs text-gray-400">Need 10+ deposits</p>
+                <p class="text-xs text-gray-400">Short-term credit line</p>
               </div>
             </label>
-          </div>
-
-          <!-- Eligibility Check Display -->
-          <div id="eligibilityCheck" class="hidden p-4 bg-gray-800/50 border border-gray-700 rounded-xl">
-            <h4 class="text-sm font-semibold text-gray-300 mb-3">Eligibility Check</h4>
-            <div id="loanEligibility" class="space-y-2">
-              <div class="flex justify-between text-sm">
-                <span class="text-gray-400">Required Balance (40%):</span>
-                <span class="font-mono text-yellow-400" id="requiredBalance">₦0</span>
-              </div>
-              <div class="flex justify-between text-sm">
-                <span class="text-gray-400">Current Balance:</span>
-                <span class="font-mono text-green-400" id="currentBalanceCheck">₦0</span>
-              </div>
-              <div class="flex justify-between text-sm pt-2 border-t border-gray-700">
-                <span class="text-gray-300">Status:</span>
-                <span id="eligibilityStatus" class="font-medium">Checking...</span>
-              </div>
-            </div>
-            <div id="overdraftEligibility" class="hidden space-y-2">
-              <div class="flex justify-between text-sm">
-                <span class="text-gray-400">Required Deposits:</span>
-                <span class="font-mono text-yellow-400">10</span>
-              </div>
-              <div class="flex justify-between text-sm">
-                <span class="text-gray-400">Customer Deposits:</span>
-                <span class="font-mono text-green-400" id="customerDepositCount">0</span>
-              </div>
-              <div class="flex justify-between text-sm pt-2 border-t border-gray-700">
-                <span class="text-gray-300">Status:</span>
-                <span id="overdraftEligibilityStatus" class="font-medium">Checking...</span>
-              </div>
-            </div>
           </div>
 
           <!-- Amount -->
           <div>
             <label class="block text-sm font-medium text-gray-300 mb-2">Requested Amount (₦)</label>
             <input type="number" id="loanAmount" name="amount" required min="1000" step="1000" 
-              oninput="calculateLoanDetails(); checkEligibility();" 
+              oninput="calculateLoanDetails()" 
               class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white text-xl font-mono focus:border-blue-500 transition-colors" 
               placeholder="0.00">
           </div>
 
-          <!-- Interest Rate (Hidden for overdraft - fixed at 40%) -->
-          <div id="interestRateContainer">
+          <!-- Interest Rate - Hidden for Overdraft -->
+          <div id="interestRateContainer" class="hidden">
             <label class="block text-sm font-medium text-gray-300 mb-2">Interest Rate (%)</label>
-            <input type="number" id="interestRate" name="interestRate" required min="0" step="0.5" value="5" 
+            <input type="number" id="interestRate" name="interestRate" min="0" step="0.5" value="5" 
               oninput="calculateLoanDetails()" 
               class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
             <p class="text-xs text-gray-400 mt-1" id="interestRateHint">Interest will be added to the principal amount</p>
           </div>
 
-          <!-- Repayment Period -->
-          <div class="grid grid-cols-2 gap-3 sm:gap-4">
+          <!-- Manual Charges Field (NEW) -->
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">
+              Processing Charges (₦) <span class="text-xs text-red-400">* Required</span>
+            </label>
+            <input type="number" id="processingCharges" name="processingCharges" required min="0" step="0.01"
+              oninput="calculateLoanDetails()"
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white font-mono focus:border-blue-500 transition-colors"
+              placeholder="0.00">
+            <p class="text-xs text-gray-400 mt-1">One-time processing fee added to total payable</p>
+          </div>
+
+          <!-- Repayment Period - Hidden for Overdraft -->
+          <div id="repaymentPeriodContainer" class="grid grid-cols-2 gap-3 sm:gap-4">
             <div>
               <label class="block text-sm font-medium text-gray-300 mb-2">Repayment Period</label>
               <select id="repaymentPeriod" name="repaymentPeriod" onchange="calculateLoanDetails()" 
@@ -3880,16 +3986,26 @@ function renderNewLoanRequest(container) {
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-300 mb-2">Number of Installments</label>
-              <input type="number" id="installments" name="installments" required min="1" max="52" value="4" 
+              <input type="number" id="installments" name="installments" min="1" max="52" value="4" 
                 oninput="calculateLoanDetails()" 
                 class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
             </div>
           </div>
 
-          <!-- Start Date -->
-          <div>
+          <!-- Payment Deadline (NEW - For Overdraft) -->
+          <div id="deadlineContainer" class="hidden">
+            <label class="block text-sm font-medium text-gray-300 mb-2">
+              <i class="fas fa-calendar-times mr-2 text-red-400"></i>Payment Deadline
+            </label>
+            <input type="date" id="paymentDeadline" name="paymentDeadline" 
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
+            <p class="text-xs text-red-400 mt-1">⚠️ Overdraft must be fully repaid by this date. Late payment penalties may apply.</p>
+          </div>
+
+          <!-- Start Date - Hidden for Overdraft -->
+          <div id="startDateContainer">
             <label class="block text-sm font-medium text-gray-300 mb-2">Repayment Start Date</label>
-            <input type="date" id="startDate" name="startDate" required 
+            <input type="date" id="startDate" name="startDate" 
               class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
           </div>
 
@@ -3905,6 +4021,10 @@ function renderNewLoanRequest(container) {
                 <span class="text-gray-400">Interest (at <span id="summaryRate">0</span>%):</span>
                 <span class="font-mono text-yellow-400">₦<span id="summaryInterest">0</span></span>
               </div>
+              <div class="flex justify-between" id="summaryChargesRow">
+                <span class="text-gray-400">Processing Charges <span class="text-red-400">*</span>:</span>
+                <span class="font-mono text-red-400">₦<span id="summaryCharges">0</span></span>
+              </div>
               <div class="flex justify-between pt-2 border-t border-gray-700">
                 <span class="text-gray-300 font-semibold">Total Payable:</span>
                 <span class="font-mono text-green-400 font-bold">₦<span id="summaryTotal">0</span></span>
@@ -3912,6 +4032,10 @@ function renderNewLoanRequest(container) {
               <div class="flex justify-between">
                 <span class="text-gray-400">Installment Amount:</span>
                 <span class="font-mono text-blue-400">₦<span id="summaryInstallment">0</span></span>
+              </div>
+              <div id="deadlineSummary" class="hidden flex justify-between pt-2 border-t border-gray-700">
+                <span class="text-gray-300 font-semibold text-red-400">Payment Deadline:</span>
+                <span class="font-mono text-red-400 font-bold" id="summaryDeadline">-</span>
               </div>
             </div>
           </div>
@@ -3929,18 +4053,10 @@ function renderNewLoanRequest(container) {
               class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-blue-500 transition-colors"></textarea>
           </div>
 
-          <!-- Warning for ineligible -->
-          <div id="ineligibleWarning" class="hidden p-4 bg-red-500/10 border border-red-500/20 rounded-xl">
-            <p class="text-sm text-red-300 flex items-center gap-2">
-              <i class="fas fa-exclamation-circle"></i>
-              <span id="ineligibleText">Customer does not meet eligibility criteria</span>
-            </p>
-          </div>
-
           <div class="flex items-center gap-3 p-3 sm:p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-xl">
             <i class="fas fa-exclamation-triangle text-yellow-500 text-sm sm:text-base"></i>
             <p class="text-xs sm:text-sm text-yellow-200">
-              This request will require admin approval. Loans: customer must have 40% of amount in cash. Overdrafts: customer must have 10+ deposits.
+              This request will require admin approval. No credibility checks are performed - admin will review and approve/reject based on internal criteria.
             </p>
           </div>
 
@@ -4072,27 +4188,52 @@ function checkEligibility() {
 function updateLoanType() {
   const type = document.querySelector('input[name="type"]:checked')?.value;
   const interestContainer = document.getElementById("interestRateContainer");
-  const interestInput = document.getElementById("interestRate");
-  const interestHint = document.getElementById("interestRateHint");
+  const repaymentPeriodContainer = document.getElementById(
+    "repaymentPeriodContainer",
+  );
+  const startDateContainer = document.getElementById("startDateContainer");
+  const deadlineContainer = document.getElementById("deadlineContainer");
+  const deadlineSummary = document.getElementById("deadlineSummary");
+  const loanSummary = document.getElementById("loanSummary");
 
   if (type === "overdraft") {
-    // Overdraft: Fixed 6.45% interest, non-editable
-    interestInput.value = 6.45;
-    interestInput.readOnly = true;
-    interestInput.classList.add("bg-gray-700", "cursor-not-allowed");
-    interestHint.textContent = "Fixed at 6.45% for overdraft facilities";
-    interestHint.classList.add("text-orange-400");
+    // Overdraft: Hide interest, repayment period, installments, start date
+    if (interestContainer) interestContainer.classList.add("hidden");
+    if (repaymentPeriodContainer)
+      repaymentPeriodContainer.classList.add("hidden");
+    if (startDateContainer) startDateContainer.classList.add("hidden");
+
+    // Show deadline for overdraft
+    if (deadlineContainer) deadlineContainer.classList.remove("hidden");
+    if (deadlineSummary) deadlineSummary.classList.remove("hidden");
+
+    // Hide loan summary for overdraft (no installments to calculate)
+    if (loanSummary) loanSummary.classList.add("hidden");
+
+    // Set default deadline to 30 days from now
+    const thirtyDays = new Date();
+    thirtyDays.setDate(thirtyDays.getDate() + 30);
+    const deadlineInput = document.getElementById("paymentDeadline");
+    if (deadlineInput && !deadlineInput.value) {
+      deadlineInput.value = thirtyDays.toISOString().split("T")[0];
+      deadlineInput.min = new Date().toISOString().split("T")[0];
+    }
   } else {
-    // Loan: Configurable interest
-    interestInput.value = 5;
-    interestInput.readOnly = false;
-    interestInput.classList.remove("bg-gray-700", "cursor-not-allowed");
-    interestHint.textContent = "Interest will be added to the principal amount";
-    interestHint.classList.remove("text-orange-400");
+    // Loan: Show interest, repayment period, installments, start date
+    if (interestContainer) interestContainer.classList.remove("hidden");
+    if (repaymentPeriodContainer)
+      repaymentPeriodContainer.classList.remove("hidden");
+    if (startDateContainer) startDateContainer.classList.remove("hidden");
+
+    // Hide deadline for regular loans
+    if (deadlineContainer) deadlineContainer.classList.add("hidden");
+    if (deadlineSummary) deadlineSummary.classList.add("hidden");
+
+    // Show loan summary for loans
+    if (loanSummary) loanSummary.classList.remove("hidden");
   }
 
   calculateLoanDetails();
-  checkEligibility();
 }
 
 // Enhanced loan submission with validation
@@ -4115,6 +4256,10 @@ async function handleLoanRequest(e) {
     document.getElementById("installments").value,
   );
   const repaymentStartDate = document.getElementById("startDate").value;
+
+  // ✅ FIX: Add .value to get the string, not the DOM element
+  const paymentDeadline = document.getElementById("paymentDeadline")?.value;
+
   const purpose = document.getElementById("purpose").value;
   const notes = document.getElementById("notes").value;
 
@@ -4123,62 +4268,58 @@ async function handleLoanRequest(e) {
     return;
   }
 
-  if (!repaymentStartDate) {
+  // Validate processing charges for overdraft
+  if (type === "overdraft") {
+    const processingCharges = parseFloat(
+      document.getElementById("processingCharges")?.value,
+    );
+    if (isNaN(processingCharges) || processingCharges <= 0) {
+      showNotification(
+        "Processing charges are required for overdraft. Please enter an amount.",
+        "error",
+      );
+      return;
+    }
+  }
+
+  // For loan, start date is required
+  if (type === "loan" && !repaymentStartDate) {
     showNotification("Please select a start date", "error");
     return;
   }
 
-  // Final eligibility check before submission
-  const customer = window.selectedCustomerForLoan;
-
-  if (type === "loan") {
-    const requiredBalance = amount * 0.4;
-    if (customer.balance < requiredBalance) {
-      showNotification(
-        `Loan rejected: Customer needs ₦${requiredBalance.toLocaleString()} (40%) but has ₦${customer.balance.toLocaleString()}`,
-        "error",
-      );
-      return;
-    }
-  } else if (type === "overdraft") {
-    if (customer.depositCount < 10) {
-      showNotification(
-        `Overdraft rejected: Customer needs 10+ deposits but only has ${customer.depositCount}`,
-        "error",
-      );
-      return;
-    }
+  // For overdraft, deadline is required
+  if (type === "overdraft" && !paymentDeadline) {
+    showNotification(
+      "Please set a payment deadline for the overdraft",
+      "error",
+    );
+    return;
   }
 
   const loanData = {
     customerId: customerId,
-    customerName: customer.name,
-    customerNumber: customer.customerNumber,
-    phone: customer.phone,
+    customerName: window.selectedCustomerForLoan.name,
+    customerNumber: window.selectedCustomerForLoan.customerNumber,
+    phone: window.selectedCustomerForLoan.phone,
     type: type,
     amount: amount,
-    interestRate: interestRate,
-    repaymentPeriod: repaymentPeriod,
-    numberOfInstallments: numberOfInstallments,
-    repaymentStartDate: repaymentStartDate,
+    interestRate: type === "loan" ? interestRate : 0,
+    repaymentPeriod: type === "loan" ? repaymentPeriod : null,
+    numberOfInstallments: type === "loan" ? numberOfInstallments : 1,
+    repaymentStartDate: type === "loan" ? repaymentStartDate : null,
+    paymentDeadline: type === "overdraft" ? paymentDeadline : null,
+    processingCharges:
+      parseFloat(document.getElementById("processingCharges")?.value) || 0,
     purpose: purpose,
     notes: notes,
-    // Add eligibility metadata for admin review
-    eligibility: {
-      customerBalance: customer.balance,
-      requiredBalance: type === "loan" ? amount * 0.4 : 0,
-      depositCount: customer.depositCount,
-      requiredDeposits: type === "overdraft" ? 10 : 0,
-      meetsCriteria:
-        type === "loan"
-          ? customer.balance >= amount * 0.4
-          : customer.depositCount >= 10,
-    },
     requestedBy: {
       staffId: state.currentUser?.id || "system",
       staffName: state.currentUser?.name || "System",
     },
   };
+
+  console.log("Sending loan data:", loanData);
 
   try {
     const response = await api.post("/loans", loanData);
@@ -4260,92 +4401,70 @@ function clearSelectedCustomerForLoan() {
 
 function calculateLoanDetails() {
   const amount = parseFloat(document.getElementById("loanAmount").value) || 0;
+  const type = document.querySelector('input[name="type"]:checked')?.value;
+  const processingCharges =
+    parseFloat(document.getElementById("processingCharges")?.value) || 0;
+  const deadlineInput = document.getElementById("paymentDeadline");
+
+  // In calculateLoanDetails(), replace the overdraft section with:
+
+  if (type === "overdraft") {
+    const total = amount + processingCharges;
+
+    // Update deadline display
+    if (deadlineInput?.value) {
+      document.getElementById("summaryDeadline").textContent = new Date(
+        deadlineInput.value,
+      ).toLocaleDateString("en-GB");
+    }
+
+    // Show simplified overdraft summary
+    document.getElementById("summaryPrincipal").textContent =
+      amount.toLocaleString();
+    document.getElementById("summaryRate").textContent = "0"; // No interest for overdraft
+    document.getElementById("summaryInterest").textContent = "0";
+    document.getElementById("summaryCharges").textContent =
+      processingCharges.toLocaleString();
+    document.getElementById("summaryTotal").textContent =
+      total.toLocaleString();
+    document.getElementById("summaryInstallment").textContent = "1 (Lump Sum)";
+
+    // Show/hide charges row
+    const chargesRow = document.getElementById("summaryChargesRow");
+    if (chargesRow) {
+      chargesRow.style.display = processingCharges > 0 ? "flex" : "none";
+    }
+
+    document.getElementById("loanSummary").classList.remove("hidden");
+    return;
+  }
+  // Loan: Calculate with interest and installments
   const rate = parseFloat(document.getElementById("interestRate").value) || 0;
   const installments =
     parseInt(document.getElementById("installments").value) || 1;
+
   const interest = (amount * rate) / 100;
-  const total = amount + interest;
+  const total = amount + interest + processingCharges;
   const installmentAmount = total / installments;
+
   document.getElementById("summaryPrincipal").textContent =
     amount.toLocaleString();
   document.getElementById("summaryRate").textContent = rate;
   document.getElementById("summaryInterest").textContent =
     interest.toLocaleString();
+  document.getElementById("summaryCharges").textContent =
+    processingCharges.toLocaleString();
   document.getElementById("summaryTotal").textContent = total.toLocaleString();
   document.getElementById("summaryInstallment").textContent =
     installmentAmount.toLocaleString();
-  document.getElementById("summaryInstallments").textContent = installments;
+
+  // Show/hide charges row
+  const chargesRow = document.getElementById("summaryChargesRow");
+  if (chargesRow) {
+    chargesRow.style.display = processingCharges > 0 ? "flex" : "none";
+  }
+
   document.getElementById("loanSummary").classList.remove("hidden");
-}
-
-async function handleLoanRequest(e) {
-  e.preventDefault();
-
-  const customerId = document.getElementById("selectedCustomerId").value;
-  if (!customerId) {
-    showNotification("Please select a customer", "error");
-    return;
-  }
-
-  const type = document.querySelector('input[name="type"]:checked').value;
-  const amount = parseFloat(document.getElementById("loanAmount").value);
-  const interestRate = parseFloat(
-    document.getElementById("interestRate").value,
-  );
-  const repaymentPeriod = document.getElementById("repaymentPeriod").value;
-  const numberOfInstallments = parseInt(
-    document.getElementById("installments").value,
-  );
-  const repaymentStartDate = document.getElementById("startDate").value;
-  const purpose = document.getElementById("purpose").value;
-  const notes = document.getElementById("notes").value;
-
-  if (!amount || amount < 1000) {
-    showNotification("Amount must be at least ₦1,000", "error");
-    return;
-  }
-
-  if (!repaymentStartDate) {
-    showNotification("Please select a start date", "error");
-    return;
-  }
-
-  const loanData = {
-    customerId: customerId,
-    customerName: window.selectedCustomerForLoan.name,
-    customerNumber: window.selectedCustomerForLoan.customerNumber,
-    phone: window.selectedCustomerForLoan.phone,
-    type: type,
-    amount: amount,
-    interestRate: interestRate,
-    repaymentPeriod: repaymentPeriod,
-    numberOfInstallments: numberOfInstallments,
-    repaymentStartDate: repaymentStartDate,
-    purpose: purpose,
-    notes: notes,
-    requestedBy: {
-      staffId: state.currentUser?.id || "system",
-      staffName: state.currentUser?.name || "System",
-    },
-  };
-
-  console.log("Sending loan data:", loanData);
-
-  try {
-    const response = await api.post("/loans", loanData);
-    showNotification(
-      `${type === "loan" ? "Loan" : "Overdraft"} request submitted successfully!`,
-      "success",
-    );
-    navigate("my-loans");
-  } catch (error) {
-    console.error("Loan request error:", error);
-    const errorMessage =
-      error.response?.data?.error ||
-      error.response?.data?.message ||
-      "Failed to submit request";
-    showNotification(errorMessage, "error");
-  }
 }
 
 // ==================== ADMIN LOANS VIEW ====================
@@ -4355,6 +4474,8 @@ function renderAdminLoans(container) {
   const activeLoans = state.loans?.filter((l) => l.status === "active") || [];
   const completedLoans =
     state.loans?.filter((l) => l.status === "completed") || [];
+  const rejectedLoans =
+    state.loans?.filter((l) => l.status === "rejected") || [];
 
   const totalInterestRevenue =
     state.loans?.reduce((sum, l) => {
@@ -4406,91 +4527,72 @@ function renderAdminLoans(container) {
         <div class="glass-panel rounded-2xl p-6">
           <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
             <i class="fas fa-clock text-yellow-400"></i>
-            Pending Loan/Overdraft Requests
+            Pending Loan/Overdraft Requests (${pendingLoans.length})
           </h3>
           <div class="space-y-4">
             ${pendingLoans
               .map((loan) => {
+                const isOverdraft = loan.type === "overdraft";
                 const interest = (loan.totalPayable || 0) - (loan.amount || 0);
-                const customer = state.customers.find(
-                  (c) => c.id === loan.customerId,
+                const processingCharges = Number(
+                  loan.processingCharges || loan.processing_charges || 0,
                 );
-                const customerCash =
-                  customer?.cashBalance || customer?.balance || 0;
-
-                // Calculate eligibility
-                const isLoan = loan.type === "loan";
-                const requiredBalance = isLoan ? (loan.amount || 0) * 0.4 : 0;
-                const hasEnoughCash = customerCash >= requiredBalance;
-
-                // Count deposits for overdraft check
-                const depositCount = state.transactions.filter(
-                  (t) =>
-                    t.customerId === loan.customerId &&
-                    t.type === "deposit" &&
-                    t.status === "approved",
-                ).length;
-                const hasEnoughDeposits = depositCount >= 10;
-
-                // Determine if meets criteria
-                const meetsCriteria = isLoan
-                  ? hasEnoughCash
-                  : hasEnoughDeposits;
-                const eligibilityData = loan.eligibility || {};
-
+                console.log("Loan data:", loan);
+                console.log("Processing charges raw:", loan.processingCharges);
                 return `
-                <div class="bg-gray-800/50 p-4 rounded-xl border ${meetsCriteria ? "border-green-500/30" : "border-red-500/30"}">
+                <div class="bg-gray-800/50 p-4 rounded-xl border border-yellow-500/30">
                   <div class="flex flex-wrap justify-between items-start gap-4">
                     <div class="flex-1">
                       <div class="flex items-center gap-3 mb-2">
-                        <span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
+                        <span class="px-2 py-1 rounded text-xs ${isOverdraft ? "bg-orange-500/20 text-orange-400" : "bg-green-500/20 text-green-400"}">
                           ${loan.type.toUpperCase()}
                         </span>
                         <span class="text-sm text-gray-400">Requested by: ${loan.requestedBy?.staffName || "Staff"}</span>
-                        ${
-                          meetsCriteria
-                            ? '<span class="px-2 py-1 rounded text-xs bg-green-500/20 text-green-400"><i class="fas fa-check mr-1"></i>Meets Criteria</span>'
-                            : '<span class="px-2 py-1 rounded text-xs bg-red-500/20 text-red-400"><i class="fas fa-times mr-1"></i>Does Not Meet Criteria</span>'
-                        }
+                        <span class="px-2 py-1 rounded text-xs bg-yellow-500/20 text-yellow-400">
+                          <i class="fas fa-clock mr-1"></i>Pending Approval
+                        </span>
                       </div>
                       <p class="font-semibold text-lg">${loan.customerName}</p>
                       <p class="text-sm text-gray-400">#${loan.customerNumber || "---"} • ${loan.phone || "No phone"}</p>
                       
-                      <!-- Eligibility Details -->
-                      <div class="mt-3 p-3 ${meetsCriteria ? "bg-green-500/10 border-green-500/20" : "bg-red-500/10 border-red-500/20"} rounded-lg border">
-                        <p class="text-xs font-semibold ${meetsCriteria ? "text-green-400" : "text-red-400"} mb-2">
-                          <i class="fas fa-shield-alt mr-1"></i>
-                          ${isLoan ? "Loan Rule: 40% Cash Required" : "Overdraft Rule: 10+ Deposits Required"}
-                        </p>
-                        ${
-                          isLoan
-                            ? `
-                          <div class="space-y-1 text-xs">
-                            <div class="flex justify-between">
-                              <span class="text-gray-400">Required (40% of ₦${(loan.amount || 0).toLocaleString()}):</span>
-                              <span class="font-mono text-yellow-400">₦${requiredBalance.toLocaleString()}</span>
-                            </div>
-                            <div class="flex justify-between">
-                              <span class="text-gray-400">Customer Balance:</span>
-                              <span class="font-mono ${hasEnoughCash ? "text-green-400" : "text-red-400"}">₦${customerCash.toLocaleString()}</span>
-                            </div>
-                          </div>
-                        `
-                            : `
-                          <div class="space-y-1 text-xs">
-                            <div class="flex justify-between">
-                              <span class="text-gray-400">Required Deposits:</span>
-                              <span class="font-mono text-yellow-400">10</span>
-                            </div>
-                            <div class="flex justify-between">
-                              <span class="text-gray-400">Customer Deposits:</span>
-                              <span class="font-mono ${hasEnoughDeposits ? "text-green-400" : "text-red-400"}">${depositCount}</span>
-                            </div>
-                          </div>
-                        `
-                        }
+                      ${
+                        isOverdraft
+                          ? `
+                      <!-- OVERDRAFT PENDING DISPLAY -->
+                      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
+                        <div>
+                          <p class="text-gray-400">Amount</p>
+                          <p class="font-mono font-bold text-green-400">₦${(loan.amount || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p class="text-gray-400">Processing Charges</p>
+                          <p class="font-mono text-red-400">₦${processingCharges.toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p class="text-gray-400">Total to Repay</p>
+                          <p class="font-mono text-blue-400 font-bold">₦${(loan.totalPayable || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p class="text-gray-400">Repayment</p>
+                          <p class="font-mono">1 (Lump Sum)</p>
+                        </div>
                       </div>
                       
+                      ${
+                        loan.paymentDeadline
+                          ? `
+                      <div class="mt-2 p-2 bg-orange-500/10 border border-orange-500/20 rounded-lg">
+                        <p class="text-xs text-orange-400">
+                          <i class="fas fa-calendar-times mr-1"></i>
+                          Payment Deadline: ${new Date(loan.paymentDeadline).toLocaleDateString("en-GB")}
+                        </p>
+                      </div>
+                      `
+                          : ""
+                      }
+                      `
+                          : `
+                      <!-- LOAN PENDING DISPLAY -->
                       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
                         <div>
                           <p class="text-gray-400">Principal</p>
@@ -4500,6 +4602,16 @@ function renderAdminLoans(container) {
                           <p class="text-gray-400">Interest (${loan.interestRate}%)</p>
                           <p class="font-mono text-yellow-400">₦${interest.toLocaleString()}</p>
                         </div>
+                        ${
+                          processingCharges > 0
+                            ? `
+                        <div>
+                          <p class="text-gray-400">Charges</p>
+                          <p class="font-mono text-red-400">₦${processingCharges.toLocaleString()}</p>
+                        </div>
+                        `
+                            : ""
+                        }
                         <div>
                           <p class="text-gray-400">Total to Repay</p>
                           <p class="font-mono text-red-400 font-bold">₦${(loan.totalPayable || 0).toLocaleString()}</p>
@@ -4509,6 +4621,8 @@ function renderAdminLoans(container) {
                           <p class="font-mono">${loan.numberOfInstallments} (${loan.repaymentPeriod})</p>
                         </div>
                       </div>
+                      `
+                      }
                       
                       ${loan.purpose ? `<p class="text-sm text-gray-300 mt-2">Purpose: ${loan.purpose}</p>` : ""}
                     </div>
@@ -4517,8 +4631,8 @@ function renderAdminLoans(container) {
                         <i class="fas fa-times mr-1"></i>Reject
                       </button>
                       <button onclick="showApproveLoanModal('${loan.id}')" 
-                        class="px-4 py-2 ${meetsCriteria ? "bg-green-600 hover:bg-green-500" : "bg-yellow-600 hover:bg-yellow-500"} rounded-lg text-sm">
-                        <i class="fas fa-check mr-1"></i>${meetsCriteria ? "Approve" : "Override Approve"}
+                        class="px-4 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-sm">
+                        <i class="fas fa-check mr-1"></i>Approve
                       </button>
                     </div>
                   </div>
@@ -4544,22 +4658,54 @@ function renderAdminLoans(container) {
           <div class="space-y-4">
             ${activeLoans
               .map((loan) => {
+                const isOverdraft = loan.type === "overdraft";
                 const interest = (loan.totalPayable || 0) - (loan.amount || 0);
                 const progress =
                   ((loan.amountRepaid || 0) / (loan.totalPayable || 1)) * 100;
+                const isOverdue =
+                  loan.paymentDeadline &&
+                  new Date(loan.paymentDeadline) < new Date();
+
                 return `
-                <div class="bg-gray-800/50 p-4 rounded-xl border border-gray-700">
+                <div class="bg-gray-800/50 p-4 rounded-xl border ${isOverdue ? "border-red-500/50" : "border-gray-700"}">
                   <div class="flex flex-wrap justify-between items-start gap-4">
                     <div class="flex-1">
                       <div class="flex items-center gap-3 mb-2">
-                        <span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
+                        <span class="px-2 py-1 rounded text-xs ${isOverdraft ? "bg-orange-500/20 text-orange-400" : "bg-green-500/20 text-green-400"}">
                           ${loan.type.toUpperCase()}
                         </span>
                         <span class="text-xs text-gray-400">Started: ${loan.approvedBy?.approvedAt ? new Date(loan.approvedBy.approvedAt).toLocaleDateString() : "Unknown"}</span>
-                        ${loan.type === "overdraft" ? '<span class="px-2 py-1 rounded text-xs bg-orange-500/20 text-orange-400">40% Interest</span>' : ""}
+                        ${isOverdue ? '<span class="px-2 py-1 rounded text-xs bg-red-500/20 text-red-400 animate-pulse"><i class="fas fa-exclamation-circle mr-1"></i>OVERDUE</span>' : ""}
                       </div>
                       <p class="font-semibold">${loan.customerName}</p>
                       
+                      ${
+                        isOverdraft
+                          ? `
+                      <!-- OVERDRAFT ACTIVE DISPLAY -->
+                      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
+  <div>
+    <p class="text-gray-400">Principal Amount</p>
+    <p class="font-mono text-green-400">₦${(loan.amount || 0).toLocaleString()}</p>
+  </div>
+  <div>
+    <p class="text-gray-400">Processing Charges</p>
+    <p class="font-mono text-red-400">₦${(loan.processingCharges || 0).toLocaleString()}</p>
+  </div>
+  <div>
+    <p class="text-gray-400">Total Outstanding</p>
+    <p class="font-mono text-blue-400 font-bold">₦${(loan.outstandingBalance || loan.totalPayable || 0).toLocaleString()}</p>
+  </div>
+  <div>
+    <p class="text-gray-400">Deadline</p>
+    <p class="font-mono ${isOverdue ? "text-red-400" : "text-orange-400"}">
+      ${loan.paymentDeadline ? new Date(loan.paymentDeadline).toLocaleDateString("en-GB") : "Not set"}
+    </p>
+  </div>
+</div>
+                      `
+                          : `
+                      <!-- LOAN ACTIVE DISPLAY -->
                       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
                         <div>
                           <p class="text-gray-400">Total Payable</p>
@@ -4578,6 +4724,21 @@ function renderAdminLoans(container) {
                           <p class="font-mono text-yellow-400">₦${interest.toLocaleString()}</p>
                         </div>
                       </div>
+                      `
+                      }
+                      
+                      ${
+                        loan.paymentDeadline
+                          ? `
+                      <div class="mt-2 p-2 ${isOverdue ? "bg-red-500/10 border-red-500/20" : "bg-orange-500/10 border-orange-500/20"} border rounded-lg">
+                        <p class="text-xs ${isOverdue ? "text-red-400" : "text-orange-400"}">
+                          <i class="fas fa-calendar-times mr-1"></i>
+                          ${isOverdue ? "OVERDUE since" : "Payment Deadline"}: ${new Date(loan.paymentDeadline).toLocaleDateString("en-GB")}
+                        </p>
+                      </div>
+                      `
+                          : ""
+                      }
                       
                       <div class="mt-3">
                         <div class="flex justify-between text-xs mb-1">
@@ -4603,13 +4764,15 @@ function renderAdminLoans(container) {
   `;
   container.innerHTML = html;
 }
-// In renderAdminLoans function - Update showApproveLoanModal
 function showApproveLoanModal(loanId) {
   const loan = state.loans?.find((l) => l.id === loanId);
   if (!loan) return;
 
-  const interest =
-    loan.totalInterest || (loan.totalPayable || 0) - (loan.amount || 0);
+  const isOverdraft = loan.type === "overdraft";
+  const interest = isOverdraft
+    ? 0
+    : (loan.totalPayable || 0) - (loan.amount || 0);
+  const processingCharges = loan.processingCharges || 0;
   const customer = state.customers.find((c) => c.id === loan.customerId);
   const customerBalance = customer?.cashBalance || customer?.balance || 0;
 
@@ -4617,9 +4780,9 @@ function showApproveLoanModal(loanId) {
     <div id="approveLoanModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
       <div class="bg-gray-900 rounded-2xl p-4 sm:p-8 max-w-md w-full mx-auto animate-slideIn">
         <div class="flex justify-between items-center mb-4 sm:mb-6">
-          <h3 class="text-lg sm:text-xl font-semibold text-green-400">
+          <h3 class="text-lg sm:text-xl font-semibold ${isOverdraft ? "text-orange-400" : "text-green-400"}">
             <i class="fas fa-hand-holding-usd mr-2"></i>
-            Approve Loan
+            Approve ${isOverdraft ? "Overdraft" : "Loan"}
           </h3>
           <button onclick="closeApproveLoanModal()" class="text-gray-400 hover:text-white p-2">
             <i class="fas fa-times text-lg"></i>
@@ -4644,6 +4807,41 @@ function showApproveLoanModal(loanId) {
             </div>
           </div>
           
+          ${
+            isOverdraft
+              ? `
+          <!-- OVERDRAFT DETAILS -->
+          <div class="bg-orange-500/10 border border-orange-500/30 p-3 rounded-lg">
+            <p class="text-sm text-orange-400 mb-2">Overdraft Details</p>
+            <div class="space-y-1 text-sm">
+              <div class="flex justify-between">
+                <span>Principal:</span>
+                <span class="font-mono text-green-400">₦${(loan.amount || 0).toLocaleString()}</span>
+              </div>
+              <div class="flex justify-between">
+                <span>Processing Charges:</span>
+                <span class="font-mono text-red-400">₦${processingCharges.toLocaleString()}</span>
+              </div>
+              <div class="flex justify-between pt-2 border-t border-gray-700 font-bold">
+                <span>Total to Repay:</span>
+                <span class="font-mono text-blue-400">₦${(loan.totalPayable || 0).toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+          
+          <div class="bg-red-500/10 border border-red-500/30 p-3 rounded-lg">
+            <div class="flex items-start gap-2">
+              <i class="fas fa-calendar-times text-red-400 mt-0.5"></i>
+              <div class="text-sm">
+                <p class="font-semibold text-red-400">Payment Deadline</p>
+                <p class="font-mono text-lg font-bold">${loan.paymentDeadline ? new Date(loan.paymentDeadline).toLocaleDateString("en-GB") : "Not set"}</p>
+                <p class="text-xs text-red-300 mt-1">Must be fully repaid by this date</p>
+              </div>
+            </div>
+          </div>
+              `
+              : `
+          <!-- LOAN DETAILS -->
           <div class="bg-gray-800/50 p-3 rounded-lg">
             <p class="text-sm text-gray-400 mb-2">Repayment Details</p>
             <div class="space-y-1 text-sm">
@@ -4655,6 +4853,16 @@ function showApproveLoanModal(loanId) {
                 <span>Interest (${loan.interestRate}%):</span>
                 <span class="font-mono text-yellow-400">₦${interest.toLocaleString()}</span>
               </div>
+              ${
+                processingCharges > 0
+                  ? `
+              <div class="flex justify-between">
+                <span>Processing Charges:</span>
+                <span class="font-mono text-red-400">₦${processingCharges.toLocaleString()}</span>
+              </div>
+              `
+                  : ""
+              }
               <div class="flex justify-between pt-2 border-t border-gray-700 font-bold">
                 <span>Total to Repay:</span>
                 <span class="font-mono text-blue-400">₦${(loan.totalPayable || 0).toLocaleString()}</span>
@@ -4669,24 +4877,18 @@ function showApproveLoanModal(loanId) {
                 <p class="font-semibold mb-1">How it works:</p>
                 <p>✓ ₦${(loan.amount || 0).toLocaleString()} will be <strong class="text-green-400">ADDED</strong> to customer's cash balance</p>
                 <p>✓ Customer will repay in ${loan.numberOfInstallments} ${loan.repaymentPeriod}ly installments</p>
-                <p>✓ <strong class="text-yellow-400">50% of future deposits</strong> will be automatically deducted for loan repayment</p>
                 <p>✓ Each installment: ₦${(loan.installmentAmount || 0).toLocaleString()}</p>
               </div>
             </div>
           </div>
-          
-          <div class="bg-yellow-500/10 border border-yellow-500/30 p-3 rounded-lg">
-            <p class="text-xs text-yellow-300">
-              <i class="fas fa-robot mr-1"></i>
-              <strong>Auto-Debit Active:</strong> When customer makes deposits, 50% goes toward loan repayment until fully paid.
-            </p>
-          </div>
+          `
+          }
           
           <div class="flex gap-4 pt-4">
             <button onclick="closeApproveLoanModal()" class="flex-1 px-6 py-3 border border-gray-600 rounded-xl hover:bg-gray-800">
               Cancel
             </button>
-            <button onclick="approveLoan('${loan.id}')" class="flex-1 px-6 py-3 bg-green-600 hover:bg-green-500 rounded-xl">
+            <button onclick="approveLoan('${loan.id}')" class="flex-1 px-6 py-3 ${isOverdraft ? "bg-orange-600 hover:bg-orange-500" : "bg-green-600 hover:bg-green-500"} rounded-xl">
               <i class="fas fa-check mr-2"></i>Approve & Disburse
             </button>
           </div>
@@ -4703,6 +4905,8 @@ function showApproveLoanModal(loanId) {
 // Update approveLoan function to call the backend correctly
 async function approveLoan(loanId) {
   try {
+    const loan = state.loans?.find((l) => l.id === loanId);
+
     const response = await api.patch(`/loans/${loanId}/approve`, {
       approvedBy: {
         id: state.currentUser.id,
@@ -4710,10 +4914,23 @@ async function approveLoan(loanId) {
       },
     });
 
-    showNotification(
-      `✅ Loan approved! ₦${response.data.loan.amount.toLocaleString()} disbursed to customer.`,
-      "success",
-    );
+    // FIXED: Add notification for loan approval
+    const notifMessage =
+      loan?.type === "overdraft"
+        ? `✅ Overdraft approved! ₦${response.data.loan.amount.toLocaleString()} disbursed to ${loan.customerName}. Deadline: ${loan.paymentDeadline ? new Date(loan.paymentDeadline).toLocaleDateString("en-GB") : "Not set"}`
+        : `✅ Loan approved! ₦${response.data.loan.amount.toLocaleString()} disbursed to ${loan.customerName}.`;
+
+    showNotification(notifMessage, "success");
+
+    // Add to notifications panel
+    state.notifications.unshift({
+      id: Date.now(),
+      message: `Loan approved: ₦${response.data.loan.amount.toLocaleString()} to ${loan?.customerName || "customer"}`,
+      time: "Just now",
+      unread: true,
+    });
+    updateNotificationList();
+
     closeApproveLoanModal();
     await loadAllData();
     navigate("loans");
@@ -4732,12 +4949,29 @@ function closeApproveLoanModal() {
 
 async function rejectLoan(loanId) {
   const reason = prompt("Reason for rejection (optional):");
+  const loan = state.loans?.find((l) => l.id === loanId);
+
   try {
     await api.patch(`/loans/${loanId}/reject`, {
       rejectedBy: { id: state.currentUser.id, name: state.currentUser.name },
       reason,
     });
-    showNotification("Loan request rejected", "error");
+
+    // FIXED: Add notification for rejection
+    showNotification(
+      `❌ ${loan?.type === "overdraft" ? "Overdraft" : "Loan"} request for ${loan?.customerName || "customer"} rejected${reason ? `: ${reason}` : ""}`,
+      "error",
+    );
+
+    // Add to notifications panel
+    state.notifications.unshift({
+      id: Date.now(),
+      message: `${loan?.type === "overdraft" ? "Overdraft" : "Loan"} rejected: ${loan?.customerName || "customer"}${reason ? ` - ${reason}` : ""}`,
+      time: "Just now",
+      unread: true,
+    });
+    updateNotificationList();
+
     await loadAllData();
     navigate("loans");
   } catch (error) {
@@ -4932,7 +5166,170 @@ function renderMyLoans(container) {
     state.loans?.filter(
       (l) => l.requestedBy?.staffId === state.currentUser?.id,
     ) || [];
-  const html = `<div class="space-y-6 animate-fade-in px-4 sm:px-0"><div class="glass-panel rounded-2xl p-6"><h3 class="text-lg font-semibold mb-4">My Loan Requests</h3>${myLoans.length === 0 ? `<div class="text-center py-8 text-gray-400"><i class="fas fa-hand-holding-usd text-4xl mb-3"></i><p>You haven't submitted any loan or overdraft requests yet</p><button onclick="navigate('loan-request')" class="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm">Request Loan/Overdraft</button></div>` : `<div class="space-y-4">${myLoans.map((loan) => `<div class="bg-gray-800/50 p-4 rounded-xl border border-gray-700"><div class="flex flex-wrap justify-between items-start gap-4"><div class="flex-1"><div class="flex items-center gap-3 mb-2"><span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">${loan.type.toUpperCase()}</span><span class="px-2 py-1 rounded text-xs ${loan.status === "pending" ? "bg-yellow-500/20 text-yellow-400" : loan.status === "active" ? "bg-green-500/20 text-green-400" : loan.status === "completed" ? "bg-blue-500/20 text-blue-400" : "bg-red-500/20 text-red-400"}">${loan.status.toUpperCase()}</span></div><p class="font-semibold">${loan.customerName}</p><div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm"><div><p class="text-gray-400">Amount</p><p class="font-mono text-green-400">₦${loan.amount.toLocaleString()}</p></div><div><p class="text-gray-400">Interest</p><p class="font-mono">${loan.interestRate}%</p></div><div><p class="text-gray-400">Total Payable</p><p class="font-mono text-blue-400">₦${loan.totalPayable.toLocaleString()}</p></div><div><p class="text-gray-400">Installments</p><p class="font-mono">${loan.numberOfInstallments} (${loan.repaymentPeriod})</p></div></div>${loan.status === "active" ? `<div class="mt-3 p-3 bg-gray-900/50 rounded-lg"><p class="text-sm text-gray-300 mb-2">Repayment Progress</p><div class="w-full bg-gray-700 rounded-full h-2"><div class="bg-green-500 h-2 rounded-full" style="width: ${(loan.amountRepaid / loan.totalPayable) * 100 || 0}%"></div></div><div class="flex justify-between text-xs mt-1"><span>₦${loan.amountRepaid.toLocaleString()} repaid</span><span>₦${loan.outstandingBalance.toLocaleString()} remaining</span></div></div>` : ""}${loan.purpose ? `<p class="text-sm text-gray-300 mt-2">Purpose: ${loan.purpose}</p>` : ""}</div></div></div>`).join("")}</div>`}</div></div>`;
+
+  const html = `<div class="space-y-6 animate-fade-in px-4 sm:px-0">
+    <div class="glass-panel rounded-2xl p-6">
+      <h3 class="text-lg font-semibold mb-4">My Loan Requests</h3>
+      ${
+        myLoans.length === 0
+          ? `
+        <div class="text-center py-8 text-gray-400">
+          <i class="fas fa-hand-holding-usd text-4xl mb-3"></i>
+          <p>You haven't submitted any loan or overdraft requests yet</p>
+          <button onclick="navigate('loan-request')" class="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm">Request Loan/Overdraft</button>
+        </div>
+      `
+          : `
+        <div class="space-y-4">
+          ${myLoans
+            .map((loan) => {
+              const isOverdue =
+                loan.paymentDeadline &&
+                new Date(loan.paymentDeadline) < new Date() &&
+                loan.status === "active";
+              const progress =
+                ((loan.amountRepaid || 0) / (loan.totalPayable || 1)) * 100;
+
+              // OVERDRAFT SPECIFIC CALCULATIONS
+              const isOverdraft = loan.type === "overdraft";
+              const processingCharges = loan.processingCharges || 0;
+              const totalWithCharges = loan.amount + processingCharges;
+
+              return `<div class="bg-gray-800/50 p-4 rounded-xl border ${isOverdue ? "border-red-500/50" : "border-gray-700"}">
+              <div class="flex flex-wrap justify-between items-start gap-4">
+                <div class="flex-1">
+                  <div class="flex items-center gap-3 mb-2">
+                    <span class="px-2 py-1 rounded text-xs ${isOverdraft ? "bg-orange-500/20 text-orange-400" : "bg-green-500/20 text-green-400"}">
+                      ${loan.type.toUpperCase()}
+                    </span>
+                    <span class="px-2 py-1 rounded text-xs ${loan.status === "pending" ? "bg-yellow-500/20 text-yellow-400" : loan.status === "active" ? "bg-green-500/20 text-green-400" : loan.status === "completed" ? "bg-blue-500/20 text-blue-400" : "bg-red-500/20 text-red-400"}">
+                      ${loan.status.toUpperCase()}
+                    </span>
+                    ${isOverdue ? '<span class="px-2 py-1 rounded text-xs bg-red-500/20 text-red-400 animate-pulse"><i class="fas fa-exclamation-circle mr-1"></i>OVERDUE</span>' : ""}
+                  </div>
+                  <p class="font-semibold">${loan.customerName}</p>
+                  
+                  ${
+                    isOverdraft
+                      ? `
+                    <!-- OVERDRAFT DISPLAY -->
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mt-3 text-sm">
+                      <div>
+                        <p class="text-gray-400">Amount</p>
+                        <p class="font-mono text-green-400">₦${loan.amount.toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p class="text-gray-400">Processing Charges</p>
+                        <p class="font-mono text-red-400">₦${processingCharges.toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p class="text-gray-400">Total to Repay</p>
+                        <p class="font-mono text-blue-400 font-bold">₦${totalWithCharges.toLocaleString()}</p>
+                      </div>
+                    </div>
+                    
+                    ${
+                      loan.paymentDeadline
+                        ? `
+                    <div class="mt-3 p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg">
+                      <div class="flex items-center gap-2">
+                        <i class="fas fa-calendar-times text-orange-400"></i>
+                        <div>
+                          <p class="text-sm font-semibold text-orange-400">Payment Deadline</p>
+                          <p class="text-lg font-mono font-bold text-white">${new Date(loan.paymentDeadline).toLocaleDateString("en-GB")}</p>
+                          <p class="text-xs text-gray-400">${Math.ceil((new Date(loan.paymentDeadline) - new Date()) / (1000 * 60 * 60 * 24))} days remaining</p>
+                        </div>
+                      </div>
+                    </div>
+                    `
+                        : ""
+                    }
+                    
+                    <div class="mt-2 p-2 bg-gray-900/50 rounded-lg">
+  <p class="text-xs text-orange-300">
+    <i class="fas fa-info-circle mr-1"></i>
+    Overdraft must be repaid in full by the deadline. Processing charges apply.
+  </p>
+</div>
+                  `
+                      : `
+                    <!-- REGULAR LOAN DISPLAY -->
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
+                      <div>
+                        <p class="text-gray-400">Amount</p>
+                        <p class="font-mono text-green-400">₦${loan.amount.toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p class="text-gray-400">Interest</p>
+                        <p class="font-mono">${loan.interestRate}%</p>
+                      </div>
+                      <div>
+                        <p class="text-gray-400">Total Payable</p>
+                        <p class="font-mono text-blue-400">₦${loan.totalPayable.toLocaleString()}</p>
+                      </div>
+                      <div>
+                        <p class="text-gray-400">Installments</p>
+                        <p class="font-mono">${loan.numberOfInstallments} (${loan.repaymentPeriod})</p>
+                      </div>
+                    </div>
+                  `
+                  }
+                  
+                  ${
+                    loan.paymentDeadline && !isOverdraft
+                      ? `
+                  <div class="mt-2 p-2 ${isOverdue ? "bg-red-500/10 border-red-500/20" : "bg-orange-500/10 border-orange-500/20"} border rounded-lg">
+                    <p class="text-xs ${isOverdue ? "text-red-400" : "text-orange-400"}">
+                      <i class="fas fa-calendar-times mr-1"></i>
+                      ${isOverdue ? "OVERDUE - Deadline was" : "Payment Deadline"}: ${new Date(loan.paymentDeadline).toLocaleDateString("en-GB")}
+                    </p>
+                  </div>
+                  `
+                      : ""
+                  }
+                  
+                  ${
+                    loan.status === "active"
+                      ? `
+                  <div class="mt-3 p-3 bg-gray-900/50 rounded-lg">
+                    <p class="text-sm text-gray-300 mb-2">Repayment Progress</p>
+                    <div class="w-full bg-gray-700 rounded-full h-2">
+                      <div class="bg-green-500 h-2 rounded-full" style="width: ${progress || 0}%"></div>
+                    </div>
+                    <div class="flex justify-between text-xs mt-1">
+                      <span>₦${(loan.amountRepaid || 0).toLocaleString()} repaid</span>
+                      <span>₦${(loan.outstandingBalance || 0).toLocaleString()} remaining</span>
+                    </div>
+                  </div>
+                  `
+                      : ""
+                  }
+                  
+                  ${
+                    loan.status === "pending"
+                      ? `
+                  <div class="mt-2 p-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                    <p class="text-xs text-yellow-400">
+                      <i class="fas fa-clock mr-1"></i>
+                      Awaiting admin approval...
+                    </p>
+                  </div>
+                  `
+                      : ""
+                  }
+                  
+                  ${loan.purpose ? `<p class="text-sm text-gray-300 mt-2">Purpose: ${loan.purpose}</p>` : ""}
+                </div>
+              </div>
+            </div>`;
+            })
+            .join("")}
+        </div>
+      `
+      }
+    </div>
+  </div>`;
+
   container.innerHTML = html;
 }
 
@@ -5014,7 +5411,6 @@ async function renderRevenueReports(container) {
       // Calculate interest from loan repayments in this period
       let totalInterest = 0;
 
-      // Look at all approved loans and sum up interest from repayments made in this period
       allLoans.forEach((loan) => {
         if (loan.repayments && loan.repayments.length > 0) {
           loan.repayments.forEach((repayment) => {
@@ -5031,6 +5427,45 @@ async function renderRevenueReports(container) {
       return totalInterest;
     };
 
+    // Calculate overdraft charges for a period
+    const calculateOverdraftCharges = (period) => {
+      const now = new Date();
+      let startDate;
+      switch (period) {
+        case "daily":
+          startDate = new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate(),
+          );
+          break;
+        case "weekly":
+          startDate = new Date(now);
+          startDate.setDate(now.getDate() - 7);
+          break;
+        case "monthly":
+          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+          break;
+        case "yearly":
+          startDate = new Date(now.getFullYear(), 0, 1);
+          break;
+        default:
+          startDate = new Date(0);
+      }
+
+      // Calculate from overdraft charges revenue transactions
+      const charges = state.transactions
+        .filter(
+          (t) =>
+            t.type === "overdraft_charges_revenue" &&
+            t.status === "approved" &&
+            new Date(t.date) >= startDate,
+        )
+        .reduce((sum, t) => sum + (t.amount || 0), 0);
+
+      return charges;
+    };
+
     // Calculate transaction charges for each period
     const dailyTxnCharges = calculateTransactionCharges("daily");
     const weeklyTxnCharges = calculateTransactionCharges("weekly");
@@ -5042,6 +5477,12 @@ async function renderRevenueReports(container) {
     const weeklyLoanInterest = calculateLoanInterestCollected("weekly");
     const monthlyLoanInterest = calculateLoanInterestCollected("monthly");
     const yearlyLoanInterest = calculateLoanInterestCollected("yearly");
+
+    // Calculate overdraft charges for each period
+    const dailyOverdraftCharges = calculateOverdraftCharges("daily");
+    const weeklyOverdraftCharges = calculateOverdraftCharges("weekly");
+    const monthlyOverdraftCharges = calculateOverdraftCharges("monthly");
+    const yearlyOverdraftCharges = calculateOverdraftCharges("yearly");
 
     // Calculate totals from all data
     const totalTransactionCharges = state.transactions
@@ -5069,12 +5510,21 @@ async function renderRevenueReports(container) {
       return sum;
     }, 0);
 
-    // Calculate total revenue
+    // Calculate total overdraft charges from transactions
+    const totalOverdraftCharges = state.transactions
+      .filter(
+        (t) =>
+          t.type === "overdraft_charges_revenue" && t.status === "approved",
+      )
+      .reduce((sum, t) => sum + (t.amount || 0), 0);
+
+    // Calculate total revenue for each period
     const totalRevenue = {
-      daily: dailyTxnCharges + dailyLoanInterest,
-      weekly: weeklyTxnCharges + weeklyLoanInterest,
-      monthly: monthlyTxnCharges + monthlyLoanInterest,
-      yearly: yearlyTxnCharges + yearlyLoanInterest,
+      daily: dailyTxnCharges + dailyLoanInterest + dailyOverdraftCharges,
+      weekly: weeklyTxnCharges + weeklyLoanInterest + weeklyOverdraftCharges,
+      monthly:
+        monthlyTxnCharges + monthlyLoanInterest + monthlyOverdraftCharges,
+      yearly: yearlyTxnCharges + yearlyLoanInterest + yearlyOverdraftCharges,
     };
 
     // Get counts for display
@@ -5137,6 +5587,10 @@ async function renderRevenueReports(container) {
                 <span>📈 Interest:</span>
                 <span class="text-green-400">₦${dailyLoanInterest.toLocaleString()}</span>
               </div>
+              <div class="flex justify-between">
+                <span>💳 OD Charges:</span>
+                <span class="text-orange-400">₦${dailyOverdraftCharges.toLocaleString()}</span>
+              </div>
             </div>
           </div>
           
@@ -5154,6 +5608,10 @@ async function renderRevenueReports(container) {
               <div class="flex justify-between">
                 <span>📈 Interest:</span>
                 <span class="text-green-400">₦${weeklyLoanInterest.toLocaleString()}</span>
+              </div>
+              <div class="flex justify-between">
+                <span>💳 OD Charges:</span>
+                <span class="text-orange-400">₦${weeklyOverdraftCharges.toLocaleString()}</span>
               </div>
             </div>
           </div>
@@ -5173,6 +5631,10 @@ async function renderRevenueReports(container) {
                 <span>📈 Interest:</span>
                 <span class="text-green-400">₦${monthlyLoanInterest.toLocaleString()}</span>
               </div>
+              <div class="flex justify-between">
+                <span>💳 OD Charges:</span>
+                <span class="text-orange-400">₦${monthlyOverdraftCharges.toLocaleString()}</span>
+              </div>
             </div>
           </div>
           
@@ -5191,6 +5653,10 @@ async function renderRevenueReports(container) {
                 <span>📈 Interest:</span>
                 <span class="text-green-400">₦${yearlyLoanInterest.toLocaleString()}</span>
               </div>
+              <div class="flex justify-between">
+                <span>💳 OD Charges:</span>
+                <span class="text-orange-400">₦${yearlyOverdraftCharges.toLocaleString()}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -5199,7 +5665,7 @@ async function renderRevenueReports(container) {
         <div class="glass-panel rounded-2xl p-6">
           <h3 class="text-lg font-semibold mb-4">Revenue Breakdown</h3>
           
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
             <div class="bg-gradient-to-br from-blue-500/10 to-blue-600/5 p-5 rounded-xl border border-blue-500/20">
               <div class="flex items-center justify-between mb-3">
                 <h4 class="text-sm font-medium text-gray-400">
@@ -5230,6 +5696,18 @@ async function renderRevenueReports(container) {
                 <span class="px-2 py-1 bg-green-500/20 text-green-300 rounded-full">Active: ${activeLoansCount}</span>
                 <span class="px-2 py-1 bg-blue-500/20 text-blue-300 rounded-full">Completed: ${completedLoansCount}</span>
               </div>
+            </div>
+
+            <div class="bg-gradient-to-br from-orange-500/10 to-orange-600/5 p-5 rounded-xl border border-orange-500/20">
+              <div class="flex items-center justify-between mb-3">
+                <h4 class="text-sm font-medium text-gray-400">
+                  <i class="fas fa-credit-card text-orange-400 mr-2"></i>
+                  Overdraft Charges
+                </h4>
+                <i class="fas fa-hand-holding-usd text-orange-400 text-2xl"></i>
+              </div>
+              <p class="text-4xl font-bold text-orange-400">₦${totalOverdraftCharges.toLocaleString()}</p>
+              <p class="text-xs text-gray-500 mt-2">From settled overdrafts</p>
             </div>
           </div>
 
@@ -5271,14 +5749,17 @@ async function renderRevenueReports(container) {
               <span class="text-gray-300">Revenue Composition</span>
             </div>
             <div class="w-full bg-gray-700 rounded-full h-8 overflow-hidden flex">
-              <div class="bg-blue-500 h-full transition-all duration-500 flex items-center justify-center text-xs text-white font-medium" style="width: ${totalTransactionCharges + totalActualInterest > 0 ? (totalTransactionCharges / (totalTransactionCharges + totalActualInterest)) * 100 : 0}%">
-                ${totalTransactionCharges + totalActualInterest > 0 ? `${((totalTransactionCharges / (totalTransactionCharges + totalActualInterest)) * 100).toFixed(0)}%` : "0%"}
+              <div class="bg-blue-500 h-full transition-all duration-500 flex items-center justify-center text-xs text-white font-medium" style="width: ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? (totalTransactionCharges / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100 : 0}%">
+                ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? `${((totalTransactionCharges / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100).toFixed(0)}%` : "0%"}
               </div>
-              <div class="bg-green-500 h-full transition-all duration-500 flex items-center justify-center text-xs text-white font-medium" style="width: ${totalTransactionCharges + totalActualInterest > 0 ? (totalActualInterest / (totalTransactionCharges + totalActualInterest)) * 100 : 0}%">
-                ${totalTransactionCharges + totalActualInterest > 0 ? `${((totalActualInterest / (totalTransactionCharges + totalActualInterest)) * 100).toFixed(0)}%` : "0%"}
+              <div class="bg-green-500 h-full transition-all duration-500 flex items-center justify-center text-xs text-white font-medium" style="width: ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? (totalActualInterest / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100 : 0}%">
+                ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? `${((totalActualInterest / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100).toFixed(0)}%` : "0%"}
+              </div>
+              <div class="bg-orange-500 h-full transition-all duration-500 flex items-center justify-center text-xs text-white font-medium" style="width: ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? (totalOverdraftCharges / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100 : 0}%">
+                ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? `${((totalOverdraftCharges / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100).toFixed(0)}%` : "0%"}
               </div>
             </div>
-            <div class="flex gap-6 mt-4 text-sm justify-center">
+            <div class="flex gap-6 mt-4 text-sm justify-center flex-wrap">
               <div class="flex items-center gap-2">
                 <div class="w-4 h-4 bg-blue-500 rounded"></div>
                 <span class="text-gray-300">Transaction Charges: ₦${totalTransactionCharges.toLocaleString()}</span>
@@ -5287,6 +5768,10 @@ async function renderRevenueReports(container) {
                 <div class="w-4 h-4 bg-green-500 rounded"></div>
                 <span class="text-gray-300">Loan Interest: ₦${totalActualInterest.toLocaleString()}</span>
               </div>
+              <div class="flex items-center gap-2">
+                <div class="w-4 h-4 bg-orange-500 rounded"></div>
+                <span class="text-gray-300">Overdraft Charges: ₦${totalOverdraftCharges.toLocaleString()}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -5294,7 +5779,7 @@ async function renderRevenueReports(container) {
         <!-- Recent Revenue Activity -->
         <div class="glass-panel rounded-2xl p-6">
           <h3 class="text-lg font-semibold mb-4">Recent Revenue Activity</h3>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div class="bg-blue-500/10 p-4 rounded-lg border border-blue-500/20">
               <p class="text-xs text-gray-400 mb-2">Last 7 Days</p>
               <div class="flex justify-between items-end">
@@ -5316,6 +5801,17 @@ async function renderRevenueReports(container) {
                 <i class="fas fa-hand-holding-usd text-green-400 text-2xl"></i>
               </div>
               <p class="text-xs text-gray-500 mt-2">from loan repayments</p>
+            </div>
+            <div class="bg-orange-500/10 p-4 rounded-lg border border-orange-500/20">
+              <p class="text-xs text-gray-400 mb-2">Last 7 Days</p>
+              <div class="flex justify-between items-end">
+                <div>
+                  <p class="text-sm text-gray-400">Overdraft Charges</p>
+                  <p class="text-2xl font-bold text-orange-400">₦${weeklyOverdraftCharges.toLocaleString()}</p>
+                </div>
+                <i class="fas fa-credit-card text-orange-400 text-2xl"></i>
+              </div>
+              <p class="text-xs text-gray-500 mt-2">from settled overdrafts</p>
             </div>
           </div>
         </div>
@@ -5342,7 +5838,8 @@ async function renderRevenueReports(container) {
                   <th class="pb-3 px-2">Collected</th>
                   <th class="pb-3 px-2">Progress</th>
                   <th class="pb-3 px-2">Status</th>
-                 </thead>
+                </tr>
+              </thead>
               <tbody class="divide-y divide-gray-800">
                 ${
                   activeAndCompletedLoans.length > 0
@@ -5369,12 +5866,12 @@ async function renderRevenueReports(container) {
                       <td class="py-3 px-2">
                         <div class="font-medium text-sm">${loan.customerName}</div>
                         <div class="text-xs text-gray-500">${loan.customerNumber || "N/A"}</div>
-                        </td>
+                      </td>
                       <td class="py-3 px-2">
                         <span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
                           ${loan.type.toUpperCase()}
                         </span>
-                        </td>
+                      </td>
                       <td class="py-3 px-2 font-mono text-sm">₦${(loan.amount || 0).toLocaleString()}</td>
                       <td class="py-3 px-2 text-sm">${loan.interestRate || 0}%</td>
                       <td class="py-3 px-2 font-mono text-yellow-400 text-sm">₦${expectedInterest.toLocaleString()}</td>
@@ -5388,13 +5885,13 @@ async function renderRevenueReports(container) {
                             <div class="bg-green-500 h-2 rounded-full" style="width: ${collectionPercentage}%"></div>
                           </div>
                         </div>
-                        </td>
+                      </td>
                       <td class="py-3 px-2">
                         <span class="px-2 py-1 rounded text-xs ${getStatusStyle(loan.status)}">
                           ${loan.status}
                         </span>
-                        </td>
-                      </tr>
+                      </td>
+                    </tr>
                   `;
                         })
                         .join("")
@@ -5433,7 +5930,7 @@ async function renderRevenueReports(container) {
           <div class="glass-panel p-4 rounded-xl text-center">
             <i class="fas fa-chart-line text-yellow-400 text-2xl mb-2"></i>
             <p class="text-sm text-gray-400">Total Revenue</p>
-            <p class="text-xl font-bold text-green-400">₦${(totalTransactionCharges + totalActualInterest).toLocaleString()}</p>
+            <p class="text-xl font-bold text-green-400">₦${(totalTransactionCharges + totalActualInterest + totalOverdraftCharges).toLocaleString()}</p>
             <p class="text-xs text-gray-500">All time</p>
           </div>
         </div>
@@ -7066,6 +7563,8 @@ async function checkAuth() {
     }
   }
 }
+
+let customerIsActive;
 
 // Make functions available globally
 window.viewLoanRepaymentSchedule = viewLoanRepaymentSchedule;

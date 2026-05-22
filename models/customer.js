@@ -1,4 +1,3 @@
-// models/customer.js
 const mongoose = require("mongoose");
 
 const customerSchema = new mongoose.Schema(
@@ -10,11 +9,17 @@ const customerSchema = new mongoose.Schema(
     phone: { type: String },
     address: { type: String },
 
-    // BALANCE TRACKING - SEPARATE!
-    cashBalance: { type: Number, default: 0 }, // Actual cash deposits
-    loanBalance: { type: Number, default: 0 }, // Outstanding loan amount
+    // BALANCE TRACKING
+    cashBalance: { type: Number, default: 0 }, // Can go negative with overdraft
+    balance: { type: Number, default: 0 }, // Alias for cashBalance
+    loanBalance: { type: Number, default: 0 }, // Outstanding regular loan amount
     totalLoanAmount: { type: Number, default: 0 }, // Total loans taken
     totalInterestAccrued: { type: Number, default: 0 }, // Total interest on loans
+
+    // OVERDRAFT TRACKING
+    hasActiveOverdraft: { type: Boolean, default: false },
+    activeLoanId: { type: String, default: null }, // Can be loan or overdraft ID
+    hasActiveLoan: { type: Boolean, default: false },
 
     // For quick reference
     status: { type: String, enum: ["active", "inactive"], default: "active" },
@@ -38,6 +43,16 @@ customerSchema.virtual("availableBalance").get(function () {
 // Virtual for net worth (cash minus loans)
 customerSchema.virtual("netWorth").get(function () {
   return this.cashBalance - this.loanBalance;
+});
+
+// Virtual to check if balance is negative (overdraft active)
+customerSchema.virtual("isNegativeBalance").get(function () {
+  return this.cashBalance < 0;
+});
+
+// Virtual for overdraft amount used
+customerSchema.virtual("overdraftAmountUsed").get(function () {
+  return this.cashBalance < 0 ? Math.abs(this.cashBalance) : 0;
 });
 
 module.exports =
