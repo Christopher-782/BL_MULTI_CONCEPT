@@ -488,6 +488,7 @@ exports.rejectLoan = async (req, res) => {
 };
 
 // Process deposit with overdraft auto-debit
+// Process deposit with overdraft auto-debit
 exports.processDepositWithOverdraft = async (
   customerId,
   depositAmount,
@@ -592,6 +593,23 @@ exports.processDepositWithOverdraft = async (
 
           await loan.save({ session });
 
+          // ===== FIX: Update customer balance after auto-debit =====
+          // The customer gets the deposit MINUS the auto-debit amount
+          const newCashBalance =
+            (customer.cashBalance || 0) + remainingForCustomer;
+
+          await Customer.findOneAndUpdate(
+            { id: customerId },
+            {
+              $set: {
+                cashBalance: newCashBalance,
+                balance: newCashBalance,
+              },
+            },
+            { session },
+          );
+          // =======================================================
+
           // Create overdraft repayment transaction
           const overdraftTxn = new Transaction({
             id: "TXN" + Date.now() + Math.random().toString(36).substr(2, 4),
@@ -663,7 +681,22 @@ exports.processDepositWithOverdraft = async (
       }
     }
 
-    await session.abortTransaction();
+    // ===== FIX: No active overdraft - customer gets full net deposit =====
+    const newCashBalance = (customer.cashBalance || 0) + netDeposit;
+
+    await Customer.findOneAndUpdate(
+      { id: customerId },
+      {
+        $set: {
+          cashBalance: newCashBalance,
+          balance: newCashBalance,
+        },
+      },
+      { session },
+    );
+    // ===================================================================
+
+    await session.commitTransaction();
     return {
       success: true,
       originalDeposit: depositAmount,
@@ -681,7 +714,6 @@ exports.processDepositWithOverdraft = async (
     session.endSession();
   }
 };
-
 // Record repayment with FULL overdraft charges tracking
 exports.recordRepayment = async (req, res) => {
   const session = await mongoose.startSession();
