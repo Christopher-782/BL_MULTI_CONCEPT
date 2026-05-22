@@ -351,7 +351,7 @@ async function processDepositWithOverdraft(
 }
 
 // ==========================================================
-// APPROVE TRANSACTION
+// APPROVE TRANSACTION (FIXED - single transaction)
 // ==========================================================
 exports.approveTransaction = async (req, res) => {
   const session = await mongoose.startSession();
@@ -387,38 +387,174 @@ exports.approveTransaction = async (req, res) => {
     let overdraftResult = null;
 
     if (transaction.type === "deposit") {
-      // Check for overdraft auto-debit BEFORE crediting customer
-      overdraftResult = await processDepositWithOverdraft(
-        transaction.customerId,
-        transaction.amount,
-        charges,
-        approvedBy?.name || "Admin",
-      );
+      // ===== AUTO-DEBIT LOGIC MOVED INSIDE SAME SESSION =====
+      const depositAmount = transaction.amount;
+      const netDeposit = depositAmount - charges;
 
-      if (!overdraftResult.success) {
-        await session.abortTransaction();
-        return res.status(500).json({ error: overdraftResult.error });
+      if (customer.hasActiveOverdraft && customer.activeLoanId) {
+        const loan = await Loan.findOne({
+          id: customer.activeLoanId,
+        }).session(session);
+
+        if (loan && loan.status === "active" && loan.type === "overdraft") {
+          const outstanding = loan.outstandingBalance || loan.totalPayable || 0;
+
+          if (outstanding > 0) {
+            const repaymentAmount = Math.min(netDeposit, outstanding);
+            const remainingForCustomer = netDeposit - repaymentAmount;
+
+            // Update loan
+            loan.amountRepaid = (loan.amountRepaid || 0) + repaymentAmount;
+            loan.outstandingBalance = Math.max(
+              0,
+              outstanding - repaymentAmount,
+            );
+
+            // Determine portions
+            const remainingPrincipal =
+              loan.amount - (loan.principalRepaidToDate || 0);
+            const principalPortion = Math.min(
+              repaymentAmount,
+              remainingPrincipal,
+            );
+            const chargesPortion = repaymentAmount - principalPortion;
+
+            // Update repayment record
+            const repayment = loan.repayments[0];
+            repayment.paidAmount =
+              (repayment.paidAmount || 0) + repaymentAmount;
+            repayment.principalPortion =
+              (repayment.principalPortion || 0) + principalPortion;
+            repayment.chargesPortion =
+              (repayment.chargesPortion || 0) + chargesPortion;
+            repayment.paidDate = new Date();
+            repayment.paidBy = approvedBy?.name || "Admin";
+
+            loan.principalRepaidToDate =
+              (loan.principalRepaidToDate || 0) + principalPortion;
+            loan.chargesPaidToDate =
+              (loan.chargesPaidToDate || 0) + chargesPortion;
+
+            let isFullyPaid = false;
+
+            if (
+              loan.outstandingBalance <= 0 ||
+              loan.amountRepaid >= loan.totalPayable
+            ) {
+              loan.status = "completed";
+              loan.completedAt = new Date();
+              loan.outstandingBalance = 0;
+              loan.outstandingPrincipal = 0;
+              loan.outstandingCharges = 0;
+              isFullyPaid = true;
+              repayment.status = "paid";
+
+              // Clear overdraft flags
+              await Customer.findOneAndUpdate(
+                { id: transaction.customerId },
+                {
+                  $set: {
+                    hasActiveOverdraft: false,
+                    activeLoanId: null,
+                    hasActiveLoan: false,
+                  },
+                },
+                { session },
+              );
+            } else {
+              loan.outstandingPrincipal = Math.max(
+                0,
+                loan.amount - loan.principalRepaidToDate,
+              );
+              loan.outstandingCharges = Math.max(
+                0,
+                loan.processingCharges - loan.chargesPaidToDate,
+              );
+            }
+
+            await loan.save({ session });
+
+            // Create overdraft repayment transaction
+            const overdraftTxn = new Transaction({
+              id: "TXN" + Date.now() + Math.random().toString(36).substr(2, 4),
+              customerId: transaction.customerId,
+              customerName: customer.name,
+              customerPhone: customer.phone || null,
+              type: "overdraft_repayment",
+              amount: repaymentAmount,
+              principalPortion,
+              chargesPortion,
+              netAmount: -repaymentAmount,
+              description: `Auto-debit from deposit: Overdraft repayment (Principal: ₦${principalPortion.toLocaleString()}, Charges: ₦${chargesPortion.toLocaleString()})${isFullyPaid ? " - FULLY CLEARED" : ""}`,
+              status: "approved",
+              approvedBy: approvedBy?.name || "Admin",
+              date: new Date().toISOString(),
+              loanId: loan.id,
+              isAutoDebit: true,
+            });
+            await overdraftTxn.save({ session });
+
+            // Create charges revenue transaction
+            if (chargesPortion > 0) {
+              const revenueTxn = new Transaction({
+                id:
+                  "REV" + Date.now() + Math.random().toString(36).substr(2, 4),
+                customerId: transaction.customerId,
+                customerName: customer.name,
+                type: "overdraft_charges_revenue",
+                amount: chargesPortion,
+                netAmount: chargesPortion,
+                description: `Overdraft charges revenue from auto-debit - ${loan.id}`,
+                status: "approved",
+                approvedBy: "System",
+                date: new Date().toISOString(),
+                loanId: loan.id,
+                isRevenue: true,
+                revenueType: "overdraft_charges",
+              });
+              await revenueTxn.save({ session });
+            }
+
+            overdraftResult = {
+              autoDebit: repaymentAmount,
+              remainingForCustomer,
+              overdraftCleared: isFullyPaid,
+              principalPortion,
+              chargesPortion,
+            };
+
+            // Customer gets remaining amount after auto-debit
+            newBalance = (customer.cashBalance || 0) + remainingForCustomer;
+
+            // Mark transaction with auto-debit info
+            transaction.autoDebitAmount = repaymentAmount;
+            transaction.overdraftCleared = isFullyPaid;
+            transaction.remainingAfterAutoDebit = remainingForCustomer;
+            transaction.principalPortion = principalPortion;
+            transaction.chargesPortion = chargesPortion;
+
+            // SMS
+            if (customer.phone) {
+              try {
+                let msg = `VaultFlow: Dear ${customer.name}, ₦${repaymentAmount.toLocaleString()} auto-debited from your ₦${depositAmount.toLocaleString()} deposit for overdraft repayment. `;
+                if (isFullyPaid) msg += `🎉 Overdraft FULLY CLEARED! `;
+                msg += `Outstanding: ₦${loan.outstandingBalance.toLocaleString()}. Available: ₦${remainingForCustomer.toLocaleString()}.`;
+                await smsService.sendSMS({ to: customer.phone, message: msg });
+              } catch (smsError) {
+                console.error("SMS failed:", smsError.message);
+              }
+            }
+          }
+        }
       }
 
-      if (overdraftResult.autoDebit > 0) {
-        // Overdraft auto-debit occurred - customer gets remaining amount
-        newBalance =
-          (customer.cashBalance || 0) + overdraftResult.remainingForCustomer;
-
-        // Mark transaction with auto-debit info
-        transaction.autoDebitAmount = overdraftResult.autoDebit;
-        transaction.overdraftCleared = overdraftResult.overdraftCleared;
-        transaction.remainingAfterAutoDebit =
-          overdraftResult.remainingForCustomer;
-        transaction.principalPortion = overdraftResult.principalPortion;
-        transaction.chargesPortion = overdraftResult.chargesPortion;
-      } else {
-        // No overdraft - normal deposit
+      // No overdraft or no auto-debit
+      if (!overdraftResult) {
         newBalance = (customer.cashBalance || 0) + netAmount;
       }
+      // =====================================================
     } else if (transaction.type === "withdrawal") {
       newBalance = (customer.cashBalance || 0) - netAmount;
-      // Allow negative balance for overdraft customers
       if (newBalance < 0 && !customer.hasActiveOverdraft) {
         await session.abortTransaction();
         return res.status(400).json({
@@ -439,7 +575,7 @@ exports.approveTransaction = async (req, res) => {
     transaction.finalBalance = newBalance;
     await transaction.save({ session });
 
-    // Update customer
+    // Update customer balance
     const updateQuery = customer.id
       ? { id: customer.id }
       : { _id: customer._id };
@@ -461,28 +597,17 @@ exports.approveTransaction = async (req, res) => {
 
     await session.commitTransaction();
 
-    // Send SMS
-    if (customer.phone) {
+    // Send SMS for normal deposit/withdrawal
+    if (customer.phone && !overdraftResult) {
       try {
         if (transaction.type === "deposit") {
-          if (overdraftResult && overdraftResult.autoDebit > 0) {
-            // Custom SMS for auto-debit deposit
-            let msg = `VaultFlow: Dear ${customer.name}, your deposit of ₦${transaction.amount.toLocaleString()} was processed. `;
-            msg += `₦${overdraftResult.autoDebit.toLocaleString()} auto-debited for overdraft repayment. `;
-            if (overdraftResult.overdraftCleared) {
-              msg += `🎉 Overdraft FULLY CLEARED! `;
-            }
-            msg += `Available balance: ₦${newBalance.toLocaleString()}.`;
-            await smsService.sendSMS({ to: customer.phone, message: msg });
-          } else {
-            await smsService.sendCreditAlert(
-              customer.phone,
-              transaction.amount,
-              newBalance,
-              transaction.id,
-              charges,
-            );
-          }
+          await smsService.sendCreditAlert(
+            customer.phone,
+            transaction.amount,
+            newBalance,
+            transaction.id,
+            charges,
+          );
         } else {
           await smsService.sendDebitAlert(
             customer.phone,
@@ -492,15 +617,14 @@ exports.approveTransaction = async (req, res) => {
             charges,
           );
         }
-        console.log(`✅ SMS sent to ${customer.phone}`);
       } catch (smsError) {
-        console.error("❌ SMS failed:", smsError.message);
+        console.error("SMS failed:", smsError.message);
       }
     }
 
-    // Build response message
+    // Build response
     let message = `✅ ${transaction.type === "deposit" ? "Deposit" : "Withdrawal"} approved!`;
-    if (overdraftResult && overdraftResult.autoDebit > 0) {
+    if (overdraftResult) {
       message = `✅ Deposit approved! ₦${overdraftResult.autoDebit.toLocaleString()} auto-debited for overdraft. `;
       if (overdraftResult.overdraftCleared) {
         message += `🎉 Overdraft FULLY CLEARED! `;
@@ -675,5 +799,5 @@ module.exports = {
   approveTransaction: exports.approveTransaction,
   rejectTransaction: exports.rejectTransaction,
   getTransactionsByCustomer: exports.getTransactionsByCustomer,
-  processDepositWithOverdraft: processDepositWithOverdraft,
+  // processDepositWithOverdraft: processDepositWithOverdraft,
 };
