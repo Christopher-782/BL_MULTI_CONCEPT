@@ -351,7 +351,7 @@ async function processDepositWithOverdraft(
 }
 
 // ==========================================================
-// APPROVE TRANSACTION (FIXED - single transaction)
+// APPROVE TRANSACTION (FIXED - single transaction, correct balance)
 // ==========================================================
 exports.approveTransaction = async (req, res) => {
   const session = await mongoose.startSession();
@@ -387,10 +387,15 @@ exports.approveTransaction = async (req, res) => {
     let overdraftResult = null;
 
     if (transaction.type === "deposit") {
-      // ===== AUTO-DEBIT LOGIC MOVED INSIDE SAME SESSION =====
+      // ===== INLINE AUTO-DEBIT LOGIC (same session) =====
       const depositAmount = transaction.amount;
       const netDeposit = depositAmount - charges;
+      let customerBalance = customer.cashBalance || 0;
 
+      // First: add the full net deposit to customer's balance
+      customerBalance += netDeposit;
+
+      // Check if customer has active overdraft
       if (customer.hasActiveOverdraft && customer.activeLoanId) {
         const loan = await Loan.findOne({
           id: customer.activeLoanId,
@@ -400,17 +405,18 @@ exports.approveTransaction = async (req, res) => {
           const outstanding = loan.outstandingBalance || loan.totalPayable || 0;
 
           if (outstanding > 0) {
-            const repaymentAmount = Math.min(netDeposit, outstanding);
-            const remainingForCustomer = netDeposit - repaymentAmount;
+            // Calculate how much goes to overdraft repayment
+            const repaymentAmount = Math.min(customerBalance, outstanding);
+            const remainingForCustomer = customerBalance - repaymentAmount;
 
-            // Update loan
+            // Update overdraft
             loan.amountRepaid = (loan.amountRepaid || 0) + repaymentAmount;
             loan.outstandingBalance = Math.max(
               0,
               outstanding - repaymentAmount,
             );
 
-            // Determine portions
+            // Determine portions (principal first, then charges)
             const remainingPrincipal =
               loan.amount - (loan.principalRepaidToDate || 0);
             const principalPortion = Math.min(
@@ -523,15 +529,15 @@ exports.approveTransaction = async (req, res) => {
               chargesPortion,
             };
 
-            // Customer gets remaining amount after auto-debit
-            newBalance = (customer.cashBalance || 0) + remainingForCustomer;
-
             // Mark transaction with auto-debit info
             transaction.autoDebitAmount = repaymentAmount;
             transaction.overdraftCleared = isFullyPaid;
             transaction.remainingAfterAutoDebit = remainingForCustomer;
             transaction.principalPortion = principalPortion;
             transaction.chargesPortion = chargesPortion;
+
+            // Customer keeps remaining amount after auto-debit
+            newBalance = remainingForCustomer;
 
             // SMS
             if (customer.phone) {
@@ -548,9 +554,9 @@ exports.approveTransaction = async (req, res) => {
         }
       }
 
-      // No overdraft or no auto-debit
+      // No overdraft or no auto-debit occurred
       if (!overdraftResult) {
-        newBalance = (customer.cashBalance || 0) + netAmount;
+        newBalance = customerBalance; // net deposit added to balance
       }
       // =====================================================
     } else if (transaction.type === "withdrawal") {
@@ -575,7 +581,7 @@ exports.approveTransaction = async (req, res) => {
     transaction.finalBalance = newBalance;
     await transaction.save({ session });
 
-    // Update customer balance
+    // Update customer balance ONCE with final correct amount
     const updateQuery = customer.id
       ? { id: customer.id }
       : { _id: customer._id };
@@ -597,7 +603,7 @@ exports.approveTransaction = async (req, res) => {
 
     await session.commitTransaction();
 
-    // Send SMS for normal deposit/withdrawal
+    // Send SMS for normal deposit/withdrawal (no auto-debit)
     if (customer.phone && !overdraftResult) {
       try {
         if (transaction.type === "deposit") {
