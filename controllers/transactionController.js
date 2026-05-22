@@ -354,6 +354,10 @@ async function processDepositWithOverdraft(
 // APPROVE TRANSACTION (FIXED - single transaction, correct balance)
 // ==========================================================
 exports.approveTransaction = async (req, res) => {
+  console.log("=== APPROVE TRANSACTION ===");
+  console.log("Params:", req.params);
+  console.log("Body:", req.body);
+  console.log("Headers:", req.headers["content-type"]);
   const session = await mongoose.startSession();
   session.startTransaction();
 
