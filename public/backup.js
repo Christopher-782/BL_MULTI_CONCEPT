@@ -1176,6 +1176,19 @@ function renderDashboard(container) {
   );
   const netWorth = totalCashBalance - totalLoanBalance;
 
+  // NEW: Calculate overdraft statistics
+  const activeOverdrafts =
+    state.loans?.filter(
+      (l) => l.type === "overdraft" && l.status === "active",
+    ) || [];
+  const totalOverdraftOutstanding = activeOverdrafts.reduce(
+    (sum, l) => sum + (l.outstandingBalance || 0),
+    0,
+  );
+  const customersWithNegativeBalance = state.customers.filter(
+    (c) => (c.cashBalance || 0) < 0,
+  ).length;
+
   const pendingCount = state.transactions.filter(
     (t) => t.status === "pending",
   ).length;
@@ -1195,6 +1208,12 @@ function renderDashboard(container) {
       return sum;
     }, 0) || 0;
 
+  // Calculate auto-debit revenue
+  const totalAutoDebitRevenue =
+    state.transactions
+      ?.filter((t) => t.type === "overdraft_repayment" && t.isAutoDebit)
+      .reduce((sum, t) => sum + (t.amount || 0), 0) || 0;
+
   let stats = [];
 
   if (state.role === "admin") {
@@ -1203,9 +1222,10 @@ function renderDashboard(container) {
         label: "Total Cash Balance",
         value: "₦" + totalCashBalance.toLocaleString(),
         icon: "fa-wallet",
-        color: "blue",
-        trend: "Available Cash",
-        detail: "Actual deposits",
+        color: totalCashBalance >= 0 ? "blue" : "red",
+        trend: totalCashBalance >= 0 ? "Available Cash" : "Negative Balance",
+        detail:
+          totalCashBalance < 0 ? "⚠️ Overdrafts active" : "Actual deposits",
       },
       {
         label: "Total Loan Balance",
@@ -1219,7 +1239,7 @@ function renderDashboard(container) {
         label: "Net Worth",
         value: "₦" + netWorth.toLocaleString(),
         icon: "fa-chart-line",
-        color: "green",
+        color: netWorth >= 0 ? "green" : "red",
         trend: netWorth >= 0 ? "Positive" : "Negative",
         detail: "Cash - Loans",
       },
@@ -1240,6 +1260,14 @@ function renderDashboard(container) {
         detail: "From transactions",
       },
       {
+        label: "Active Overdrafts",
+        value: activeOverdrafts.length,
+        icon: "fa-credit-card",
+        color: "orange",
+        trend: "Negative Balances",
+        detail: `${customersWithNegativeBalance} customers negative`,
+      },
+      {
         label: "Interest Revenue",
         value: "₦" + totalInterestRevenue.toLocaleString(),
         icon: "fa-chart-line",
@@ -1249,6 +1277,14 @@ function renderDashboard(container) {
           state.loans?.filter(
             (l) => l.status === "active" || l.status === "completed",
           ).length + " active/completed loans",
+      },
+      {
+        label: "Auto-Debit Revenue",
+        value: "₦" + totalAutoDebitRevenue.toLocaleString(),
+        icon: "fa-robot",
+        color: "purple",
+        trend: "From deposits",
+        detail: "Overdraft auto-recovery",
       },
     ];
   } else {
@@ -1562,6 +1598,19 @@ function renderRepaymentManagement(container) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  // NEW: Calculate overdraft statistics for summary cards
+  const activeOverdrafts =
+    state.loans?.filter(
+      (l) => l.type === "overdraft" && l.status === "active",
+    ) || [];
+  const totalOverdraftOutstanding = activeOverdrafts.reduce(
+    (sum, l) => sum + (l.outstandingBalance || 0),
+    0,
+  );
+  const customersWithNegativeBalance = state.customers.filter(
+    (c) => (c.cashBalance || 0) < 0,
+  ).length;
+
   let dueInstallments = [];
 
   activeLoans.forEach((loan) => {
@@ -1570,25 +1619,27 @@ function renderRepaymentManagement(container) {
 
     // === OVERDRAFT SPECIAL HANDLING ===
     if (loan.type === "overdraft") {
-      // Overdraft is a single lump-sum repayment
-      // Check if it has a repayment record or create a virtual one
       const outstanding = loan.outstandingBalance || loan.totalPayable || 0;
 
       if (outstanding > 0) {
+        const isOverdue = new Date(loan.paymentDeadline) < today;
+
         dueInstallments.push({
           loanId: loan.id,
           repaymentId: loan.repayments?.[0]?.id || "overdraft-full",
           customerName: loan.customerName,
           customerId: loan.customerId,
-          amount: outstanding, // This now INCLUDES charges
+          customerBalance: customer.cashBalance || 0,
+          amount: outstanding,
           principalAmount: loan.amount || 0,
           chargesAmount: loan.processingCharges || 0,
           dueDate:
             loan.paymentDeadline || loan.repaymentStartDate || new Date(),
           type: "overdraft",
-          status:
-            new Date(loan.paymentDeadline) < today ? "overdue" : "pending",
+          status: isOverdue ? "overdue" : "pending",
           isFullSettlement: true,
+          isAutoDebit: true, // Overdrafts are auto-debited from deposits
+          autoDebitStatus: customer.hasActiveOverdraft ? "Active" : "Inactive",
         });
       }
       return;
@@ -1605,12 +1656,13 @@ function renderRepaymentManagement(container) {
             customerName: loan.customerName,
             customerId: loan.customerId,
             amount: repayment.amount,
-            principalAmount: null, // Not applicable for regular loans
+            principalAmount: null,
             chargesAmount: null,
             dueDate: repayment.dueDate,
             type: loan.type,
             status: repayment.status,
             isFullSettlement: false,
+            isAutoDebit: false,
           });
         }
       });
@@ -1639,7 +1691,7 @@ function renderRepaymentManagement(container) {
       </div>
 
       <!-- Summary Stats -->
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div class="glass-panel p-4 rounded-xl border-l-4 border-red-500">
           <p class="text-xs text-gray-400 uppercase font-bold">Total Overdue</p>
           <p class="text-2xl font-bold text-red-400">${overdueCount} Items</p>
@@ -1647,6 +1699,16 @@ function renderRepaymentManagement(container) {
         <div class="glass-panel p-4 rounded-xl border-l-4 border-yellow-500">
           <p class="text-xs text-gray-400 uppercase font-bold">Due Today</p>
           <p class="text-2xl font-bold text-yellow-400">${dueTodayCount} Items</p>
+        </div>
+        <div class="glass-panel p-4 rounded-xl border-l-4 border-orange-500">
+          <p class="text-xs text-gray-400 uppercase font-bold">Active Overdrafts</p>
+          <p class="text-2xl font-bold text-orange-400">${activeOverdrafts.length}</p>
+          <p class="text-xs text-gray-500 mt-1">₦${totalOverdraftOutstanding.toLocaleString()} outstanding</p>
+        </div>
+        <div class="glass-panel p-4 rounded-xl border-l-4 border-purple-500">
+          <p class="text-xs text-gray-400 uppercase font-bold">Auto-Debit Status</p>
+          <p class="text-2xl font-bold text-purple-400">${customersWithNegativeBalance}</p>
+          <p class="text-xs text-gray-500 mt-1">customers with negative balance</p>
         </div>
       </div>
 
@@ -1679,6 +1741,7 @@ function renderRepaymentManagement(container) {
                               <span class="mx-1">+</span>
                               <span class="text-red-400">C: ₦${(inst.chargesAmount || 0).toLocaleString()}</span>
                             </div>
+                            ${inst.isAutoDebit ? `<div class="text-xs text-purple-400 mt-1"><i class="fas fa-robot mr-1"></i>Auto-debit ${inst.autoDebitStatus}</div>` : ""}
                            </div>`
                         : `<span class="font-mono text-sm text-white">₦${inst.amount.toLocaleString()}</span>`;
 
@@ -1686,6 +1749,7 @@ function renderRepaymentManagement(container) {
                 <tr class="hover:bg-gray-800/30 transition-colors">
                   <td class="px-6 py-4 whitespace-nowrap">
                     <div class="text-sm font-medium text-white">${inst.customerName}</div>
+                    ${isOverdraft && inst.customerBalance < 0 ? `<div class="text-xs text-red-400"><i class="fas fa-exclamation-triangle mr-1"></i>Balance: ₦${inst.customerBalance.toLocaleString()}</div>` : ""}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
                     <span class="px-2 py-1 rounded-full text-[10px] font-bold uppercase ${inst.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
@@ -1722,11 +1786,11 @@ function renderRepaymentManagement(container) {
 
   container.innerHTML = html;
 }
+
 /**
  * The logic to perform the manual collection
  * This performs a withdrawal from the customer and marks the loan repayment as paid
- */
-async function handleManualCollection(
+ */ async function handleManualCollection(
   loanId,
   repaymentId,
   customerId,
@@ -1868,6 +1932,8 @@ function renderCustomers(container) {
                   const loanBalance = customer.loanBalance || 0;
                   const netWorth = cashBalance - loanBalance;
                   const hasActiveLoan = loanBalance > 0;
+                  const hasActiveOverdraft = customer.hasActiveOverdraft;
+                  const isNegativeBalance = cashBalance < 0;
 
                   return `
                     <tr class="hover:bg-gray-800/30 transition-colors" data-cash-balance="${cashBalance}" data-loan-balance="${loanBalance}">
@@ -1908,9 +1974,10 @@ function renderCustomers(container) {
                        </td>
                       <td class="py-4 px-4 sm:px-0">
                         <div>
-                          <span class="text-sm sm:text-base font-mono ${cashBalance >= 0 ? "text-green-400" : "text-red-400"}">
+                          <span class="text-sm sm:text-base font-mono ${isNegativeBalance ? "text-red-400" : cashBalance >= 0 ? "text-green-400" : "text-gray-500"}">
                             ₦${cashBalance.toLocaleString()}
                           </span>
+                          ${isNegativeBalance ? '<span class="text-xs text-red-400 ml-1"><i class="fas fa-exclamation-triangle"></i> Overdraft</span>' : ""}
                           ${cashBalance === 0 ? '<p class="text-xs text-gray-500">No funds</p>' : ""}
                         </div>
                        </td>

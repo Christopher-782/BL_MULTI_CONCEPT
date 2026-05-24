@@ -107,10 +107,49 @@ function initRealTimeUpdates() {
 const api = axios.create({
   baseURL: "https://bl-multi-concept.onrender.com/",
   timeout: 60000,
-  headers: {
-    "Content-Type": "application/json",
-  },
+  headers: { "Content-Type": "application/json" },
 });
+
+// ==================== CACHING LAYER ====================
+const apiCache = new Map();
+const CACHE_TTL = {
+  customers: 30000, // 30s
+  transactions: 15000, // 15s
+  loans: 30000,
+  staff: 60000, // 1m
+};
+
+const cachedApi = {
+  async get(endpoint, options = {}) {
+    const cacheKey = `${endpoint}${JSON.stringify(options.params || {})}`;
+    const cached = apiCache.get(cacheKey);
+
+    // Extract key name (e.g., "/customers" -> "customers")
+    const endpointKey = endpoint.replace(/^\/|\/$/g, "");
+    const ttl = CACHE_TTL[endpointKey] || 10000;
+
+    if (cached && Date.now() - cached.timestamp < ttl) {
+      console.log(`%c[CACHE HIT] ${endpoint}`, "color: #4ade80");
+      return { data: cached.data, fromCache: true };
+    }
+
+    console.log(`%c[CACHE MISS] ${endpoint}`, "color: #facc15");
+    const response = await api.get(endpoint, options);
+    apiCache.set(cacheKey, { data: response.data, timestamp: Date.now() });
+    return { data: response.data, fromCache: false };
+  },
+
+  invalidate(endpointPattern) {
+    console.log(`%c[CACHE INVALIDATE] ${endpointPattern}`, "color: #f87171");
+    for (const [key] of apiCache) {
+      if (key.includes(endpointPattern)) apiCache.delete(key);
+    }
+  },
+
+  clear() {
+    apiCache.clear();
+  },
+};
 
 // Request interceptor to add auth token
 api.interceptors.request.use(
@@ -986,8 +1025,8 @@ async function loadAllData() {
   state.isLoading = true;
   try {
     const [customersRes, transactionsRes] = await Promise.all([
-      api.get("/customers"),
-      api.get("/transactions"),
+      cachedApi.get("/customers"),
+      cachedApi.get("/transactions"),
     ]);
 
     state.customers = customersRes.data;
@@ -2416,6 +2455,9 @@ async function handleAddCustomer(e) {
 
       const txnResponse = await api.post("/transactions", txnData);
       depositTxn = txnResponse.data;
+
+      cachedApi.invalidate("/customers");
+      cachedApi.invalidate("/transactions");
     }
 
     await loadAllData();
@@ -3100,6 +3142,9 @@ async function handleNewTransaction(e) {
 
   try {
     await api.post("/transactions", txnData);
+
+    cachedApi.invalidate("/transactions");
+
     await loadAllData();
 
     let successMessage = `✅ Transaction request submitted! `;
@@ -3200,6 +3245,7 @@ async function processTransaction(
       console.log(`[DEBUG] TARGET URL: /transactions/${txnId}${endpoint}`);
 
       await api.patch(`/transactions/${txnId}${endpoint}`, updateData);
+      cachedApi.invalidate("/transactions");
 
       showNotification(`TRANSACTION REJECTED.`, "error");
 
@@ -4324,7 +4370,6 @@ async function handleLoanRequest(e) {
   );
   const repaymentStartDate = document.getElementById("startDate").value;
 
-  // ✅ FIX: Add .value to get the string, not the DOM element
   const paymentDeadline = document.getElementById("paymentDeadline")?.value;
 
   const purpose = document.getElementById("purpose").value;
@@ -4390,6 +4435,7 @@ async function handleLoanRequest(e) {
 
   try {
     const response = await api.post("/loans", loanData);
+    cachedApi.invalidate("/loans");
     showNotification(
       `${type === "loan" ? "Loan" : "Overdraft"} request submitted successfully!`,
       "success",
@@ -4981,6 +5027,8 @@ async function approveLoan(loanId) {
       },
     });
 
+    cachedApi.invalidate("/loans");
+
     // FIXED: Add notification for loan approval
     const notifMessage =
       loan?.type === "overdraft"
@@ -5023,7 +5071,7 @@ async function rejectLoan(loanId) {
       rejectedBy: { id: state.currentUser.id, name: state.currentUser.name },
       reason,
     });
-
+    cachedApi.invalidate("/loans");
     // FIXED: Add notification for rejection
     showNotification(
       `❌ ${loan?.type === "overdraft" ? "Overdraft" : "Loan"} request for ${loan?.customerName || "customer"} rejected${reason ? `: ${reason}` : ""}`,
@@ -5195,7 +5243,7 @@ async function recordRepayment(loanId, repaymentId) {
       `/loans/${loanId}/repayments/${repaymentId}`,
       { paidBy: state.currentUser.name },
     );
-
+    cachedApi.invalidate("/loans");
     const { customer: updatedCustomer, loan: updatedLoan } = response.data;
 
     // Build detailed message
@@ -7514,6 +7562,7 @@ async function handleEditCustomer(e, id) {
   };
   try {
     await api.put(`/customers/${id}`, updatedData);
+    cachedApi.invalidate("/customers");
     const index = state.customers.findIndex((c) => c.id === id);
     state.customers[index] = { ...state.customers[index], ...updatedData };
     closeModal();
@@ -7580,7 +7629,7 @@ async function checkAuth() {
 
   // Try to verify with server in background
   try {
-    const response = await api.get("/verify");
+    const response = await cachedApi.get("/verify");
     const user = response.data.user || response.data;
     state.currentUser = user;
     state.role = user.role;

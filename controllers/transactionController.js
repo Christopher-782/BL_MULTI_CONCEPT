@@ -154,7 +154,7 @@ exports.createTransaction = async (req, res) => {
 };
 
 // ==========================================================
-// APPROVE TRANSACTION (FIXED - correct balance updates)
+// APPROVE TRANSACTION (FIXED - correct balance = ₦0)
 // ==========================================================
 exports.approveTransaction = async (req, res) => {
   console.log("=== APPROVE TRANSACTION ===");
@@ -344,6 +344,8 @@ exports.approveTransaction = async (req, res) => {
 
             // ==========================================================
             // FIXED: Balance only increases by what customer keeps after auto-debit
+            // WAS: newBalance = (customer.cashBalance || 0) + netDeposit;  ❌
+            // NOW: newBalance = (customer.cashBalance || 0) + remainingForCustomer;  ✅
             // ==========================================================
             newBalance = (customer.cashBalance || 0) + remainingForCustomer;
 
@@ -362,20 +364,15 @@ exports.approveTransaction = async (req, res) => {
         }
       }
 
-      // ==========================================================
-      // FIXED: Only apply normal deposit if no auto-debit occurred
-      // ==========================================================
+      // Normal deposit: only apply if no auto-debit occurred
       if (!overdraftResult) {
-        // Normal deposit: add net deposit to balance
         newBalance = (customer.cashBalance || 0) + netDeposit;
       }
-      // ==========================================================
 
       // ==========================================================
       // WITHDRAWAL
       // ==========================================================
     } else if (transaction.type === "withdrawal") {
-      // Allow withdrawal even with negative balance (overdraft)
       newBalance = (customer.cashBalance || 0) - netAmount;
 
       // Only block if no active overdraft and insufficient funds
@@ -395,7 +392,6 @@ exports.approveTransaction = async (req, res) => {
       transaction.type === "overdraft_charges_revenue" ||
       transaction.type === "interest_revenue"
     ) {
-      // Revenue transactions don't change customer balance
       transaction.status = "approved";
       transaction.approvedBy = approvedBy?.name || "Admin";
       transaction.approvedAt = new Date();
