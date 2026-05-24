@@ -3,7 +3,7 @@ const cors = require("cors");
 const dotenv = require("dotenv").config();
 const path = require("path");
 const mongoose = require("mongoose");
-const rateLimit = require("express-rate-limit"); // ADD THIS
+const rateLimit = require("express-rate-limit");
 
 const customerRouter = require("./routes/customerRoutes");
 const staffRouter = require("./routes/staffRoutes");
@@ -12,6 +12,9 @@ const loanRoutes = require("./routes/loanRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 
 const app = express();
+
+// FIX: Trust proxy (required for Render.com and express-rate-limit)
+app.set("trust proxy", 1);
 
 mongoose
   .connect(process.env.MONGO)
@@ -23,7 +26,6 @@ app.use(express.json());
 app.use(express.static("public"));
 
 // ==================== RATE LIMITING ====================
-// General API limiter - 100 requests per 15 minutes per IP
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -36,7 +38,6 @@ const generalLimiter = rateLimit({
   },
 });
 
-// Strict limiter for auth routes - 5 attempts per 15 minutes
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
@@ -48,7 +49,6 @@ const authLimiter = rateLimit({
   },
 });
 
-// Financial operations limiter - 10 requests per minute
 const financialLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
@@ -60,13 +60,9 @@ const financialLimiter = rateLimit({
   },
 });
 
-// Apply general limiter to all API routes
 app.use(generalLimiter);
-
-// Apply stricter limits to specific routes
 app.use("/login", authLimiter);
 app.use("/register", authLimiter);
-// Apply to your transaction routes (adjust paths based on your router definitions)
 app.use("/transactions", financialLimiter);
 // ==================== END RATE LIMITING ====================
 
