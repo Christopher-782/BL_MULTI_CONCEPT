@@ -154,13 +154,13 @@ exports.createTransaction = async (req, res) => {
 };
 
 // ==========================================================
-// APPROVE TRANSACTION (CORRECTED - single transaction, correct balance)
+// APPROVE TRANSACTION (FIXED - correct balance updates)
 // ==========================================================
 exports.approveTransaction = async (req, res) => {
   console.log("=== APPROVE TRANSACTION ===");
   console.log("Params:", req.params);
   console.log("Body:", req.body);
-  console.log("Headers:", req.headers["content-type"]);
+
   const session = await mongoose.startSession();
   session.startTransaction();
 
@@ -171,6 +171,7 @@ exports.approveTransaction = async (req, res) => {
     const transaction = await Transaction.findOne({
       id: transactionId,
     }).session(session);
+
     if (!transaction) {
       await session.abortTransaction();
       return res.status(404).json({ error: "Transaction not found" });
@@ -193,8 +194,10 @@ exports.approveTransaction = async (req, res) => {
     let newBalance;
     let overdraftResult = null;
 
+    // ==========================================================
+    // DEPOSIT
+    // ==========================================================
     if (transaction.type === "deposit") {
-      // ===== CORRECTED OVERDRAFT AUTO-DEBIT LOGIC =====
       const depositAmount = transaction.amount;
       const netDeposit = depositAmount - charges;
 
@@ -303,7 +306,7 @@ exports.approveTransaction = async (req, res) => {
             });
             await overdraftTxn.save({ session });
 
-            // Create charges revenue transaction
+            // Create charges revenue transaction (internal bank revenue - does NOT affect customer balance)
             if (chargesPortion > 0) {
               const revenueTxn = new Transaction({
                 id:
@@ -339,12 +342,10 @@ exports.approveTransaction = async (req, res) => {
             transaction.principalPortion = principalPortion;
             transaction.chargesPortion = chargesPortion;
 
-            // ==========================================
-            // FIXED: Balance increases by netDeposit, then repayment is deducted
-            // If balance was -5000 and deposit 3000:
-            // newBalance = -5000 + 3000 = -2000
-            // ==========================================
-            newBalance = (customer.cashBalance || 0) + netDeposit;
+            // ==========================================================
+            // FIXED: Balance only increases by what customer keeps after auto-debit
+            // ==========================================================
+            newBalance = (customer.cashBalance || 0) + remainingForCustomer;
 
             // SMS
             if (customer.phone) {
@@ -361,17 +362,20 @@ exports.approveTransaction = async (req, res) => {
         }
       }
 
-      // No overdraft or no auto-debit occurred
+      // ==========================================================
+      // FIXED: Only apply normal deposit if no auto-debit occurred
+      // ==========================================================
       if (!overdraftResult) {
         // Normal deposit: add net deposit to balance
         newBalance = (customer.cashBalance || 0) + netDeposit;
       }
-      // =====================================================
+      // ==========================================================
+
+      // ==========================================================
+      // WITHDRAWAL
+      // ==========================================================
     } else if (transaction.type === "withdrawal") {
-      // ==========================================
-      // CORRECTED: Allow withdrawal even with negative balance (overdraft)
-      // Balance goes more negative to represent debt
-      // ==========================================
+      // Allow withdrawal even with negative balance (overdraft)
       newBalance = (customer.cashBalance || 0) - netAmount;
 
       // Only block if no active overdraft and insufficient funds
@@ -383,6 +387,30 @@ exports.approveTransaction = async (req, res) => {
           requestedAmount: netAmount,
         });
       }
+
+      // ==========================================================
+      // REVENUE TRANSACTIONS (internal - do NOT affect customer balance)
+      // ==========================================================
+    } else if (
+      transaction.type === "overdraft_charges_revenue" ||
+      transaction.type === "interest_revenue"
+    ) {
+      // Revenue transactions don't change customer balance
+      transaction.status = "approved";
+      transaction.approvedBy = approvedBy?.name || "Admin";
+      transaction.approvedAt = new Date();
+      await transaction.save({ session });
+      await session.commitTransaction();
+
+      return res.json({
+        success: true,
+        message: "Revenue transaction approved",
+        transaction: {
+          id: transaction.id,
+          type: transaction.type,
+          status: "approved",
+        },
+      });
     } else {
       await session.abortTransaction();
       return res.status(400).json({ error: "Invalid transaction type" });
