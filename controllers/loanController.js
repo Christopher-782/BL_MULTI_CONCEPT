@@ -267,7 +267,7 @@ exports.getLoansByCustomer = async (req, res) => {
   }
 };
 
-// Approve loan with enhanced overdraft charges support
+// Approve loan with CORRECTED overdraft flow
 exports.approveLoan = async (req, res) => {
   try {
     const { loanId } = req.params;
@@ -322,9 +322,9 @@ exports.approveLoan = async (req, res) => {
       type: isOverdraft ? "overdraft_disbursement" : "loan_disbursement",
       amount: loan.amount,
       charges: 0,
-      netAmount: isOverdraft ? -loan.amount : loan.amount,
+      netAmount: isOverdraft ? loan.amount : loan.amount,
       description: isOverdraft
-        ? `Overdraft disbursement - ${loan.id} (Balance reduced by ₦${loan.amount.toLocaleString()}. Charges: ₦${processingCharges.toLocaleString()} due on settlement)`
+        ? `Overdraft disbursement - ${loan.id} (Balance increased by ₦${loan.amount.toLocaleString()}. Charges: ₦${processingCharges.toLocaleString()} due on settlement)`
         : `Loan disbursement - ${loan.id}`,
       status: "approved",
       requestedBy: approvedBy.name,
@@ -337,8 +337,11 @@ exports.approveLoan = async (req, res) => {
     let smsMessage;
 
     if (isOverdraft) {
-      // OVERDRAFT: Deduct from customer balance (goes negative)
-      newCashBalance = (customer.cashBalance || 0) - loan.amount;
+      // ==========================================
+      // CORRECTED OVERDRAFT: ADD to customer balance
+      // ==========================================
+      // Customer has 1000, gets overdraft 4000 → balance becomes 5000
+      newCashBalance = (customer.cashBalance || 0) + loan.amount;
 
       await Customer.findOneAndUpdate(
         { id: loan.customerId },
@@ -411,7 +414,7 @@ exports.approveLoan = async (req, res) => {
     res.json({
       success: true,
       message: isOverdraft
-        ? `✅ Overdraft approved! ₦${loan.amount.toLocaleString()} deducted from ${customer.name}'s balance. Charges: ₦${processingCharges.toLocaleString()}. Total due: ₦${totalPayable.toLocaleString()}. New balance: ₦${newCashBalance.toLocaleString()}.`
+        ? `✅ Overdraft approved! ₦${loan.amount.toLocaleString()} added to ${customer.name}'s balance. Charges: ₦${processingCharges.toLocaleString()}. Total due: ₦${totalPayable.toLocaleString()}. New balance: ₦${newCashBalance.toLocaleString()}.`
         : `✅ Loan approved! ₦${loan.amount.toLocaleString()} disbursed to ${customer.name}'s account.`,
       loan: {
         id: loan.id,
@@ -487,8 +490,7 @@ exports.rejectLoan = async (req, res) => {
   }
 };
 
-// Process deposit with overdraft auto-debit
-// Process deposit with overdraft auto-debit
+// Process deposit with overdraft auto-debit (CORRECTED FLOW)
 exports.processDepositWithOverdraft = async (
   customerId,
   depositAmount,
@@ -507,7 +509,12 @@ exports.processDepositWithOverdraft = async (
       return { success: false, error: "Customer not found" };
     }
 
-    const netDeposit = depositAmount - charges;
+    // ==========================================
+    // CORRECTED: Deposit goes toward negative balance (debt)
+    // ==========================================
+    // If balance is -5000 and deposit is 3000:
+    // - 3000 goes to overdraft repayment
+    // - Balance becomes -2000
 
     // Check if customer has active overdraft
     if (customer.hasActiveOverdraft && customer.activeLoanId) {
@@ -520,6 +527,8 @@ exports.processDepositWithOverdraft = async (
 
         if (outstanding > 0) {
           // Calculate how much goes to overdraft repayment
+          // The entire deposit (minus charges) goes toward the debt
+          const netDeposit = depositAmount - charges;
           const repaymentAmount = Math.min(netDeposit, outstanding);
           const remainingForCustomer = netDeposit - repaymentAmount;
 
@@ -593,10 +602,13 @@ exports.processDepositWithOverdraft = async (
 
           await loan.save({ session });
 
-          // ===== FIX: Update customer balance after auto-debit =====
-          // The customer gets the deposit MINUS the auto-debit amount
+          // ===== CORRECTED: Update customer balance =====
+          // Balance was negative, add the deposit, then subtract repayment
+          // Or simpler: balance increases by remainingForCustomer
+          // If balance was -5000 and deposit 3000 (all goes to repayment):
+          // new balance = -5000 + 3000 = -2000
           const newCashBalance =
-            (customer.cashBalance || 0) + remainingForCustomer;
+            (customer.cashBalance || 0) + netDeposit - repaymentAmount;
 
           await Customer.findOneAndUpdate(
             { id: customerId },
@@ -608,7 +620,7 @@ exports.processDepositWithOverdraft = async (
             },
             { session },
           );
-          // =======================================================
+          // ================================================
 
           // Create overdraft repayment transaction
           const overdraftTxn = new Transaction({
@@ -681,7 +693,8 @@ exports.processDepositWithOverdraft = async (
       }
     }
 
-    // ===== FIX: No active overdraft - customer gets full net deposit =====
+    // ===== No active overdraft - normal deposit =====
+    const netDeposit = depositAmount - charges;
     const newCashBalance = (customer.cashBalance || 0) + netDeposit;
 
     await Customer.findOneAndUpdate(
@@ -694,7 +707,6 @@ exports.processDepositWithOverdraft = async (
       },
       { session },
     );
-    // ===================================================================
 
     await session.commitTransaction();
     return {
@@ -714,6 +726,7 @@ exports.processDepositWithOverdraft = async (
     session.endSession();
   }
 };
+
 // Record repayment with FULL overdraft charges tracking
 exports.recordRepayment = async (req, res) => {
   const session = await mongoose.startSession();

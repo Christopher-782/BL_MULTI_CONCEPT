@@ -154,204 +154,7 @@ exports.createTransaction = async (req, res) => {
 };
 
 // ==========================================================
-// PROCESS DEPOSIT WITH OVERDRAFT AUTO-DEBIT
-// ==========================================================
-async function processDepositWithOverdraft(
-  customerId,
-  depositAmount,
-  charges = 0,
-  approvedBy = "System",
-) {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-
-  try {
-    const customer = await Customer.findOne({ id: customerId }).session(
-      session,
-    );
-    if (!customer) {
-      await session.abortTransaction();
-      return { success: false, error: "Customer not found" };
-    }
-
-    const netDeposit = depositAmount - charges;
-
-    // Check if customer has active overdraft
-    if (customer.hasActiveOverdraft && customer.activeLoanId) {
-      const loan = await Loan.findOne({ id: customer.activeLoanId }).session(
-        session,
-      );
-
-      if (loan && loan.status === "active" && loan.type === "overdraft") {
-        const outstanding = loan.outstandingBalance || loan.totalPayable || 0;
-
-        if (outstanding > 0) {
-          // Calculate how much goes to overdraft repayment
-          const repaymentAmount = Math.min(netDeposit, outstanding);
-          const remainingForCustomer = netDeposit - repaymentAmount;
-
-          // Update overdraft
-          loan.amountRepaid = (loan.amountRepaid || 0) + repaymentAmount;
-          loan.outstandingBalance = Math.max(0, outstanding - repaymentAmount);
-
-          // Determine portions (principal first, then charges)
-          const remainingPrincipal =
-            loan.amount - (loan.principalRepaidToDate || 0);
-          const principalPortion = Math.min(
-            repaymentAmount,
-            remainingPrincipal,
-          );
-          const chargesPortion = repaymentAmount - principalPortion;
-
-          // Update repayment record
-          const repayment = loan.repayments[0];
-          repayment.paidAmount = (repayment.paidAmount || 0) + repaymentAmount;
-          repayment.principalPortion =
-            (repayment.principalPortion || 0) + principalPortion;
-          repayment.chargesPortion =
-            (repayment.chargesPortion || 0) + chargesPortion;
-          repayment.paidDate = new Date();
-          repayment.paidBy = approvedBy;
-
-          loan.principalRepaidToDate =
-            (loan.principalRepaidToDate || 0) + principalPortion;
-          loan.chargesPaidToDate =
-            (loan.chargesPaidToDate || 0) + chargesPortion;
-
-          let isFullyPaid = false;
-
-          // Check if fully repaid
-          if (
-            loan.outstandingBalance <= 0 ||
-            loan.amountRepaid >= loan.totalPayable
-          ) {
-            loan.status = "completed";
-            loan.completedAt = new Date();
-            loan.outstandingBalance = 0;
-            loan.outstandingPrincipal = 0;
-            loan.outstandingCharges = 0;
-            isFullyPaid = true;
-
-            repayment.status = "paid";
-
-            // Clear overdraft flags
-            await Customer.findOneAndUpdate(
-              { id: customerId },
-              {
-                $set: {
-                  hasActiveOverdraft: false,
-                  activeLoanId: null,
-                  hasActiveLoan: false,
-                },
-              },
-              { session },
-            );
-          } else {
-            // Update outstanding amounts
-            loan.outstandingPrincipal = Math.max(
-              0,
-              loan.amount - loan.principalRepaidToDate,
-            );
-            loan.outstandingCharges = Math.max(
-              0,
-              loan.processingCharges - loan.chargesPaidToDate,
-            );
-          }
-
-          await loan.save({ session });
-
-          // Create overdraft repayment transaction
-          const overdraftTxn = new Transaction({
-            id: "TXN" + Date.now() + Math.random().toString(36).substr(2, 4),
-            customerId,
-            customerName: customer.name,
-            customerPhone: customer.phone || null,
-            type: "overdraft_repayment",
-            amount: repaymentAmount,
-            principalPortion,
-            chargesPortion,
-            netAmount: -repaymentAmount,
-            description: `Auto-debit from deposit: Overdraft repayment (Principal: ₦${principalPortion.toLocaleString()}, Charges: ₦${chargesPortion.toLocaleString()})${isFullyPaid ? " - FULLY CLEARED" : ""}`,
-            status: "approved",
-            approvedBy,
-            date: new Date().toISOString(),
-            loanId: loan.id,
-            isAutoDebit: true,
-          });
-          await overdraftTxn.save({ session });
-
-          // Create charges revenue transaction if charges portion exists
-          if (chargesPortion > 0) {
-            const revenueTxn = new Transaction({
-              id: "REV" + Date.now() + Math.random().toString(36).substr(2, 4),
-              customerId,
-              customerName: customer.name,
-              type: "overdraft_charges_revenue",
-              amount: chargesPortion,
-              netAmount: chargesPortion,
-              description: `Overdraft charges revenue from auto-debit - ${loan.id}`,
-              status: "approved",
-              approvedBy: "System",
-              date: new Date().toISOString(),
-              loanId: loan.id,
-              isRevenue: true,
-              revenueType: "overdraft_charges",
-            });
-            await revenueTxn.save({ session });
-          }
-
-          await session.commitTransaction();
-
-          // SMS notification
-          if (customer.phone) {
-            try {
-              let msg = `VaultFlow: Dear ${customer.name}, ₦${repaymentAmount.toLocaleString()} auto-debited from your ₦${depositAmount.toLocaleString()} deposit for overdraft repayment. `;
-              if (isFullyPaid) {
-                msg += `🎉 Overdraft FULLY CLEARED! `;
-              }
-              msg += `Outstanding: ₦${loan.outstandingBalance.toLocaleString()}. Available: ₦${remainingForCustomer.toLocaleString()}.`;
-              await smsService.sendSMS({ to: customer.phone, message: msg });
-            } catch (smsError) {
-              console.error("SMS failed:", smsError.message);
-            }
-          }
-
-          return {
-            success: true,
-            originalDeposit: depositAmount,
-            netDeposit,
-            autoDebit: repaymentAmount,
-            remainingForCustomer,
-            overdraftCleared: isFullyPaid,
-            loan,
-            principalPortion,
-            chargesPortion,
-          };
-        }
-      }
-    }
-
-    await session.abortTransaction();
-    return {
-      success: true,
-      originalDeposit: depositAmount,
-      netDeposit,
-      autoDebit: 0,
-      remainingForCustomer: netDeposit,
-      overdraftCleared: false,
-      loan: null,
-    };
-  } catch (error) {
-    await session.abortTransaction();
-    console.error("Process deposit with overdraft error:", error);
-    return { success: false, error: error.message };
-  } finally {
-    session.endSession();
-  }
-}
-
-// ==========================================================
-// APPROVE TRANSACTION (FIXED - single transaction, correct balance)
+// APPROVE TRANSACTION (CORRECTED - single transaction, correct balance)
 // ==========================================================
 exports.approveTransaction = async (req, res) => {
   console.log("=== APPROVE TRANSACTION ===");
@@ -391,13 +194,9 @@ exports.approveTransaction = async (req, res) => {
     let overdraftResult = null;
 
     if (transaction.type === "deposit") {
-      // ===== INLINE AUTO-DEBIT LOGIC (same session) =====
+      // ===== CORRECTED OVERDRAFT AUTO-DEBIT LOGIC =====
       const depositAmount = transaction.amount;
       const netDeposit = depositAmount - charges;
-      let customerBalance = customer.cashBalance || 0;
-
-      // First: add the full net deposit to customer's balance
-      customerBalance += netDeposit;
 
       // Check if customer has active overdraft
       if (customer.hasActiveOverdraft && customer.activeLoanId) {
@@ -410,8 +209,8 @@ exports.approveTransaction = async (req, res) => {
 
           if (outstanding > 0) {
             // Calculate how much goes to overdraft repayment
-            const repaymentAmount = Math.min(customerBalance, outstanding);
-            const remainingForCustomer = customerBalance - repaymentAmount;
+            const repaymentAmount = Math.min(netDeposit, outstanding);
+            const remainingForCustomer = netDeposit - repaymentAmount;
 
             // Update overdraft
             loan.amountRepaid = (loan.amountRepaid || 0) + repaymentAmount;
@@ -540,8 +339,12 @@ exports.approveTransaction = async (req, res) => {
             transaction.principalPortion = principalPortion;
             transaction.chargesPortion = chargesPortion;
 
-            // Customer keeps remaining amount after auto-debit
-            newBalance = remainingForCustomer;
+            // ==========================================
+            // FIXED: Balance increases by netDeposit, then repayment is deducted
+            // If balance was -5000 and deposit 3000:
+            // newBalance = -5000 + 3000 = -2000
+            // ==========================================
+            newBalance = (customer.cashBalance || 0) + netDeposit;
 
             // SMS
             if (customer.phone) {
@@ -560,11 +363,18 @@ exports.approveTransaction = async (req, res) => {
 
       // No overdraft or no auto-debit occurred
       if (!overdraftResult) {
-        newBalance = customerBalance; // net deposit added to balance
+        // Normal deposit: add net deposit to balance
+        newBalance = (customer.cashBalance || 0) + netDeposit;
       }
       // =====================================================
     } else if (transaction.type === "withdrawal") {
+      // ==========================================
+      // CORRECTED: Allow withdrawal even with negative balance (overdraft)
+      // Balance goes more negative to represent debt
+      // ==========================================
       newBalance = (customer.cashBalance || 0) - netAmount;
+
+      // Only block if no active overdraft and insufficient funds
       if (newBalance < 0 && !customer.hasActiveOverdraft) {
         await session.abortTransaction();
         return res.status(400).json({
@@ -764,50 +574,418 @@ exports.getTransactionStats = async (req, res) => {
       },
     ]);
 
-    const pendingCount = await Transaction.countDocuments({
-      status: "pending",
+    const formatStats = (stats) => {
+      const result = {
+        deposits: { count: 0, totalAmount: 0, totalCharges: 0 },
+        withdrawals: { count: 0, totalAmount: 0, totalCharges: 0 },
+        overdraft_repayments: { count: 0, totalAmount: 0, totalCharges: 0 },
+      };
+      stats.forEach((s) => {
+        if (result[s._id]) {
+          result[s._id] = {
+            count: s.count,
+            totalAmount: s.totalAmount,
+            totalCharges: s.totalCharges,
+          };
+        }
+      });
+      return result;
+    };
+
+    res.json({
+      success: true,
+      today: formatStats(todayStats),
+      thisMonth: formatStats(monthStats),
+    });
+  } catch (error) {
+    console.error("Get transaction stats error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// ==========================================================
+// GET PENDING TRANSACTIONS (for admin approval queue)
+// ==========================================================
+exports.getPendingTransactions = async (req, res) => {
+  try {
+    const transactions = await Transaction.find({ status: "pending" })
+      .sort({ requestedAt: -1 })
+      .limit(100);
+
+    res.json({
+      success: true,
+      count: transactions.length,
+      transactions,
+    });
+  } catch (error) {
+    console.error("Get pending transactions error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// ==========================================================
+// GET TRANSACTIONS BY STAFF (for staff history)
+// ==========================================================
+exports.getTransactionsByStaff = async (req, res) => {
+  try {
+    const { staffId } = req.params;
+    const transactions = await Transaction.find({
+      $or: [{ requestedById: staffId }, { staffId: staffId }],
+    }).sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      count: transactions.length,
+      transactions,
+    });
+  } catch (error) {
+    console.error("Get transactions by staff error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// ==========================================================
+// GET SINGLE TRANSACTION
+// ==========================================================
+exports.getTransactionById = async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    const transaction = await Transaction.findOne({ id: transactionId });
+
+    if (!transaction) {
+      return res.status(404).json({ error: "Transaction not found" });
+    }
+
+    res.json({
+      success: true,
+      transaction,
+    });
+  } catch (error) {
+    console.error("Get transaction by ID error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// ==========================================================
+// DELETE TRANSACTION (admin only - for cleanup)
+// ==========================================================
+exports.deleteTransaction = async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    const transaction = await Transaction.findOneAndDelete({
+      id: transactionId,
     });
 
-    // Get auto-debit stats
-    const autoDebitStats = await Transaction.aggregate([
+    if (!transaction) {
+      return res.status(404).json({ error: "Transaction not found" });
+    }
+
+    res.json({
+      success: true,
+      message: "Transaction deleted successfully",
+    });
+  } catch (error) {
+    console.error("Delete transaction error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+// ==========================================================
+// GET REVENUE STATS (for dashboard)
+// ==========================================================
+exports.getRevenueStats = async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const thisMonth = new Date();
+    thisMonth.setDate(1);
+    thisMonth.setHours(0, 0, 0, 0);
+
+    // Charges revenue from transactions
+    const todayCharges = await Transaction.aggregate([
       {
         $match: {
-          type: "overdraft_repayment",
-          isAutoDebit: true,
           status: "approved",
-          createdAt: { $gte: thisMonth },
+          createdAt: { $gte: today },
+          charges: { $gt: 0 },
         },
       },
       {
         $group: {
           _id: null,
-          totalAutoDebit: { $sum: "$amount" },
+          totalCharges: { $sum: "$charges" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const monthCharges = await Transaction.aggregate([
+      {
+        $match: {
+          status: "approved",
+          createdAt: { $gte: thisMonth },
+          charges: { $gt: 0 },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalCharges: { $sum: "$charges" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // Overdraft charges revenue
+    const todayOverdraftRevenue = await Transaction.aggregate([
+      {
+        $match: {
+          status: "approved",
+          createdAt: { $gte: today },
+          type: "overdraft_charges_revenue",
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: "$amount" },
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const monthOverdraftRevenue = await Transaction.aggregate([
+      {
+        $match: {
+          status: "approved",
+          createdAt: { $gte: thisMonth },
+          type: "overdraft_charges_revenue",
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: "$amount" },
           count: { $sum: 1 },
         },
       },
     ]);
 
     res.json({
-      today: todayStats,
-      thisMonth: monthStats,
-      pendingCount,
-      autoDebit: autoDebitStats[0] || { totalAutoDebit: 0, count: 0 },
+      success: true,
+      today: {
+        transactionCharges: todayCharges[0]?.totalCharges || 0,
+        transactionCount: todayCharges[0]?.count || 0,
+        overdraftRevenue: todayOverdraftRevenue[0]?.totalRevenue || 0,
+        overdraftCount: todayOverdraftRevenue[0]?.count || 0,
+        totalRevenue:
+          (todayCharges[0]?.totalCharges || 0) +
+          (todayOverdraftRevenue[0]?.totalRevenue || 0),
+      },
+      thisMonth: {
+        transactionCharges: monthCharges[0]?.totalCharges || 0,
+        transactionCount: monthCharges[0]?.count || 0,
+        overdraftRevenue: monthOverdraftRevenue[0]?.totalRevenue || 0,
+        overdraftCount: monthOverdraftRevenue[0]?.count || 0,
+        totalRevenue:
+          (monthCharges[0]?.totalCharges || 0) +
+          (monthOverdraftRevenue[0]?.totalRevenue || 0),
+      },
     });
   } catch (error) {
+    console.error("Get revenue stats error:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
 // ==========================================================
-// MODULE EXPORTS
+// VOID TRANSACTION (reverse a transaction - admin only)
 // ==========================================================
-module.exports = {
-  createTransaction: exports.createTransaction,
-  updateTransactionStatus: exports.approveTransaction,
-  getAllTransactions: exports.getAllTransactions,
-  getTransactionStats: exports.getTransactionStats,
-  approveTransaction: exports.approveTransaction,
-  rejectTransaction: exports.rejectTransaction,
-  getTransactionsByCustomer: exports.getTransactionsByCustomer,
-  // processDepositWithOverdraft: processDepositWithOverdraft,
+exports.voidTransaction = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { transactionId } = req.params;
+    const { voidedBy, reason } = req.body;
+
+    const transaction = await Transaction.findOne({
+      id: transactionId,
+    }).session(session);
+
+    if (!transaction) {
+      await session.abortTransaction();
+      return res.status(404).json({ error: "Transaction not found" });
+    }
+
+    if (transaction.status !== "approved") {
+      await session.abortTransaction();
+      return res.status(400).json({
+        error: "Only approved transactions can be voided",
+        currentStatus: transaction.status,
+      });
+    }
+
+    const customer = await findCustomerRobustly(transaction.customerId);
+    if (!customer) {
+      await session.abortTransaction();
+      return res.status(404).json({ error: "Customer not found" });
+    }
+
+    // Reverse the balance change
+    let reversalBalance;
+    const netAmount = transaction.netAmount;
+
+    if (transaction.type === "deposit") {
+      // Reverse deposit: subtract net amount
+      reversalBalance = (customer.cashBalance || 0) - netAmount;
+    } else if (transaction.type === "withdrawal") {
+      // Reverse withdrawal: add net amount back
+      reversalBalance = (customer.cashBalance || 0) + netAmount;
+    } else {
+      await session.abortTransaction();
+      return res.status(400).json({
+        error: `Cannot void transaction of type: ${transaction.type}`,
+      });
+    }
+
+    // Update transaction status
+    transaction.status = "voided";
+    transaction.voidedBy = voidedBy?.name || "Admin";
+    transaction.voidedAt = new Date();
+    transaction.voidReason = reason || "";
+    transaction.reversalBalance = reversalBalance;
+    await transaction.save({ session });
+
+    // Reverse customer balance and stats
+    const updateQuery = customer.id
+      ? { id: customer.id }
+      : { _id: customer._id };
+
+    const customerUpdate = {
+      $set: {
+        cashBalance: reversalBalance,
+        balance: reversalBalance,
+      },
+      $inc: {
+        totalTransactions: -1,
+        totalDeposits: transaction.type === "deposit" ? -netAmount : 0,
+        totalWithdrawals: transaction.type === "withdrawal" ? -netAmount : 0,
+        totalChargesPaid: -(transaction.charges || 0),
+      },
+    };
+
+    await Customer.findOneAndUpdate(updateQuery, customerUpdate, { session });
+
+    // Create reversal transaction record
+    const reversalTxn = new Transaction({
+      id: "TXN" + Date.now() + Math.random().toString(36).substr(2, 4),
+      customerId: transaction.customerId,
+      customerName: transaction.customerName,
+      customerPhone: transaction.customerPhone,
+      type: "reversal",
+      amount: transaction.amount,
+      charges: 0,
+      netAmount: transaction.type === "deposit" ? -netAmount : netAmount,
+      description: `Reversal of ${transaction.type} ${transaction.id}. Reason: ${reason || "No reason provided"}`,
+      status: "approved",
+      approvedBy: voidedBy?.name || "Admin",
+      originalTransactionId: transaction.id,
+      date: new Date(),
+    });
+    await reversalTxn.save({ session });
+
+    await session.commitTransaction();
+
+    res.json({
+      success: true,
+      message: `Transaction ${transaction.id} voided successfully`,
+      transaction: {
+        id: transaction.id,
+        status: "voided",
+        originalType: transaction.type,
+        reversalBalance,
+      },
+      reversalTransaction: {
+        id: reversalTxn.id,
+        amount: reversalTxn.amount,
+      },
+      customer: {
+        id: customer.id,
+        name: customer.name,
+        newBalance: reversalBalance,
+      },
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    console.error("Void transaction error:", error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    session.endSession();
+  }
+};
+
+// ==========================================================
+// GET DASHBOARD SUMMARY (for admin dashboard)
+// ==========================================================
+exports.getDashboardSummary = async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const thisMonth = new Date();
+    thisMonth.setDate(1);
+    thisMonth.setHours(0, 0, 0, 0);
+
+    const [
+      totalCustomers,
+      totalTransactions,
+      pendingTransactions,
+      todayApproved,
+      monthApproved,
+      activeOverdrafts,
+    ] = await Promise.all([
+      Customer.countDocuments(),
+      Transaction.countDocuments(),
+      Transaction.countDocuments({ status: "pending" }),
+      Transaction.countDocuments({
+        status: "approved",
+        createdAt: { $gte: today },
+      }),
+      Transaction.countDocuments({
+        status: "approved",
+        createdAt: { $gte: thisMonth },
+      }),
+      Customer.countDocuments({ hasActiveOverdraft: true }),
+    ]);
+
+    // Total balances
+    const balanceStats = await Customer.aggregate([
+      {
+        $group: {
+          _id: null,
+          totalCashBalance: { $sum: "$cashBalance" },
+          totalBalance: { $sum: "$balance" },
+          avgBalance: { $avg: "$cashBalance" },
+        },
+      },
+    ]);
+
+    res.json({
+      success: true,
+      summary: {
+        totalCustomers,
+        totalTransactions,
+        pendingTransactions,
+        todayApprovedTransactions: todayApproved,
+        monthApprovedTransactions: monthApproved,
+        activeOverdrafts,
+        totalCashBalance: balanceStats[0]?.totalCashBalance || 0,
+        totalBalance: balanceStats[0]?.totalBalance || 0,
+        averageBalance: Math.round(balanceStats[0]?.avgBalance || 0),
+      },
+    });
+  } catch (error) {
+    console.error("Get dashboard summary error:", error);
+    res.status(500).json({ error: error.message });
+  }
 };
