@@ -25,7 +25,6 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static("public"));
 
-// ==================== RATE LIMITING ====================
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -40,7 +39,7 @@ const generalLimiter = rateLimit({
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -51,7 +50,7 @@ const authLimiter = rateLimit({
 
 const financialLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10,
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -64,7 +63,6 @@ app.use(generalLimiter);
 app.use("/login", authLimiter);
 app.use("/register", authLimiter);
 app.use("/transactions", financialLimiter);
-// ==================== END RATE LIMITING ====================
 
 // Routes
 app.use("/", staffRouter);

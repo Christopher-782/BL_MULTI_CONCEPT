@@ -126,6 +126,26 @@
       .notification {
         animation: slideIn 0.4s ease-out;
       }
+
+      /* Add to your styles */
+      button:disabled {
+        opacity: 0.7;
+        cursor: not-allowed;
+      }
+
+      /* Ensure processing state is visible */
+      .fa-spin {
+        animation: fa-spin 1s infinite linear;
+      }
+
+      @keyframes fa-spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
       .loading-skeleton {
         background: linear-gradient(
           90deg,
