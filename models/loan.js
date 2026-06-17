@@ -12,10 +12,8 @@ const loanSchema = new mongoose.Schema(
     interestRate: { type: Number, required: true },
     totalPayable: { type: Number, required: true },
 
-    // NEW: Processing charges for overdraft (and loans)
     processingCharges: { type: Number, default: 0 },
 
-    // FIX: Removed required, added default: null for overdraft compatibility
     repaymentPeriod: {
       type: String,
       enum: ["weekly", "bi-weekly", "monthly"],
@@ -24,11 +22,9 @@ const loanSchema = new mongoose.Schema(
     numberOfInstallments: { type: Number, default: 1 },
     installmentAmount: { type: Number, default: 0 },
 
-    // FIX: Removed required, added default: null
     repaymentStartDate: { type: Date, default: null },
     repaymentEndDate: { type: Date, default: null },
 
-    // NEW: Payment deadline for overdraft
     paymentDeadline: { type: Date, default: null },
 
     repayments: [
@@ -46,7 +42,7 @@ const loanSchema = new mongoose.Schema(
         principalPortion: { type: Number, default: 0 },
         interestPortion: { type: Number, default: 0 },
         interestRevenue: { type: Number, default: 0 },
-        chargesPortion: { type: Number, default: 0 }, // Also add this for overdraft tracking
+        chargesPortion: { type: Number, default: 0 },
       },
     ],
 
@@ -77,12 +73,15 @@ const loanSchema = new mongoose.Schema(
     outstandingBalance: { type: Number, default: 0 },
     outstandingPrincipal: { type: Number, default: 0 },
     outstandingInterest: { type: Number, default: 0 },
-    outstandingCharges: { type: Number, default: 0 }, // Also add this
+    outstandingCharges: { type: Number, default: 0 },
     principalRepaidToDate: { type: Number, default: 0 },
     interestEarnedToDate: { type: Number, default: 0 },
-    chargesPaidToDate: { type: Number, default: 0 }, // Also add this
+    chargesPaidToDate: { type: Number, default: 0 },
+    chargesRevenueRecorded: { type: Number, default: 0 }, // FIX: Track charges revenue to prevent double-counting
     purpose: { type: String },
     notes: { type: String },
+    autoDebitEnabled: { type: Boolean, default: false },
+    completedAt: { type: Date },
   },
   {
     timestamps: true,
@@ -91,6 +90,8 @@ const loanSchema = new mongoose.Schema(
 
 loanSchema.index({ status: 1, "repayments.status": 1 });
 loanSchema.index({ interestEarnedToDate: 1 });
+loanSchema.index({ customerId: 1, status: 1 }); // FIX: Added for faster customer loan lookups
+loanSchema.index({ type: 1, status: 1 }); // FIX: Added for overdraft queries
 
 module.exports =
   mongoose.models.Loan || mongoose.model("Loan", loanSchema, "loans");

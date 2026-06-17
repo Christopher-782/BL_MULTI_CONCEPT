@@ -11,6 +11,13 @@ const state = {
   isLoading: false,
   lastTransactionCount: 0,
   pollingInterval: null,
+  // Caches for expensive calculations
+  revenueCache: null,
+  revenueCacheTimestamp: 0,
+  REVENUE_CACHE_TTL: 60000, // 1 minute
+  dormantCache: null,
+  dormantCacheTimestamp: 0,
+  DORMANT_CACHE_TTL: 30000, // 30 seconds
 };
 
 // ==================== REAL-TIME POLLING ====================
@@ -26,16 +33,15 @@ function startTransactionPolling() {
     return;
   }
 
-  // Poll every 10 seconds for new transactions
+  // Poll every 10 seconds for new pending transactions (lightweight)
   state.pollingInterval = setInterval(async () => {
     try {
-      const response = await api.get("/transactions");
-      const freshTransactions = response.data;
-
-      // Count pending transactions
-      const freshPendingCount = freshTransactions.filter(
-        (t) => t.status === "pending",
-      ).length;
+      // Use lightweight pending-only endpoint
+      const response = await api.get("/transactions/pending");
+      const freshPending = response.data.transactions || response.data;
+      const freshPendingCount = Array.isArray(freshPending)
+        ? freshPending.length
+        : freshPending.count || 0;
 
       const oldPendingCount = state.transactions.filter(
         (t) => t.status === "pending",
@@ -45,9 +51,8 @@ function startTransactionPolling() {
       if (freshPendingCount > oldPendingCount) {
         const newCount = freshPendingCount - oldPendingCount;
 
-        // Update state with fresh data
-        state.transactions = freshTransactions;
-        state.transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
+        // Only fetch full data when there's actually new stuff
+        await loadAllData();
 
         // Show notification about new pending transactions
         showNotification(
@@ -81,7 +86,7 @@ function startTransactionPolling() {
       }
 
       // Also update lastTransactionCount for tracking
-      state.lastTransactionCount = freshTransactions.length;
+      state.lastTransactionCount = state.transactions.length;
     } catch (error) {
       // Silently fail on polling errors - don't spam user
       console.warn("Polling error:", error.message);
@@ -643,18 +648,7 @@ function initQuickSearch(customersData) {
     });
   }
 
-  document.addEventListener("click", function (e) {
-    const dropdown = document.getElementById("quickSearchResults");
-    const searchContainer = document.getElementById("quickCustomerSearch");
-    if (
-      dropdown &&
-      searchContainer &&
-      !dropdown.contains(e.target) &&
-      !searchContainer.contains(e.target)
-    ) {
-      dropdown.classList.add("hidden");
-    }
-  });
+  // Dropdown close handled by initEventDelegation() to prevent memory leaks
 }
 
 function filterQuickCustomers() {
@@ -1018,11 +1012,58 @@ async function initializeApp() {
   navigate("dashboard");
   startClock();
   initMobileMenu();
+  initEventDelegation(); // One-time event delegation setup
   initRealTimeUpdates(); // Start real-time polling for admin
+}
+
+// Event delegation to prevent memory leaks from repeated listeners
+function initEventDelegation() {
+  document.addEventListener("click", function (e) {
+    // Close quick search dropdown when clicking outside
+    const quickDropdown = document.getElementById("quickSearchResults");
+    const quickSearch = document.getElementById("quickCustomerSearch");
+    if (
+      quickDropdown &&
+      quickSearch &&
+      !quickDropdown.contains(e.target) &&
+      !quickSearch.contains(e.target)
+    ) {
+      quickDropdown.classList.add("hidden");
+    }
+
+    // Close transaction search dropdown when clicking outside
+    const txnDropdown = document.getElementById("searchResultsDropdown");
+    const txnSearch = document.getElementById("customerSearchInput");
+    if (
+      txnDropdown &&
+      txnSearch &&
+      !txnDropdown.contains(e.target) &&
+      !txnSearch.contains(e.target)
+    ) {
+      txnDropdown.classList.add("hidden");
+    }
+
+    // Close loan search dropdown when clicking outside
+    const loanDropdown = document.getElementById("searchResults");
+    const loanSearch = document.getElementById("customerSearchInput");
+    if (
+      loanDropdown &&
+      loanSearch &&
+      !loanDropdown.contains(e.target) &&
+      !loanSearch.contains(e.target)
+    ) {
+      loanDropdown.classList.add("hidden");
+    }
+  });
 }
 
 async function loadAllData() {
   state.isLoading = true;
+  // Invalidate caches since data is being refreshed
+  state.revenueCache = null;
+  state.revenueCacheTimestamp = 0;
+  state.dormantCache = null;
+  state.dormantCacheTimestamp = 0;
   try {
     const [customersRes, transactionsRes] = await Promise.all([
       cachedApi.get("/customers"),
@@ -2242,26 +2283,31 @@ function closeCustomerLoansModal() {
   if (modal) modal.remove();
 }
 
+let customerFilterTimeout;
 function filterCustomers() {
-  const search =
-    document.getElementById("customerSearch")?.value.toLowerCase() || "";
-  const staffFilter = document.getElementById("staffFilter")?.value;
-  const rows = document.querySelectorAll("#customerTableBody tr");
+  clearTimeout(customerFilterTimeout);
+  customerFilterTimeout = setTimeout(() => {
+    const search =
+      document.getElementById("customerSearch")?.value.toLowerCase() || "";
+    const staffFilter = document.getElementById("staffFilter")?.value;
+    const rows = document.querySelectorAll("#customerTableBody tr");
 
-  rows.forEach((row) => {
-    const text = row.textContent.toLowerCase();
-    const matchesSearch = text.includes(search);
+    rows.forEach((row) => {
+      const text = row.textContent.toLowerCase();
+      const matchesSearch = text.includes(search);
 
-    if (staffFilter && state.role === "admin") {
-      const staffCell = row.querySelector("td:nth-child(7)")?.textContent || "";
-      const matchesStaff = staffCell.includes(
-        state.staff.find((s) => s.id === staffFilter)?.name || "",
-      );
-      row.style.display = matchesSearch && matchesStaff ? "" : "none";
-    } else {
-      row.style.display = matchesSearch ? "" : "none";
-    }
-  });
+      if (staffFilter && state.role === "admin") {
+        const staffCell =
+          row.querySelector("td:nth-child(7)")?.textContent || "";
+        const matchesStaff = staffCell.includes(
+          state.staff.find((s) => s.id === staffFilter)?.name || "",
+        );
+        row.style.display = matchesSearch && matchesStaff ? "" : "none";
+      } else {
+        row.style.display = matchesSearch ? "" : "none";
+      }
+    });
+  }, 150);
 }
 
 function filterCustomersByStaff() {
@@ -3022,18 +3068,7 @@ function initTransactionSearch(customersData) {
     });
   }
 
-  document.addEventListener("click", function (e) {
-    const searchContainer = document.getElementById("customerSearchInput");
-    const dropdown = document.getElementById("searchResultsDropdown");
-    if (
-      searchContainer &&
-      dropdown &&
-      !searchContainer.contains(e.target) &&
-      !dropdown.contains(e.target)
-    ) {
-      dropdown.classList.add("hidden");
-    }
-  });
+  // Dropdown close handled by initEventDelegation() to prevent memory leaks
 
   window.updateNetAmount();
 }
@@ -3188,6 +3223,9 @@ async function processTransaction(
 
     // --- STEP 4: SUCCESS ---
     cachedApi.invalidate("/transactions");
+    // Invalidate revenue cache since transaction data changed
+    state.revenueCache = null;
+    state.revenueCacheTimestamp = 0;
     showNotification(`Transaction ${action}ed!`, "success");
 
     // We still call loadAllData in background just to ensure balances are perfectly synced
@@ -5304,6 +5342,16 @@ function renderMyLoans(container) {
 
 async function renderRevenueReports(container) {
   try {
+    // Check cache first
+    const now = Date.now();
+    if (
+      state.revenueCache &&
+      now - state.revenueCacheTimestamp < state.REVENUE_CACHE_TTL
+    ) {
+      container.innerHTML = state.revenueCache;
+      return;
+    }
+
     // Show loading state
     container.innerHTML = `
       <div class="flex justify-center items-center py-12">
@@ -5904,6 +5952,9 @@ async function renderRevenueReports(container) {
       </div>
     `;
 
+    // Cache the result
+    state.revenueCache = html;
+    state.revenueCacheTimestamp = Date.now();
     container.innerHTML = html;
   } catch (error) {
     console.error("Revenue reports error:", error);
@@ -6106,6 +6157,17 @@ function renderStaffReconciliation(container) {
 // ==================== DORMANT CUSTOMERS SECTION ====================
 
 function renderDormantCustomers(container) {
+  // Check cache first
+  const now = Date.now();
+  if (
+    state.dormantCache &&
+    now - state.dormantCacheTimestamp < state.DORMANT_CACHE_TTL
+  ) {
+    container.innerHTML = state.dormantCache;
+    document.getElementById("pageTitle").textContent = "Dormant Customers";
+    return;
+  }
+
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -6382,6 +6444,9 @@ function renderDormantCustomers(container) {
     }
   </div>`;
 
+  // Cache the result
+  state.dormantCache = html;
+  state.dormantCacheTimestamp = Date.now();
   container.innerHTML = html;
   document.getElementById("pageTitle").textContent = "Dormant Customers";
 }
@@ -6713,24 +6778,45 @@ function renderAdminTransactions(container) {
     ),
   ].map((s) => JSON.parse(s));
 
+  // Get unique customer numbers for filter dropdown
+  const uniqueCustomerNumbers = [
+    ...new Map(
+      pending
+        .map((t) => {
+          const customer = state.customers.find((c) => c.id === t.customerId);
+          return {
+            id: t.customerId,
+            number: customer?.customerNumber || null,
+            name: t.customerName,
+          };
+        })
+        .filter((c) => c.number)
+        .map((c) => [c.number, c]),
+    ).values(),
+  ].sort((a, b) => a.number.localeCompare(b.number));
+
   const html = `<div class="space-y-4 sm:space-y-6 animate-fade-in px-4 sm:px-0">
     
-    <!-- STAFF FILTER DROPDOWN - ADD THIS -->
+    <!-- FILTER SECTION -->
     ${
       pending.length > 0
         ? `
       <div class="glass-panel rounded-2xl p-4 sm:p-6 border-l-4 border-blue-500">
-        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
           <div>
             <h3 class="text-base sm:text-lg font-semibold flex items-center gap-2">
               <i class="fas fa-filter text-blue-500"></i>
               Filter Pending Transactions
             </h3>
-            <p class="text-xs text-gray-400 mt-1">Show transactions by specific staff member</p>
+            <p class="text-xs text-gray-400 mt-1">Search by staff member or customer number</p>
           </div>
-          <div class="w-full sm:w-auto">
-            <select id="pendingStaffFilter" onchange="filterPendingByStaff()" 
-              class="w-full sm:w-64 px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <!-- Staff Filter -->
+          <div>
+            <label class="block text-xs text-gray-400 mb-1">Filter by Staff</label>
+            <select id="pendingStaffFilter" onchange="filterPendingTransactions()" 
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
               <option value="all">All Staff (${pending.length} pending)</option>
               ${uniqueStaff
                 .map((staff) => {
@@ -6744,6 +6830,47 @@ function renderAdminTransactions(container) {
                 .join("")}
             </select>
           </div>
+          <!-- Customer Number Filter -->
+          <div>
+            <label class="block text-xs text-gray-400 mb-1">Filter by Customer Number</label>
+            <select id="pendingCustomerFilter" onchange="filterPendingTransactions()" 
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
+              <option value="all">All Customers (${pending.length} pending)</option>
+              ${uniqueCustomerNumbers
+                .map((customer) => {
+                  const count = pending.filter(
+                    (t) => t.customerId === customer.id,
+                  ).length;
+                  return `<option value="${customer.number}">#${customer.number} - ${customer.name} (${count} pending)</option>`;
+                })
+                .join("")}
+              ${
+                pending.some((t) => {
+                  const customer = state.customers.find(
+                    (c) => c.id === t.customerId,
+                  );
+                  return !customer?.customerNumber;
+                })
+                  ? `<option value="no-number">No Customer Number (${
+                      pending.filter((t) => {
+                        const customer = state.customers.find(
+                          (c) => c.id === t.customerId,
+                        );
+                        return !customer?.customerNumber;
+                      }).length
+                    } pending)</option>`
+                  : ""
+              }
+            </select>
+          </div>
+        </div>
+        <div class="mt-3 flex items-center justify-between">
+          <p class="text-xs text-gray-400" id="pendingFilterResult">
+            Showing all ${pending.length} pending transactions
+          </p>
+          <button onclick="clearPendingFilters()" class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">
+            <i class="fas fa-times-circle"></i> Clear Filters
+          </button>
         </div>
       </div>
     `
@@ -6832,8 +6959,12 @@ function renderAdminTransactions(container) {
                 txn.requestedBy ||
                 "unknown";
               const hasSMS = customer?.phone ? "📱" : "⚠️";
+              const customerNumber = customer?.customerNumber || null;
               return `<div class="pending-transaction-item bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700 hover:border-yellow-500/50 transition-all" 
-                data-staff-id="${staffId}" id="txn-${txn.id}">
+                data-staff-id="${staffId}" 
+                data-customer-number="${customerNumber || "no-number"}"
+                data-customer-id="${txn.customerId}"
+                id="txn-${txn.id}">
                 <div class="flex flex-col lg:flex-row justify-between items-start gap-3 sm:gap-4">
                   <div class="flex items-start gap-3 sm:gap-4 flex-1">
                     <div class="w-8 h-8 sm:w-12 sm:h-12 rounded-full ${
@@ -6856,6 +6987,7 @@ function renderAdminTransactions(container) {
                             : "bg-orange-500/20 text-orange-400"
                         } rounded-full text-xs font-medium">${txn.type}</span>
                         <span class="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full text-xs">${staffName} ${hasSMS}</span>
+                        ${customerNumber ? `<span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded-full text-xs font-mono">#${customerNumber}</span>` : ""}
                       </div>
                       <p class="text-xs sm:text-sm text-gray-300 mt-1">${txn.customerName}</p>
                       <div class="flex items-center gap-2 text-xs text-gray-400 mt-1">
@@ -6991,46 +7123,112 @@ function renderAdminTransactions(container) {
   </div>`;
 
   container.innerHTML = html;
-} // ==================== HELPER FUNCTIONS ====================
+}
+// ==================== HELPER FUNCTIONS ====================
+// ==================== ENHANCED PENDING FILTER FUNCTIONS ====================
 
-function filterPendingByStaff() {
+function filterPendingTransactions() {
   const selectedStaffId = document.getElementById("pendingStaffFilter")?.value;
+  const selectedCustomerNumber = document.getElementById(
+    "pendingCustomerFilter",
+  )?.value;
+  const resultLabel = document.getElementById("pendingFilterResult");
 
   // Filter staff cards
   const staffCards = document.querySelectorAll(".staff-card");
   staffCards.forEach((card) => {
-    if (selectedStaffId === "all" || card.dataset.staffId === selectedStaffId) {
-      card.style.display = "";
-    } else {
-      card.style.display = "none";
+    const cardStaffId = card.dataset.staffId;
+    let show = true;
+
+    if (selectedStaffId !== "all" && cardStaffId !== selectedStaffId) {
+      show = false;
     }
+
+    card.style.display = show ? "" : "none";
   });
 
   // Filter pending transaction items
   const pendingItems = document.querySelectorAll(".pending-transaction-item");
+  let visibleCount = 0;
+
   pendingItems.forEach((item) => {
-    if (selectedStaffId === "all" || item.dataset.staffId === selectedStaffId) {
-      item.style.display = "";
-    } else {
-      item.style.display = "none";
+    const itemStaffId = item.dataset.staffId;
+    const itemCustomerNumber = item.dataset.customerNumber;
+    const itemCustomerId = item.dataset.customerId;
+
+    let showByStaff =
+      selectedStaffId === "all" || itemStaffId === selectedStaffId;
+    let showByCustomer = true;
+
+    if (selectedCustomerNumber !== "all") {
+      if (selectedCustomerNumber === "no-number") {
+        showByCustomer = itemCustomerNumber === "no-number";
+      } else {
+        // Find customer by number to get their ID
+        const customer = state.customers.find(
+          (c) => c.customerNumber === selectedCustomerNumber,
+        );
+        showByCustomer = customer && itemCustomerId === customer.id;
+      }
     }
+
+    const show = showByStaff && showByCustomer;
+    item.style.display = show ? "" : "none";
+    if (show) visibleCount++;
   });
 
-  // Update count display
-  const visibleCount =
+  // Update result label
+  const staffLabel =
     selectedStaffId === "all"
-      ? pendingItems.length
-      : document.querySelectorAll(
-          `.pending-transaction-item[data-staff-id="${selectedStaffId}"]`,
-        ).length;
+      ? "All Staff"
+      : document
+          .querySelector(
+            `#pendingStaffFilter option[value="${selectedStaffId}"]`,
+          )
+          ?.textContent.split(" (")[0] || "Selected Staff";
 
-  const filterLabel =
-    document.querySelector("#pendingStaffFilter option:checked")?.textContent ||
-    "";
-  showNotification(
-    `Showing ${visibleCount} pending transactions for ${filterLabel.split(" (")[0]}`,
-    "info",
-  );
+  const customerLabel =
+    selectedCustomerNumber === "all"
+      ? "All Customers"
+      : document
+          .querySelector(
+            `#pendingCustomerFilter option[value="${selectedCustomerNumber}"]`,
+          )
+          ?.textContent.split(" (")[0] || "Selected Customer";
+
+  if (resultLabel) {
+    if (visibleCount === 0) {
+      resultLabel.textContent = `No transactions match: ${staffLabel} + ${customerLabel}`;
+      resultLabel.className = "text-xs text-red-400";
+    } else {
+      resultLabel.textContent = `Showing ${visibleCount} pending transactions (${staffLabel} + ${customerLabel})`;
+      resultLabel.className = "text-xs text-green-400";
+    }
+  }
+}
+
+function clearPendingFilters() {
+  const staffFilter = document.getElementById("pendingStaffFilter");
+  const customerFilter = document.getElementById("pendingCustomerFilter");
+
+  if (staffFilter) staffFilter.value = "all";
+  if (customerFilter) customerFilter.value = "all";
+
+  filterPendingTransactions();
+
+  const resultLabel = document.getElementById("pendingFilterResult");
+  if (resultLabel) {
+    const totalPending = document.querySelectorAll(
+      ".pending-transaction-item",
+    ).length;
+    resultLabel.textContent = `Showing all ${totalPending} pending transactions`;
+    resultLabel.className = "text-xs text-gray-400";
+  }
+}
+
+// Keep old function name for backward compatibility (calls new unified filter)
+function filterPendingByStaff() {
+  filterPendingTransactions();
 }
 
 function formatLoanRepaymentSMS(
@@ -7567,15 +7765,80 @@ async function checkAuth() {
 
 let customerIsActive;
 
-// Make functions available globally
-window.viewLoanRepaymentSchedule = viewLoanRepaymentSchedule;
-window.closeRepaymentScheduleModal = closeRepaymentScheduleModal;
-window.recordRepayment = recordRepayment;
+// ==================== GLOBAL EXPORTS ====================
+// All functions must be exposed to window for HTML onclick handlers
+
+// Navigation & Core
+window.navigate = navigate;
+window.selectRole = selectRole;
+window.login = login;
+window.logout = logout;
+window.checkAuth = checkAuth;
+window.initializeApp = initializeApp;
+window.loadAllData = loadAllData;
+window.refreshData = refreshData;
+
+// Real-time & Polling
+window.startTransactionPolling = startTransactionPolling;
+window.stopTransactionPolling = stopTransactionPolling;
+window.initRealTimeUpdates = initRealTimeUpdates;
+
+// Notifications
+window.toggleNotifications = toggleNotifications;
+window.clearNotifications = clearNotifications;
+window.updateNotificationList = updateNotificationList;
+window.checkPendingNotifications = checkPendingNotifications;
+window.showNotification = showNotification;
+
+// Dashboard
+window.renderDashboard = renderDashboard;
+
+// Customers
+window.renderCustomers = renderCustomers;
+window.filterCustomers = filterCustomers;
+window.filterCustomersByStaff = filterCustomersByStaff;
 window.filterCustomersByBalance = filterCustomersByBalance;
+window.showAddCustomerModal = showAddCustomerModal;
+window.closeCustomerModal = closeCustomerModal;
+window.handleAddCustomer = handleAddCustomer;
+window.renderNewCustomer = renderNewCustomer;
+window.handleNewCustomer = handleNewCustomer;
+window.updateRegistrationNet = updateRegistrationNet;
+window.updateAdminRegistrationNet = updateAdminRegistrationNet;
+window.viewCustomer = viewCustomer;
+window.editCustomer = editCustomer;
+window.handleEditCustomer = handleEditCustomer;
 window.viewCustomerLoans = viewCustomerLoans;
 window.closeCustomerLoansModal = closeCustomerLoansModal;
+window.renderCustomerSummary = renderCustomerSummary;
+window.renderCustomerTransactions = renderCustomerTransactions;
+window.getCustomerStats = getCustomerStats;
+window.exportCustomerData = exportCustomerData;
 
-// Make Quick Transaction functions globally available
+// Transactions
+window.renderNewTransaction = renderNewTransaction;
+window.initTransactionSearch = initTransactionSearch;
+window.filterAndDisplayCustomers =
+  window.filterAndDisplayCustomers || function () {};
+window.selectCustomer = window.selectCustomer || function () {};
+window.clearSelectedCustomer = window.clearSelectedCustomer || function () {};
+window.updateNetAmount = window.updateNetAmount || function () {};
+window.handleNewTransaction = handleNewTransaction;
+window.processTransaction = processTransaction;
+window.renderAdminTransactions = renderAdminTransactions;
+window.filterPendingTransactions = filterPendingTransactions;
+window.clearPendingFilters = clearPendingFilters;
+window.filterPendingByStaff = filterPendingByStaff;
+window.viewStaffPendingTransactions = viewStaffPendingTransactions;
+window.closeStaffPendingModal = closeStaffPendingModal;
+window.approveAllStaffTransactions = approveAllStaffTransactions;
+window.approveAllPendingTransactions = approveAllPendingTransactions;
+window.viewTransactionDetails = viewTransactionDetails;
+window.closeTransactionModal = closeTransactionModal;
+window.filterTransactionsByStaff = filterTransactionsByStaff;
+window.sortTransactions = sortTransactions;
+
+// Quick Transactions
 window.renderQuickTransaction = renderQuickTransaction;
 window.handleQuickTransaction = handleQuickTransaction;
 window.initQuickSearch = initQuickSearch;
@@ -7587,6 +7850,65 @@ window.setQuickAmount = setQuickAmount;
 window.updateQuickNet = updateQuickNet;
 window.validateQuickAmount = validateQuickAmount;
 window.validateQuickForm = validateQuickForm;
+
+// Loans
+window.renderAdminLoans = renderAdminLoans;
+window.renderNewLoanRequest = renderNewLoanRequest;
+window.searchCustomersForLoan = searchCustomersForLoan;
+window.selectCustomerForLoan = selectCustomerForLoan;
+window.clearSelectedCustomerForLoan = clearSelectedCustomerForLoan;
+window.calculateLoanDetails = calculateLoanDetails;
+window.updateLoanType = updateLoanType;
+window.checkEligibility = checkEligibility;
+window.handleLoanRequest = handleLoanRequest;
+window.showApproveLoanModal = showApproveLoanModal;
+window.closeApproveLoanModal = closeApproveLoanModal;
+window.approveLoan = approveLoan;
+window.rejectLoan = rejectLoan;
+window.viewLoanRepaymentSchedule = viewLoanRepaymentSchedule;
+window.closeRepaymentScheduleModal = closeRepaymentScheduleModal;
+window.recordRepayment = recordRepayment;
+window.renderMyLoans = renderMyLoans;
+window.renderRepaymentManagement = renderRepaymentManagement;
+window.handleManualCollection = handleManualCollection;
+
+// Revenue
+window.renderRevenueReports = renderRevenueReports;
+
+// Staff
+window.renderStaffManagement = renderStaffManagement;
+window.showAddStaffModal = showAddStaffModal;
+window.closeStaffModal = closeStaffModal;
+window.handleAddStaff = handleAddStaff;
+window.renderStaffReconciliation = renderStaffReconciliation;
+
+// Dormant Customers
+window.renderDormantCustomers = renderDormantCustomers;
+window.sendSMSReminder = sendSMSReminder;
+window.sendBulkSMSToDormantCustomers = sendBulkSMSToDormantCustomers;
+window.exportDormantCustomers = exportDormantCustomers;
+window.reactivateCustomer = reactivateCustomer;
+
+// History
+window.renderHistory = renderHistory;
+
+// Customer Reports
+window.renderCustomerReports = renderCustomerReports;
+
+// Settings
+window.renderSettings = window.renderSettings || function () {};
+
+// Modal utilities
+window.showModal = showModal;
+window.closeModal = closeModal;
+
+// Mobile Menu
+window.initMobileMenu = initMobileMenu;
+window.handleResize = handleResize;
+window.closeMobileMenu = closeMobileMenu;
+
+// Clock
+window.startClock = startClock;
 
 // Initialize
 window.onload = () => {

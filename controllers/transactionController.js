@@ -1,74 +1,69 @@
 const Transaction = require("../models/transaction");
 const Customer = require("../models/customer");
-const Loan = require("../models/loan"); // Added for overdraft handling
+const Loan = require("../models/loan");
 const smsService = require("../services/smsService");
 const mongoose = require("mongoose");
 
-async function findCustomerRobustly(identifier) {
+const DEBUG = process.env.NODE_ENV !== "production";
+const customerCache = new Map();
+
+async function findCustomerRobustly(identifier, useCache = false) {
   if (!identifier) {
-    console.error("[DEBUG] findCustomerRobustly: Identifier is empty/null");
+    if (DEBUG)
+      console.error("[DEBUG] findCustomerRobustly: Identifier is empty/null");
     return null;
   }
+  if (DEBUG)
+    console.log(`[DEBUG] findCustomerRobustly: Searching for: "${identifier}"`);
 
-  console.log(
-    `[DEBUG] findCustomerRobustly: Searching for identifier: "${identifier}" (type: ${typeof identifier})`,
-  );
+  const cacheKey = identifier.toString();
+  if (useCache && customerCache.has(cacheKey)) {
+    return customerCache.get(cacheKey);
+  }
 
-  // 1. Try searching by 'id' (String)
-  let customer = await Customer.findOne({ id: identifier.toString() });
+  let customer = await Customer.findOne({ id: identifier.toString() }).lean();
   if (customer) {
-    console.log(`[DEBUG] SUCCESS: Found via 'id' (string): ${customer.name}`);
+    if (useCache) customerCache.set(cacheKey, customer);
     return customer;
   }
 
-  // 2. Try searching by 'id' (Number)
   const numericId = Number(identifier);
   if (!isNaN(numericId)) {
-    customer = await Customer.findOne({ id: numericId });
+    customer = await Customer.findOne({ id: numericId }).lean();
     if (customer) {
-      console.log(`[DEBUG] SUCCESS: Found via 'id' (number): ${customer.name}`);
+      if (useCache) customerCache.set(cacheKey, customer);
       return customer;
     }
   }
 
-  // 3. Try searching by 'customerNumber' (String)
-  customer = await Customer.findOne({ customerNumber: identifier.toString() });
+  customer = await Customer.findOne({
+    customerNumber: identifier.toString(),
+  }).lean();
   if (customer) {
-    console.log(
-      `[DEBUG] SUCCESS: Found via 'customerNumber' (string): ${customer.name}`,
-    );
+    if (useCache) customerCache.set(cacheKey, customer);
     return customer;
   }
 
-  // 4. Try searching by 'customerNumber' (Number)
   if (!isNaN(numericId)) {
-    customer = await Customer.findOne({ customerNumber: numericId });
+    customer = await Customer.findOne({ customerNumber: numericId }).lean();
     if (customer) {
-      console.log(
-        `[DEBUG] SUCCESS: Found via 'customerNumber' (number): ${customer.name}`,
-      );
+      if (useCache) customerCache.set(cacheKey, customer);
       return customer;
     }
   }
 
-  // 5. Try searching by standard MongoDB '_id'
   try {
-    customer = await Customer.findById(identifier);
+    customer = await Customer.findById(identifier).lean();
     if (customer) {
-      console.log(`[DEBUG] SUCCESS: Found via '_id': ${customer.name}`);
+      if (useCache) customerCache.set(cacheKey, customer);
       return customer;
     }
   } catch (err) {}
 
-  console.error(
-    `[DEBUG] FAILURE: No customer found matching identifier: ${identifier}`,
-  );
+  if (DEBUG) console.error(`[DEBUG] FAILURE: No customer found: ${identifier}`);
   return null;
 }
 
-// ==========================================================
-// CREATE TRANSACTION
-// ==========================================================
 exports.createTransaction = async (req, res) => {
   try {
     const {
@@ -86,30 +81,28 @@ exports.createTransaction = async (req, res) => {
       staffId,
     } = req.body;
 
-    console.log(
-      "[DEBUG] Incoming transaction:",
-      JSON.stringify(req.body, null, 2),
-    );
-
-    if (!customerId) {
+    if (DEBUG)
+      console.log(
+        "[DEBUG] Incoming transaction:",
+        JSON.stringify(req.body, null, 2),
+      );
+    if (!customerId)
       return res.status(400).json({ error: "Missing customerId" });
-    }
 
     const customer = await findCustomerRobustly(customerId);
-
-    if (!customer) {
-      return res.status(404).json({
-        error: "Customer not found",
-        debugInfo: `Tried searching for ${customerId}`,
-      });
-    }
+    if (!customer)
+      return res
+        .status(404)
+        .json({
+          error: "Customer not found",
+          debugInfo: `Tried: ${customerId}`,
+        });
 
     const numAmount = Number(amount);
     const numCharges = Number(charges) || 0;
     const numNetAmount =
       netAmount !== undefined ? Number(netAmount) : numAmount - numCharges;
 
-    // Determine staff info - prioritize explicit IDs, fallback to name
     const finalStaffName =
       requestedBy || staffName || req.user?.name || "System";
     const finalStaffId = requestedById || staffId || req.user?.id || null;
@@ -125,41 +118,30 @@ exports.createTransaction = async (req, res) => {
       netAmount: numNetAmount,
       description: description || "",
       status: "pending",
-
-      // FIX: Store both name AND ID
       requestedBy: finalStaffName,
       requestedById: finalStaffId,
       staffName: finalStaffName,
       staffId: finalStaffId,
-
       requestedAt: new Date(),
       date: new Date(),
     });
 
     await transaction.save();
+    if (DEBUG)
+      console.log(
+        "[DEBUG] Saved transaction:",
+        JSON.stringify(transaction.toObject(), null, 2),
+      );
 
-    console.log(
-      "[DEBUG] Saved transaction:",
-      JSON.stringify(transaction.toObject(), null, 2),
-    );
-
-    res.status(201).json({
-      success: true,
-      transaction,
-    });
+    res.status(201).json({ success: true, transaction });
   } catch (error) {
     console.error("Create transaction error:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
-// ==========================================================
-// APPROVE TRANSACTION (FIXED - correct balance = ₦0)
-// ==========================================================
 exports.approveTransaction = async (req, res) => {
-  console.log("=== APPROVE TRANSACTION ===");
-  console.log("Params:", req.params);
-  console.log("Body:", req.body);
+  if (DEBUG) console.log("=== APPROVE TRANSACTION ===", req.params, req.body);
 
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -171,18 +153,16 @@ exports.approveTransaction = async (req, res) => {
     const transaction = await Transaction.findOne({
       id: transactionId,
     }).session(session);
-
     if (!transaction) {
       await session.abortTransaction();
       return res.status(404).json({ error: "Transaction not found" });
     }
-
     if (transaction.status !== "pending") {
       await session.abortTransaction();
       return res.status(400).json({ error: "Transaction already processed" });
     }
 
-    const customer = await findCustomerRobustly(transaction.customerId);
+    const customer = await findCustomerRobustly(transaction.customerId, true);
     if (!customer) {
       await session.abortTransaction();
       return res.status(404).json({ error: "Customer not found" });
@@ -190,39 +170,31 @@ exports.approveTransaction = async (req, res) => {
 
     const charges = transaction.charges || 0;
     const netAmount = transaction.netAmount;
-
     let newBalance;
     let overdraftResult = null;
 
-    // ==========================================================
-    // DEPOSIT
-    // ==========================================================
     if (transaction.type === "deposit") {
       const depositAmount = transaction.amount;
       const netDeposit = depositAmount - charges;
 
-      // Check if customer has active overdraft
       if (customer.hasActiveOverdraft && customer.activeLoanId) {
-        const loan = await Loan.findOne({
-          id: customer.activeLoanId,
-        }).session(session);
+        const loan = await Loan.findOne({ id: customer.activeLoanId })
+          .session(session)
+          .lean();
 
         if (loan && loan.status === "active" && loan.type === "overdraft") {
           const outstanding = loan.outstandingBalance || loan.totalPayable || 0;
 
           if (outstanding > 0) {
-            // Calculate how much goes to overdraft repayment
             const repaymentAmount = Math.min(netDeposit, outstanding);
             const remainingForCustomer = netDeposit - repaymentAmount;
 
-            // Update overdraft
             loan.amountRepaid = (loan.amountRepaid || 0) + repaymentAmount;
             loan.outstandingBalance = Math.max(
               0,
               outstanding - repaymentAmount,
             );
 
-            // Determine portions (principal first, then charges)
             const remainingPrincipal =
               loan.amount - (loan.principalRepaidToDate || 0);
             const principalPortion = Math.min(
@@ -231,7 +203,6 @@ exports.approveTransaction = async (req, res) => {
             );
             const chargesPortion = repaymentAmount - principalPortion;
 
-            // Update repayment record
             const repayment = loan.repayments[0];
             repayment.paidAmount =
               (repayment.paidAmount || 0) + repaymentAmount;
@@ -261,7 +232,6 @@ exports.approveTransaction = async (req, res) => {
               isFullyPaid = true;
               repayment.status = "paid";
 
-              // Clear overdraft flags
               await Customer.findOneAndUpdate(
                 { id: transaction.customerId },
                 {
@@ -284,11 +254,17 @@ exports.approveTransaction = async (req, res) => {
               );
             }
 
-            await loan.save({ session });
+            await Loan.updateOne({ id: loan.id }, loan, { session });
 
-            // Create overdraft repayment transaction
+            const oldBalance = customer.cashBalance || 0;
+            newBalance =
+              oldBalance < 0
+                ? oldBalance + depositAmount - charges
+                : oldBalance + depositAmount - charges - repaymentAmount;
+
+            const now = Date.now();
             const overdraftTxn = new Transaction({
-              id: "TXN" + Date.now() + Math.random().toString(36).substr(2, 4),
+              id: "TXN" + now + Math.random().toString(36).substr(2, 4),
               customerId: transaction.customerId,
               customerName: customer.name,
               customerPhone: customer.phone || null,
@@ -297,7 +273,7 @@ exports.approveTransaction = async (req, res) => {
               principalPortion,
               chargesPortion,
               netAmount: -repaymentAmount,
-              description: `Auto-debit from deposit: Overdraft repayment (Principal: ₦${principalPortion.toLocaleString()}, Charges: ₦${chargesPortion.toLocaleString()})${isFullyPaid ? " - FULLY CLEARED" : ""}`,
+              description: `Auto-debit from deposit: Overdraft repayment (Principal: N${principalPortion.toLocaleString()}, Charges: N${chargesPortion.toLocaleString()})${isFullyPaid ? " - FULLY CLEARED" : ""}`,
               status: "approved",
               approvedBy: approvedBy?.name || "Admin",
               date: new Date().toISOString(),
@@ -306,25 +282,54 @@ exports.approveTransaction = async (req, res) => {
             });
             await overdraftTxn.save({ session });
 
-            // Create charges revenue transaction (internal bank revenue - does NOT affect customer balance)
             if (chargesPortion > 0) {
-              const revenueTxn = new Transaction({
-                id:
-                  "REV" + Date.now() + Math.random().toString(36).substr(2, 4),
+              const alreadyRecorded = loan.chargesRevenueRecorded || 0;
+              const newRevenue = chargesPortion - alreadyRecorded;
+              if (newRevenue > 0) {
+                const revenueTxn = new Transaction({
+                  id: "REV" + now + Math.random().toString(36).substr(2, 4),
+                  customerId: transaction.customerId,
+                  customerName: customer.name,
+                  type: "overdraft_charges_revenue",
+                  amount: newRevenue,
+                  netAmount: newRevenue,
+                  description: `Overdraft charges revenue from auto-debit - ${loan.id}`,
+                  status: "approved",
+                  approvedBy: "System",
+                  date: new Date().toISOString(),
+                  loanId: loan.id,
+                  isRevenue: true,
+                  revenueType: "overdraft_charges",
+                });
+                await revenueTxn.save({ session });
+                await Loan.updateOne(
+                  { id: loan.id },
+                  {
+                    $set: {
+                      chargesRevenueRecorded: alreadyRecorded + newRevenue,
+                    },
+                  },
+                  { session },
+                );
+              }
+            }
+
+            if (charges > 0) {
+              const depositChargesRevenue = new Transaction({
+                id: "REV" + now + Math.random().toString(36).substr(2, 4),
                 customerId: transaction.customerId,
                 customerName: customer.name,
                 type: "overdraft_charges_revenue",
-                amount: chargesPortion,
-                netAmount: chargesPortion,
-                description: `Overdraft charges revenue from auto-debit - ${loan.id}`,
+                amount: charges,
+                netAmount: charges,
+                description: `Transaction charges from deposit - ${transaction.id}`,
                 status: "approved",
                 approvedBy: "System",
                 date: new Date().toISOString(),
-                loanId: loan.id,
                 isRevenue: true,
-                revenueType: "overdraft_charges",
+                revenueType: "transaction_charges",
               });
-              await revenueTxn.save({ session });
+              await depositChargesRevenue.save({ session });
             }
 
             overdraftResult = {
@@ -335,59 +340,39 @@ exports.approveTransaction = async (req, res) => {
               chargesPortion,
             };
 
-            // Mark transaction with auto-debit info
             transaction.autoDebitAmount = repaymentAmount;
             transaction.overdraftCleared = isFullyPaid;
             transaction.remainingAfterAutoDebit = remainingForCustomer;
             transaction.principalPortion = principalPortion;
             transaction.chargesPortion = chargesPortion;
 
-            // ==========================================================
-            // FIXED: Balance only increases by what customer keeps after auto-debit
-            // WAS: newBalance = (customer.cashBalance || 0) + netDeposit;  ❌
-            // NOW: newBalance = (customer.cashBalance || 0) + remainingForCustomer;  ✅
-            // ==========================================================
-            newBalance = (customer.cashBalance || 0) + remainingForCustomer;
-
-            // SMS
             if (customer.phone) {
-              try {
-                let msg = `VaultFlow: Dear ${customer.name}, ₦${repaymentAmount.toLocaleString()} auto-debited from your ₦${depositAmount.toLocaleString()} deposit for overdraft repayment. `;
-                if (isFullyPaid) msg += `🎉 Overdraft FULLY CLEARED! `;
-                msg += `Outstanding: ₦${loan.outstandingBalance.toLocaleString()}. Available: ₦${remainingForCustomer.toLocaleString()}.`;
-                await smsService.sendSMS({ to: customer.phone, message: msg });
-              } catch (smsError) {
-                console.error("SMS failed:", smsError.message);
-              }
+              smsService
+                .sendSMS({
+                  to: customer.phone,
+                  message: `VaultFlow: Dear ${customer.name}, N${repaymentAmount.toLocaleString()} auto-debited from your N${depositAmount.toLocaleString()} deposit for overdraft repayment. ${isFullyPaid ? "Overdraft FULLY CLEARED! " : ""}Outstanding: N${loan.outstandingBalance.toLocaleString()}. Available: N${remainingForCustomer.toLocaleString()}.`,
+                })
+                .catch((e) => console.error("SMS failed:", e.message));
             }
           }
         }
       }
 
-      // Normal deposit: only apply if no auto-debit occurred
       if (!overdraftResult) {
-        newBalance = (customer.cashBalance || 0) + netDeposit;
+        newBalance = (customer.cashBalance || 0) + transaction.amount - charges;
       }
-
-      // ==========================================================
-      // WITHDRAWAL
-      // ==========================================================
     } else if (transaction.type === "withdrawal") {
       newBalance = (customer.cashBalance || 0) - netAmount;
-
-      // Only block if no active overdraft and insufficient funds
       if (newBalance < 0 && !customer.hasActiveOverdraft) {
         await session.abortTransaction();
-        return res.status(400).json({
-          error: "Insufficient funds for withdrawal",
-          currentBalance: customer.cashBalance,
-          requestedAmount: netAmount,
-        });
+        return res
+          .status(400)
+          .json({
+            error: "Insufficient funds",
+            currentBalance: customer.cashBalance,
+            requestedAmount: netAmount,
+          });
       }
-
-      // ==========================================================
-      // REVENUE TRANSACTIONS (internal - do NOT affect customer balance)
-      // ==========================================================
     } else if (
       transaction.type === "overdraft_charges_revenue" ||
       transaction.type === "interest_revenue"
@@ -397,7 +382,6 @@ exports.approveTransaction = async (req, res) => {
       transaction.approvedAt = new Date();
       await transaction.save({ session });
       await session.commitTransaction();
-
       return res.json({
         success: true,
         message: "Revenue transaction approved",
@@ -412,68 +396,54 @@ exports.approveTransaction = async (req, res) => {
       return res.status(400).json({ error: "Invalid transaction type" });
     }
 
-    // Update transaction
     transaction.status = "approved";
     transaction.approvedBy = approvedBy?.name || "Admin";
     transaction.approvedAt = new Date();
     transaction.finalBalance = newBalance;
     await transaction.save({ session });
 
-    // Update customer balance ONCE with final correct amount
     const updateQuery = customer.id
       ? { id: customer.id }
       : { _id: customer._id };
-
-    const customerUpdate = {
-      $set: {
-        cashBalance: newBalance,
-        balance: newBalance,
+    await Customer.findOneAndUpdate(
+      updateQuery,
+      {
+        $set: { cashBalance: newBalance, balance: newBalance },
+        $inc: {
+          totalTransactions: 1,
+          totalDeposits: transaction.type === "deposit" ? netAmount : 0,
+          totalWithdrawals: transaction.type === "withdrawal" ? netAmount : 0,
+          totalChargesPaid: charges,
+        },
       },
-      $inc: {
-        totalTransactions: 1,
-        totalDeposits: transaction.type === "deposit" ? netAmount : 0,
-        totalWithdrawals: transaction.type === "withdrawal" ? netAmount : 0,
-        totalChargesPaid: charges,
-      },
-    };
-
-    await Customer.findOneAndUpdate(updateQuery, customerUpdate, { session });
+      { session },
+    );
 
     await session.commitTransaction();
 
-    // Send SMS for normal deposit/withdrawal (no auto-debit)
     if (customer.phone && !overdraftResult) {
-      try {
-        if (transaction.type === "deposit") {
-          await smsService.sendCreditAlert(
-            customer.phone,
-            transaction.amount,
-            newBalance,
-            transaction.id,
-            charges,
-          );
-        } else {
-          await smsService.sendDebitAlert(
-            customer.phone,
-            transaction.amount,
-            newBalance,
-            transaction.id,
-            charges,
-          );
-        }
-      } catch (smsError) {
-        console.error("SMS failed:", smsError.message);
-      }
+      const smsPromise =
+        transaction.type === "deposit"
+          ? smsService.sendCreditAlert(
+              customer.phone,
+              transaction.amount,
+              newBalance,
+              transaction.id,
+              charges,
+            )
+          : smsService.sendDebitAlert(
+              customer.phone,
+              transaction.amount,
+              newBalance,
+              transaction.id,
+              charges,
+            );
+      smsPromise.catch((e) => console.error("SMS failed:", e.message));
     }
 
-    // Build response
-    let message = `✅ ${transaction.type === "deposit" ? "Deposit" : "Withdrawal"} approved!`;
+    let message = `${transaction.type === "deposit" ? "Deposit" : "Withdrawal"} approved!`;
     if (overdraftResult) {
-      message = `✅ Deposit approved! ₦${overdraftResult.autoDebit.toLocaleString()} auto-debited for overdraft. `;
-      if (overdraftResult.overdraftCleared) {
-        message += `🎉 Overdraft FULLY CLEARED! `;
-      }
-      message += `Customer received ₦${overdraftResult.remainingForCustomer.toLocaleString()}.`;
+      message = `Deposit approved! N${overdraftResult.autoDebit.toLocaleString()} auto-debited for overdraft. ${overdraftResult.overdraftCleared ? "Overdraft FULLY CLEARED! " : ""}Customer received N${overdraftResult.remainingForCustomer.toLocaleString()}.`;
     }
 
     res.json({
@@ -484,7 +454,7 @@ exports.approveTransaction = async (req, res) => {
         type: transaction.type,
         amount: transaction.amount,
         status: transaction.status,
-        newBalance: newBalance,
+        newBalance,
         approvedBy: transaction.approvedBy,
         autoDebitAmount: overdraftResult?.autoDebit || 0,
         overdraftCleared: overdraftResult?.overdraftCleared || false,
@@ -492,7 +462,7 @@ exports.approveTransaction = async (req, res) => {
       customer: {
         id: customer.id,
         name: customer.name,
-        newBalance: newBalance,
+        newBalance,
         hasActiveOverdraft: overdraftResult
           ? !overdraftResult.overdraftCleared
           : customer.hasActiveOverdraft,
@@ -507,28 +477,21 @@ exports.approveTransaction = async (req, res) => {
   }
 };
 
-// ==========================================================
-// REJECT TRANSACTION
-// ==========================================================
 exports.rejectTransaction = async (req, res) => {
   try {
     const { transactionId } = req.params;
     const { rejectedBy, reason } = req.body;
 
     const transaction = await Transaction.findOne({ id: transactionId });
-    if (!transaction) {
+    if (!transaction)
       return res.status(404).json({ error: "Transaction not found" });
-    }
-
-    if (transaction.status !== "pending") {
+    if (transaction.status !== "pending")
       return res.status(400).json({ error: "Transaction already processed" });
-    }
 
     transaction.status = "rejected";
     transaction.rejectedBy = rejectedBy?.name || "Admin";
     transaction.rejectedAt = new Date();
     transaction.rejectionReason = reason || "";
-
     await transaction.save();
 
     res.json({
@@ -542,13 +505,24 @@ exports.rejectTransaction = async (req, res) => {
   }
 };
 
-// ==========================================================
-// GETTERS
-// ==========================================================
 exports.getAllTransactions = async (req, res) => {
   try {
-    const transactions = await Transaction.find().sort({ createdAt: -1 });
-    res.json(transactions);
+    const page = parseInt(req.query.page) || 1;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const skip = (page - 1) * limit;
+
+    const [transactions, total] = await Promise.all([
+      Transaction.find().sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Transaction.countDocuments(),
+    ]);
+
+    res.json({
+      success: true,
+      transactions,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -556,11 +530,26 @@ exports.getAllTransactions = async (req, res) => {
 
 exports.getTransactionsByCustomer = async (req, res) => {
   try {
-    const { customerId } = req.params;
-    const transactions = await Transaction.find({ customerId }).sort({
-      createdAt: -1,
+    const page = parseInt(req.query.page) || 1;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const skip = (page - 1) * limit;
+
+    const [transactions, total] = await Promise.all([
+      Transaction.find({ customerId: req.params.customerId })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Transaction.countDocuments({ customerId: req.params.customerId }),
+    ]);
+
+    res.json({
+      success: true,
+      transactions,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
     });
-    res.json(transactions);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -574,52 +563,52 @@ exports.getTransactionStats = async (req, res) => {
     thisMonth.setDate(1);
     thisMonth.setHours(0, 0, 0, 0);
 
-    const todayStats = await Transaction.aggregate([
-      { $match: { status: "approved", createdAt: { $gte: today } } },
-      {
-        $group: {
-          _id: "$type",
-          count: { $sum: 1 },
-          totalAmount: { $sum: "$amount" },
-          totalCharges: { $sum: "$charges" },
+    const [todayStats, monthStats] = await Promise.all([
+      Transaction.aggregate([
+        { $match: { status: "approved", createdAt: { $gte: today } } },
+        {
+          $group: {
+            _id: "$type",
+            count: { $sum: 1 },
+            totalAmount: { $sum: "$amount" },
+            totalCharges: { $sum: "$charges" },
+          },
         },
-      },
+      ]),
+      Transaction.aggregate([
+        { $match: { status: "approved", createdAt: { $gte: thisMonth } } },
+        {
+          $group: {
+            _id: "$type",
+            count: { $sum: 1 },
+            totalAmount: { $sum: "$amount" },
+            totalCharges: { $sum: "$charges" },
+          },
+        },
+      ]),
     ]);
 
-    const monthStats = await Transaction.aggregate([
-      { $match: { status: "approved", createdAt: { $gte: thisMonth } } },
-      {
-        $group: {
-          _id: "$type",
-          count: { $sum: 1 },
-          totalAmount: { $sum: "$amount" },
-          totalCharges: { $sum: "$charges" },
-        },
-      },
-    ]);
-
-    const formatStats = (stats) => {
-      const result = {
+    const format = (stats) => {
+      const r = {
         deposits: { count: 0, totalAmount: 0, totalCharges: 0 },
         withdrawals: { count: 0, totalAmount: 0, totalCharges: 0 },
         overdraft_repayments: { count: 0, totalAmount: 0, totalCharges: 0 },
       };
       stats.forEach((s) => {
-        if (result[s._id]) {
-          result[s._id] = {
+        if (r[s._id])
+          r[s._id] = {
             count: s.count,
             totalAmount: s.totalAmount,
             totalCharges: s.totalCharges,
           };
-        }
       });
-      return result;
+      return r;
     };
 
     res.json({
       success: true,
-      today: formatStats(todayStats),
-      thisMonth: formatStats(monthStats),
+      today: format(todayStats),
+      thisMonth: format(monthStats),
     });
   } catch (error) {
     console.error("Get transaction stats error:", error);
@@ -627,40 +616,51 @@ exports.getTransactionStats = async (req, res) => {
   }
 };
 
-// ==========================================================
-// GET PENDING TRANSACTIONS (for admin approval queue)
-// ==========================================================
 exports.getPendingTransactions = async (req, res) => {
   try {
     const transactions = await Transaction.find({ status: "pending" })
       .sort({ requestedAt: -1 })
-      .limit(100);
-
-    res.json({
-      success: true,
-      count: transactions.length,
-      transactions,
-    });
+      .limit(100)
+      .lean();
+    res.json({ success: true, count: transactions.length, transactions });
   } catch (error) {
     console.error("Get pending transactions error:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
-// ==========================================================
-// GET TRANSACTIONS BY STAFF (for staff history)
-// ==========================================================
 exports.getTransactionsByStaff = async (req, res) => {
   try {
-    const { staffId } = req.params;
-    const transactions = await Transaction.find({
-      $or: [{ requestedById: staffId }, { staffId: staffId }],
-    }).sort({ createdAt: -1 });
+    const page = parseInt(req.query.page) || 1;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const skip = (page - 1) * limit;
+
+    const [transactions, total] = await Promise.all([
+      Transaction.find({
+        $or: [
+          { requestedById: req.params.staffId },
+          { staffId: req.params.staffId },
+        ],
+      })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Transaction.countDocuments({
+        $or: [
+          { requestedById: req.params.staffId },
+          { staffId: req.params.staffId },
+        ],
+      }),
+    ]);
 
     res.json({
       success: true,
       count: transactions.length,
       transactions,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
     });
   } catch (error) {
     console.error("Get transactions by staff error:", error);
@@ -668,55 +668,34 @@ exports.getTransactionsByStaff = async (req, res) => {
   }
 };
 
-// ==========================================================
-// GET SINGLE TRANSACTION
-// ==========================================================
 exports.getTransactionById = async (req, res) => {
   try {
-    const { transactionId } = req.params;
-    const transaction = await Transaction.findOne({ id: transactionId });
-
-    if (!transaction) {
+    const transaction = await Transaction.findOne({
+      id: req.params.transactionId,
+    }).lean();
+    if (!transaction)
       return res.status(404).json({ error: "Transaction not found" });
-    }
-
-    res.json({
-      success: true,
-      transaction,
-    });
+    res.json({ success: true, transaction });
   } catch (error) {
     console.error("Get transaction by ID error:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
-// ==========================================================
-// DELETE TRANSACTION (admin only - for cleanup)
-// ==========================================================
 exports.deleteTransaction = async (req, res) => {
   try {
-    const { transactionId } = req.params;
     const transaction = await Transaction.findOneAndDelete({
-      id: transactionId,
+      id: req.params.transactionId,
     });
-
-    if (!transaction) {
+    if (!transaction)
       return res.status(404).json({ error: "Transaction not found" });
-    }
-
-    res.json({
-      success: true,
-      message: "Transaction deleted successfully",
-    });
+    res.json({ success: true, message: "Transaction deleted successfully" });
   } catch (error) {
     console.error("Delete transaction error:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
-// ==========================================================
-// GET REVENUE STATS (for dashboard)
-// ==========================================================
 exports.getRevenueStats = async (req, res) => {
   try {
     const today = new Date();
@@ -725,96 +704,76 @@ exports.getRevenueStats = async (req, res) => {
     thisMonth.setDate(1);
     thisMonth.setHours(0, 0, 0, 0);
 
-    // Charges revenue from transactions
-    const todayCharges = await Transaction.aggregate([
-      {
-        $match: {
-          status: "approved",
-          createdAt: { $gte: today },
-          charges: { $gt: 0 },
+    const [todayResult, monthResult] = await Promise.all([
+      Transaction.aggregate([
+        { $match: { status: "approved", createdAt: { $gte: today } } },
+        {
+          $facet: {
+            charges: [
+              { $match: { charges: { $gt: 0 } } },
+              {
+                $group: {
+                  _id: null,
+                  total: { $sum: "$charges" },
+                  count: { $sum: 1 },
+                },
+              },
+            ],
+            overdraft: [
+              { $match: { type: "overdraft_charges_revenue" } },
+              {
+                $group: {
+                  _id: null,
+                  total: { $sum: "$amount" },
+                  count: { $sum: 1 },
+                },
+              },
+            ],
+          },
         },
-      },
-      {
-        $group: {
-          _id: null,
-          totalCharges: { $sum: "$charges" },
-          count: { $sum: 1 },
+      ]),
+      Transaction.aggregate([
+        { $match: { status: "approved", createdAt: { $gte: thisMonth } } },
+        {
+          $facet: {
+            charges: [
+              { $match: { charges: { $gt: 0 } } },
+              {
+                $group: {
+                  _id: null,
+                  total: { $sum: "$charges" },
+                  count: { $sum: 1 },
+                },
+              },
+            ],
+            overdraft: [
+              { $match: { type: "overdraft_charges_revenue" } },
+              {
+                $group: {
+                  _id: null,
+                  total: { $sum: "$amount" },
+                  count: { $sum: 1 },
+                },
+              },
+            ],
+          },
         },
-      },
+      ]),
     ]);
 
-    const monthCharges = await Transaction.aggregate([
-      {
-        $match: {
-          status: "approved",
-          createdAt: { $gte: thisMonth },
-          charges: { $gt: 0 },
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          totalCharges: { $sum: "$charges" },
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-
-    // Overdraft charges revenue
-    const todayOverdraftRevenue = await Transaction.aggregate([
-      {
-        $match: {
-          status: "approved",
-          createdAt: { $gte: today },
-          type: "overdraft_charges_revenue",
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          totalRevenue: { $sum: "$amount" },
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-
-    const monthOverdraftRevenue = await Transaction.aggregate([
-      {
-        $match: {
-          status: "approved",
-          createdAt: { $gte: thisMonth },
-          type: "overdraft_charges_revenue",
-        },
-      },
-      {
-        $group: {
-          _id: null,
-          totalRevenue: { $sum: "$amount" },
-          count: { $sum: 1 },
-        },
-      },
-    ]);
+    const extract = (r) => ({
+      transactionCharges: r[0]?.charges[0]?.total || 0,
+      transactionCount: r[0]?.charges[0]?.count || 0,
+      overdraftRevenue: r[0]?.overdraft[0]?.total || 0,
+      overdraftCount: r[0]?.overdraft[0]?.count || 0,
+      totalRevenue:
+        (r[0]?.charges[0]?.total || 0) + (r[0]?.overdraft[0]?.total || 0),
+    });
 
     res.json({
       success: true,
-      today: {
-        transactionCharges: todayCharges[0]?.totalCharges || 0,
-        transactionCount: todayCharges[0]?.count || 0,
-        overdraftRevenue: todayOverdraftRevenue[0]?.totalRevenue || 0,
-        overdraftCount: todayOverdraftRevenue[0]?.count || 0,
-        totalRevenue:
-          (todayCharges[0]?.totalCharges || 0) +
-          (todayOverdraftRevenue[0]?.totalRevenue || 0),
-      },
-      thisMonth: {
-        transactionCharges: monthCharges[0]?.totalCharges || 0,
-        transactionCount: monthCharges[0]?.count || 0,
-        overdraftRevenue: monthOverdraftRevenue[0]?.totalRevenue || 0,
-        overdraftCount: monthOverdraftRevenue[0]?.count || 0,
-        totalRevenue:
-          (monthCharges[0]?.totalCharges || 0) +
-          (monthOverdraftRevenue[0]?.totalRevenue || 0),
-      },
+      today: extract(todayResult),
+      thisMonth: extract(monthResult),
     });
   } catch (error) {
     console.error("Get revenue stats error:", error);
@@ -822,9 +781,6 @@ exports.getRevenueStats = async (req, res) => {
   }
 };
 
-// ==========================================================
-// VOID TRANSACTION (reverse a transaction - admin only)
-// ==========================================================
 exports.voidTransaction = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -836,44 +792,40 @@ exports.voidTransaction = async (req, res) => {
     const transaction = await Transaction.findOne({
       id: transactionId,
     }).session(session);
-
     if (!transaction) {
       await session.abortTransaction();
       return res.status(404).json({ error: "Transaction not found" });
     }
-
     if (transaction.status !== "approved") {
       await session.abortTransaction();
-      return res.status(400).json({
-        error: "Only approved transactions can be voided",
-        currentStatus: transaction.status,
-      });
+      return res
+        .status(400)
+        .json({
+          error: "Only approved transactions can be voided",
+          currentStatus: transaction.status,
+        });
     }
 
-    const customer = await findCustomerRobustly(transaction.customerId);
+    const customer = await findCustomerRobustly(transaction.customerId, true);
     if (!customer) {
       await session.abortTransaction();
       return res.status(404).json({ error: "Customer not found" });
     }
 
-    // Reverse the balance change
     let reversalBalance;
     const netAmount = transaction.netAmount;
 
-    if (transaction.type === "deposit") {
-      // Reverse deposit: subtract net amount
+    if (transaction.type === "deposit")
       reversalBalance = (customer.cashBalance || 0) - netAmount;
-    } else if (transaction.type === "withdrawal") {
-      // Reverse withdrawal: add net amount back
+    else if (transaction.type === "withdrawal")
       reversalBalance = (customer.cashBalance || 0) + netAmount;
-    } else {
+    else {
       await session.abortTransaction();
-      return res.status(400).json({
-        error: `Cannot void transaction of type: ${transaction.type}`,
-      });
+      return res
+        .status(400)
+        .json({ error: `Cannot void type: ${transaction.type}` });
     }
 
-    // Update transaction status
     transaction.status = "voided";
     transaction.voidedBy = voidedBy?.name || "Admin";
     transaction.voidedAt = new Date();
@@ -881,27 +833,23 @@ exports.voidTransaction = async (req, res) => {
     transaction.reversalBalance = reversalBalance;
     await transaction.save({ session });
 
-    // Reverse customer balance and stats
     const updateQuery = customer.id
       ? { id: customer.id }
       : { _id: customer._id };
-
-    const customerUpdate = {
-      $set: {
-        cashBalance: reversalBalance,
-        balance: reversalBalance,
+    await Customer.findOneAndUpdate(
+      updateQuery,
+      {
+        $set: { cashBalance: reversalBalance, balance: reversalBalance },
+        $inc: {
+          totalTransactions: -1,
+          totalDeposits: transaction.type === "deposit" ? -netAmount : 0,
+          totalWithdrawals: transaction.type === "withdrawal" ? -netAmount : 0,
+          totalChargesPaid: -(transaction.charges || 0),
+        },
       },
-      $inc: {
-        totalTransactions: -1,
-        totalDeposits: transaction.type === "deposit" ? -netAmount : 0,
-        totalWithdrawals: transaction.type === "withdrawal" ? -netAmount : 0,
-        totalChargesPaid: -(transaction.charges || 0),
-      },
-    };
+      { session },
+    );
 
-    await Customer.findOneAndUpdate(updateQuery, customerUpdate, { session });
-
-    // Create reversal transaction record
     const reversalTxn = new Transaction({
       id: "TXN" + Date.now() + Math.random().toString(36).substr(2, 4),
       customerId: transaction.customerId,
@@ -920,20 +868,16 @@ exports.voidTransaction = async (req, res) => {
     await reversalTxn.save({ session });
 
     await session.commitTransaction();
-
     res.json({
       success: true,
-      message: `Transaction ${transaction.id} voided successfully`,
+      message: `Transaction ${transaction.id} voided`,
       transaction: {
         id: transaction.id,
         status: "voided",
         originalType: transaction.type,
         reversalBalance,
       },
-      reversalTransaction: {
-        id: reversalTxn.id,
-        amount: reversalTxn.amount,
-      },
+      reversalTransaction: { id: reversalTxn.id, amount: reversalTxn.amount },
       customer: {
         id: customer.id,
         name: customer.name,
@@ -949,9 +893,6 @@ exports.voidTransaction = async (req, res) => {
   }
 };
 
-// ==========================================================
-// GET DASHBOARD SUMMARY (for admin dashboard)
-// ==========================================================
 exports.getDashboardSummary = async (req, res) => {
   try {
     const today = new Date();
@@ -967,6 +908,7 @@ exports.getDashboardSummary = async (req, res) => {
       todayApproved,
       monthApproved,
       activeOverdrafts,
+      balanceStats,
     ] = await Promise.all([
       Customer.countDocuments(),
       Transaction.countDocuments(),
@@ -980,18 +922,16 @@ exports.getDashboardSummary = async (req, res) => {
         createdAt: { $gte: thisMonth },
       }),
       Customer.countDocuments({ hasActiveOverdraft: true }),
-    ]);
-
-    // Total balances
-    const balanceStats = await Customer.aggregate([
-      {
-        $group: {
-          _id: null,
-          totalCashBalance: { $sum: "$cashBalance" },
-          totalBalance: { $sum: "$balance" },
-          avgBalance: { $avg: "$cashBalance" },
+      Customer.aggregate([
+        {
+          $group: {
+            _id: null,
+            totalCashBalance: { $sum: "$cashBalance" },
+            totalBalance: { $sum: "$balance" },
+            avgBalance: { $avg: "$cashBalance" },
+          },
         },
-      },
+      ]),
     ]);
 
     res.json({

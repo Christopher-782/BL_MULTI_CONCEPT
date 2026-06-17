@@ -9,7 +9,6 @@ const transactionSchema = new mongoose.Schema({
   charges: { type: Number, default: 0 },
   netAmount: Number,
 
-  // ADD THESE FIELDS for loan/overdraft tracking
   principalPortion: { type: Number, default: 0 },
   interestPortion: { type: Number, default: 0 },
   interestRevenue: { type: Number, default: 0 },
@@ -20,9 +19,15 @@ const transactionSchema = new mongoose.Schema({
   isRevenue: { type: Boolean, default: false },
   revenueType: { type: String, default: null },
 
+  // FIX: Added missing fields for overdraft auto-debit tracking
+  isAutoDebit: { type: Boolean, default: false },
+  autoDebitAmount: { type: Number, default: 0 },
+  overdraftCleared: { type: Boolean, default: false },
+  remainingAfterAutoDebit: { type: Number, default: 0 },
+
   status: {
     type: String,
-    enum: ["pending", "approved", "rejected"],
+    enum: ["pending", "approved", "rejected", "voided"],
     default: "pending",
   },
   type: {
@@ -31,12 +36,13 @@ const transactionSchema = new mongoose.Schema({
       "deposit",
       "withdrawal",
       "loan_disbursement",
-      "overdraft_disbursement", // ← ADD THIS
+      "overdraft_disbursement",
       "loan_repayment",
-      "overdraft_repayment", // ← ADD THIS
+      "overdraft_repayment",
       "interest_revenue",
-      "overdraft_charges_revenue", // ← ADD THIS
-      "manual_charge", // ← ADD THIS (if used)
+      "overdraft_charges_revenue",
+      "manual_charge",
+      "reversal",
     ],
     required: true,
   },
@@ -53,14 +59,24 @@ const transactionSchema = new mongoose.Schema({
   staffId: { type: String, default: null },
   requestedAt: Date,
   finalBalance: Number,
+
+  // FIX: Added void tracking fields
+  voidedBy: { type: String, default: null },
+  voidedAt: { type: Date },
+  voidReason: { type: String, default: "" },
+  reversalBalance: { type: Number },
+  originalTransactionId: { type: String, default: null },
+
   createdAt: { type: Date, default: Date.now },
 });
 
 transactionSchema.index({ date: -1 });
 transactionSchema.index({ status: 1, requestedById: 1 });
 transactionSchema.index({ customerId: 1, date: -1 });
-transactionSchema.index({ type: 1, status: 1 }); // ← ADD THIS
-transactionSchema.index({ loanId: 1 }); // ← ADD THIS
+transactionSchema.index({ type: 1, status: 1 });
+transactionSchema.index({ loanId: 1 });
+transactionSchema.index({ isAutoDebit: 1, type: 1 }); // FIX: Added for auto-debit queries
+transactionSchema.index({ isRevenue: 1, revenueType: 1 }); // FIX: Added for revenue queries
 
 module.exports = mongoose.model(
   "Transaction",

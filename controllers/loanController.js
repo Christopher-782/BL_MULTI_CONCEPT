@@ -4,12 +4,10 @@ const Transaction = require("../models/transaction");
 const smsService = require("../services/smsService");
 const mongoose = require("mongoose");
 
-// Generate unique ID
 function generateId() {
   return "LOAN" + Date.now() + Math.floor(Math.random() * 1000);
 }
 
-// Calculate loan details
 function calculateLoanDetails(
   amount,
   interestRate,
@@ -22,11 +20,9 @@ function calculateLoanDetails(
   return { interest, totalPayable, installmentAmount };
 }
 
-// Create loan/overdraft request
 exports.createLoanRequest = async (req, res) => {
   try {
     console.log("Received loan request body:", req.body);
-
     const {
       customerId,
       customerName,
@@ -45,69 +41,52 @@ exports.createLoanRequest = async (req, res) => {
       processingCharges,
     } = req.body;
 
-    // Validate required fields
-    if (!customerId) {
+    if (!customerId)
       return res.status(400).json({ error: "Customer ID is required" });
-    }
-    if (!customerName) {
+    if (!customerName)
       return res.status(400).json({ error: "Customer name is required" });
-    }
-    if (!amount || amount <= 0) {
+    if (!amount || amount <= 0)
       return res.status(400).json({ error: "Valid amount is required" });
-    }
 
-    // Loan-specific validations (not required for overdraft)
     if (type !== "overdraft") {
-      if (!interestRate || interestRate < 0) {
+      if (!interestRate || interestRate < 0)
         return res
           .status(400)
           .json({ error: "Valid interest rate is required" });
-      }
-      if (!repaymentPeriod) {
+      if (!repaymentPeriod)
         return res.status(400).json({ error: "Repayment period is required" });
-      }
-      if (!numberOfInstallments || numberOfInstallments <= 0) {
+      if (!numberOfInstallments || numberOfInstallments <= 0)
         return res
           .status(400)
           .json({ error: "Valid number of installments is required" });
-      }
-      if (!repaymentStartDate) {
+      if (!repaymentStartDate)
         return res
           .status(400)
           .json({ error: "Repayment start date is required" });
-      }
     }
 
-    // Validate customer exists
     const customer = await Customer.findOne({ id: customerId });
-    if (!customer) {
-      return res.status(404).json({ error: "Customer not found" });
-    }
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
 
-    // For overdraft, check if customer already has active overdraft
     if (type === "overdraft") {
       const activeOverdraft = await Loan.findOne({
-        customerId: customerId,
+        customerId,
         type: "overdraft",
         status: { $in: ["approved", "active"] },
       });
-
-      if (activeOverdraft) {
+      if (activeOverdraft)
         return res
           .status(400)
           .json({ error: "Customer already has an active overdraft" });
-      }
     }
 
-    // Calculate loan details
-    let interest = 0;
-    let totalPayable = amount;
-    let installmentAmount = amount;
-    let endDate = new Date();
-    let repayments = [];
+    let interest = 0,
+      totalPayable = amount,
+      installmentAmount = amount,
+      endDate = new Date(),
+      repayments = [];
 
     if (type !== "overdraft") {
-      // Regular loan with installments
       const calc = calculateLoanDetails(
         amount,
         interestRate,
@@ -117,20 +96,15 @@ exports.createLoanRequest = async (req, res) => {
       interest = calc.interest;
       totalPayable = calc.totalPayable;
       installmentAmount = calc.installmentAmount;
-
-      // Calculate end date
       const startDate = new Date(repaymentStartDate);
       endDate = new Date(startDate);
-
-      if (repaymentPeriod === "weekly") {
+      if (repaymentPeriod === "weekly")
         endDate.setDate(startDate.getDate() + numberOfInstallments * 7);
-      } else if (repaymentPeriod === "bi-weekly") {
+      else if (repaymentPeriod === "bi-weekly")
         endDate.setDate(startDate.getDate() + numberOfInstallments * 14);
-      } else if (repaymentPeriod === "monthly") {
+      else if (repaymentPeriod === "monthly")
         endDate.setMonth(startDate.getMonth() + numberOfInstallments);
-      }
 
-      // Generate repayment schedule
       let currentDate = new Date(startDate);
       for (let i = 0; i < numberOfInstallments; i++) {
         repayments.push({
@@ -140,21 +114,17 @@ exports.createLoanRequest = async (req, res) => {
           amount: installmentAmount,
           status: "pending",
         });
-
-        if (repaymentPeriod === "weekly") {
+        if (repaymentPeriod === "weekly")
           currentDate.setDate(currentDate.getDate() + 7);
-        } else if (repaymentPeriod === "bi-weekly") {
+        else if (repaymentPeriod === "bi-weekly")
           currentDate.setDate(currentDate.getDate() + 14);
-        } else if (repaymentPeriod === "monthly") {
+        else if (repaymentPeriod === "monthly")
           currentDate.setMonth(currentDate.getMonth() + 1);
-        }
       }
     } else {
-      // Overdraft: single repayment by deadline including charges
       const charges = Number(processingCharges) || 0;
       totalPayable = Number(amount) + charges;
       endDate = new Date(paymentDeadline || Date.now());
-
       repayments = [
         {
           id: "REPAY" + Date.now() + Math.random().toString(36).substr(2, 4),
@@ -167,13 +137,11 @@ exports.createLoanRequest = async (req, res) => {
       ];
     }
 
-    // Create safe requestedBy object
     const safeRequestedBy = {
       staffId: requestedBy?.staffId || "system",
       staffName: requestedBy?.staffName || "System",
     };
 
-    // Create loan object
     const loan = new Loan({
       id: generateId(),
       customerId,
@@ -206,7 +174,7 @@ exports.createLoanRequest = async (req, res) => {
     });
 
     await loan.save();
-    console.log("✅ Loan saved successfully:", loan.id);
+    console.log("Loan saved successfully:", loan.id);
 
     res.status(201).json({
       success: true,
@@ -223,81 +191,69 @@ exports.createLoanRequest = async (req, res) => {
     });
   } catch (error) {
     console.error("Create loan request error:", error);
-    res.status(500).json({
-      error: error.message || "Failed to create loan request",
-      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
-    });
+    res
+      .status(500)
+      .json({
+        error: error.message || "Failed to create loan request",
+        stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
+      });
   }
 };
 
-// Get all loan requests (admin view)
 exports.getAllLoans = async (req, res) => {
   try {
-    const loans = await Loan.find().sort({ createdAt: -1 });
-    res.json(loans);
+    res.json(await Loan.find().sort({ createdAt: -1 }));
   } catch (error) {
     console.error("Get all loans error:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
-// Get loans by staff (staff view)
 exports.getLoansByStaff = async (req, res) => {
   try {
-    const { staffId } = req.params;
-    const loans = await Loan.find({ "requestedBy.staffId": staffId }).sort({
-      createdAt: -1,
-    });
-    res.json(loans);
+    res.json(
+      await Loan.find({ "requestedBy.staffId": req.params.staffId }).sort({
+        createdAt: -1,
+      }),
+    );
   } catch (error) {
     console.error("Get loans by staff error:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
-// Get loans by customer
 exports.getLoansByCustomer = async (req, res) => {
   try {
-    const { customerId } = req.params;
-    const loans = await Loan.find({ customerId }).sort({ createdAt: -1 });
-    res.json(loans);
+    res.json(
+      await Loan.find({ customerId: req.params.customerId }).sort({
+        createdAt: -1,
+      }),
+    );
   } catch (error) {
     console.error("Get loans by customer error:", error);
     res.status(500).json({ error: error.message });
   }
 };
 
-// Approve loan with CORRECTED overdraft flow
 exports.approveLoan = async (req, res) => {
   try {
     const { loanId } = req.params;
     const { approvedBy } = req.body;
-
     const loan = await Loan.findOne({ id: loanId });
-    if (!loan) {
-      return res.status(404).json({ error: "Loan request not found" });
-    }
-
-    if (loan.status !== "pending") {
+    if (!loan) return res.status(404).json({ error: "Loan request not found" });
+    if (loan.status !== "pending")
       return res.status(400).json({ error: "Loan already processed" });
-    }
 
     const customer = await Customer.findOne({ id: loan.customerId });
-    if (!customer) {
-      return res.status(404).json({ error: "Customer not found" });
-    }
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
 
     const isOverdraft = loan.type === "overdraft";
     const processingCharges = loan.processingCharges || 0;
-
-    // For overdraft: totalPayable = amount + processingCharges (no interest)
-    // For loan: totalPayable = amount + interest
     const interest = isOverdraft ? 0 : loan.totalPayable - loan.amount;
     const totalPayable = isOverdraft
       ? loan.amount + processingCharges
       : loan.totalPayable;
 
-    // Update loan status
     loan.status = "active";
     loan.approvedBy = {
       adminId: approvedBy.id,
@@ -311,10 +267,8 @@ exports.approveLoan = async (req, res) => {
     loan.outstandingCharges = isOverdraft ? processingCharges : 0;
     loan.totalPayable = totalPayable;
     loan.autoDebitEnabled = true;
-
     await loan.save();
 
-    // Create disbursement transaction
     const disbursementTransaction = new Transaction({
       id: "TXN" + Date.now() + Math.random(),
       customerId: loan.customerId,
@@ -322,9 +276,9 @@ exports.approveLoan = async (req, res) => {
       type: isOverdraft ? "overdraft_disbursement" : "loan_disbursement",
       amount: loan.amount,
       charges: 0,
-      netAmount: isOverdraft ? loan.amount : loan.amount,
+      netAmount: loan.amount,
       description: isOverdraft
-        ? `Overdraft disbursement - ${loan.id} (Balance increased by ₦${loan.amount.toLocaleString()}. Charges: ₦${processingCharges.toLocaleString()} due on settlement)`
+        ? `Overdraft disbursement - ${loan.id} (Balance increased by N${loan.amount.toLocaleString()}. Charges: N${processingCharges.toLocaleString()} due on settlement)`
         : `Loan disbursement - ${loan.id}`,
       status: "approved",
       requestedBy: approvedBy.name,
@@ -333,16 +287,10 @@ exports.approveLoan = async (req, res) => {
     });
     await disbursementTransaction.save();
 
-    let newCashBalance;
-    let smsMessage;
+    let newCashBalance, smsMessage;
 
     if (isOverdraft) {
-      // ==========================================
-      // CORRECTED OVERDRAFT: ADD to customer balance
-      // ==========================================
-      // Customer has 1000, gets overdraft 4000 → balance becomes 5000
       newCashBalance = (customer.cashBalance || 0) + loan.amount;
-
       await Customer.findOneAndUpdate(
         { id: loan.customerId },
         {
@@ -353,18 +301,12 @@ exports.approveLoan = async (req, res) => {
             activeLoanId: loan.id,
             hasActiveOverdraft: true,
           },
-          $inc: {
-            totalLoanAmount: loan.amount,
-            totalInterestAccrued: 0,
-          },
+          $inc: { totalLoanAmount: loan.amount, totalInterestAccrued: 0 },
         },
       );
-
-      smsMessage = `VaultFlow: Dear ${customer.name}, your overdraft of ₦${loan.amount.toLocaleString()} has been approved. Processing charges: ₦${processingCharges.toLocaleString()}. Total due by ${new Date(loan.paymentDeadline).toLocaleDateString("en-GB")}: ₦${totalPayable.toLocaleString()}. Your balance is now ₦${newCashBalance.toLocaleString()}. All deposits will auto-debit until cleared.`;
+      smsMessage = `VaultFlow: Dear ${customer.name}, your overdraft of N${loan.amount.toLocaleString()} has been approved. Processing charges: N${processingCharges.toLocaleString()}. Total due by ${new Date(loan.paymentDeadline).toLocaleDateString("en-GB")}: N${totalPayable.toLocaleString()}. Your balance is now N${newCashBalance.toLocaleString()}. All deposits will auto-debit until cleared.`;
     } else {
-      // REGULAR LOAN: Credit customer balance
       newCashBalance = (customer.cashBalance || 0) + loan.amount;
-
       await Customer.findOneAndUpdate(
         { id: loan.customerId },
         {
@@ -381,19 +323,14 @@ exports.approveLoan = async (req, res) => {
           },
         },
       );
-
-      smsMessage = `VaultFlow: Dear ${customer.name}, your loan of ₦${loan.amount.toLocaleString()} has been approved and disbursed. Interest: ₦${interest.toLocaleString()}. Total payable: ₦${totalPayable.toLocaleString()}. New balance: ₦${newCashBalance.toLocaleString()}.`;
+      smsMessage = `VaultFlow: Dear ${customer.name}, your loan of N${loan.amount.toLocaleString()} has been approved and disbursed. Interest: N${interest.toLocaleString()}. Total payable: N${totalPayable.toLocaleString()}. New balance: N${newCashBalance.toLocaleString()}.`;
     }
 
-    // Send SMS
     if (customer.phone) {
       try {
-        if (isOverdraft) {
-          await smsService.sendSMS({
-            to: customer.phone,
-            message: smsMessage,
-          });
-        } else {
+        if (isOverdraft)
+          await smsService.sendSMS({ to: customer.phone, message: smsMessage });
+        else
           await smsService.sendLoanDisbursementAlert(
             customer.phone,
             loan.amount,
@@ -405,7 +342,6 @@ exports.approveLoan = async (req, res) => {
             loan.repaymentPeriod,
             loan.installmentAmount,
           );
-        }
       } catch (smsError) {
         console.error("SMS failed:", smsError.message);
       }
@@ -414,13 +350,13 @@ exports.approveLoan = async (req, res) => {
     res.json({
       success: true,
       message: isOverdraft
-        ? `✅ Overdraft approved! ₦${loan.amount.toLocaleString()} added to ${customer.name}'s balance. Charges: ₦${processingCharges.toLocaleString()}. Total due: ₦${totalPayable.toLocaleString()}. New balance: ₦${newCashBalance.toLocaleString()}.`
-        : `✅ Loan approved! ₦${loan.amount.toLocaleString()} disbursed to ${customer.name}'s account.`,
+        ? `Overdraft approved! N${loan.amount.toLocaleString()} added to ${customer.name}'s balance. Charges: N${processingCharges.toLocaleString()}. Total due: N${totalPayable.toLocaleString()}. New balance: N${newCashBalance.toLocaleString()}.`
+        : `Loan approved! N${loan.amount.toLocaleString()} disbursed to ${customer.name}'s account.`,
       loan: {
         id: loan.id,
         amount: loan.amount,
         processingCharges: isOverdraft ? processingCharges : undefined,
-        totalPayable: totalPayable,
+        totalPayable,
         status: loan.status,
         paymentDeadline: isOverdraft ? loan.paymentDeadline : undefined,
       },
@@ -437,20 +373,14 @@ exports.approveLoan = async (req, res) => {
   }
 };
 
-// Reject loan request with SMS notification
 exports.rejectLoan = async (req, res) => {
   try {
     const { loanId } = req.params;
     const { rejectedBy, reason } = req.body;
-
     const loan = await Loan.findOne({ id: loanId });
-    if (!loan) {
-      return res.status(404).json({ error: "Loan request not found" });
-    }
-
-    if (loan.status !== "pending") {
+    if (!loan) return res.status(404).json({ error: "Loan request not found" });
+    if (loan.status !== "pending")
       return res.status(400).json({ error: "Loan request already processed" });
-    }
 
     loan.status = "rejected";
     loan.rejectedBy = {
@@ -459,16 +389,14 @@ exports.rejectLoan = async (req, res) => {
       rejectedAt: new Date(),
     };
     loan.notes = reason || loan.notes;
-
     await loan.save();
 
-    // Send SMS notification for rejection
     const customer = await Customer.findOne({ id: loan.customerId });
     if (customer?.phone) {
       try {
         await smsService.sendSMS({
           to: customer.phone,
-          message: `VaultFlow: Dear ${customer.name}, your ${loan.type} request of ₦${loan.amount.toLocaleString()} has been declined. Reason: ${reason || "Does not meet criteria"}. Contact us for more info.`,
+          message: `VaultFlow: Dear ${customer.name}, your ${loan.type} request of N${loan.amount.toLocaleString()} has been declined. Reason: ${reason || "Does not meet criteria"}. Contact us for more info.`,
         });
       } catch (smsError) {
         console.error("SMS failed:", smsError.message);
@@ -478,11 +406,7 @@ exports.rejectLoan = async (req, res) => {
     res.json({
       success: true,
       message: `${loan.type === "loan" ? "Loan" : "Overdraft"} request rejected`,
-      loan: {
-        id: loan.id,
-        status: loan.status,
-        rejectedBy: loan.rejectedBy,
-      },
+      loan: { id: loan.id, status: loan.status, rejectedBy: loan.rejectedBy },
     });
   } catch (error) {
     console.error("Reject loan error:", error);
@@ -490,7 +414,6 @@ exports.rejectLoan = async (req, res) => {
   }
 };
 
-// Process deposit with overdraft auto-debit (CORRECTED FLOW)
 exports.processDepositWithOverdraft = async (
   customerId,
   depositAmount,
@@ -509,14 +432,6 @@ exports.processDepositWithOverdraft = async (
       return { success: false, error: "Customer not found" };
     }
 
-    // ==========================================
-    // CORRECTED: Deposit goes toward negative balance (debt)
-    // ==========================================
-    // If balance is -5000 and deposit is 3000:
-    // - 3000 goes to overdraft repayment
-    // - Balance becomes -2000
-
-    // Check if customer has active overdraft
     if (customer.hasActiveOverdraft && customer.activeLoanId) {
       const loan = await Loan.findOne({ id: customer.activeLoanId }).session(
         session,
@@ -526,17 +441,13 @@ exports.processDepositWithOverdraft = async (
         const outstanding = loan.outstandingBalance || loan.totalPayable || 0;
 
         if (outstanding > 0) {
-          // Calculate how much goes to overdraft repayment
-          // The entire deposit (minus charges) goes toward the debt
           const netDeposit = depositAmount - charges;
           const repaymentAmount = Math.min(netDeposit, outstanding);
           const remainingForCustomer = netDeposit - repaymentAmount;
 
-          // Update overdraft
           loan.amountRepaid = (loan.amountRepaid || 0) + repaymentAmount;
           loan.outstandingBalance = Math.max(0, outstanding - repaymentAmount);
 
-          // Determine portions (principal first, then charges)
           const remainingPrincipal =
             loan.amount - (loan.principalRepaidToDate || 0);
           const principalPortion = Math.min(
@@ -545,7 +456,6 @@ exports.processDepositWithOverdraft = async (
           );
           const chargesPortion = repaymentAmount - principalPortion;
 
-          // Update repayment record
           const repayment = loan.repayments[0];
           repayment.paidAmount = (repayment.paidAmount || 0) + repaymentAmount;
           repayment.principalPortion =
@@ -562,7 +472,6 @@ exports.processDepositWithOverdraft = async (
 
           let isFullyPaid = false;
 
-          // Check if fully repaid
           if (
             loan.outstandingBalance <= 0 ||
             loan.amountRepaid >= loan.totalPayable
@@ -573,10 +482,8 @@ exports.processDepositWithOverdraft = async (
             loan.outstandingPrincipal = 0;
             loan.outstandingCharges = 0;
             isFullyPaid = true;
-
             repayment.status = "paid";
 
-            // Clear overdraft flags
             await Customer.findOneAndUpdate(
               { id: customerId },
               {
@@ -589,7 +496,6 @@ exports.processDepositWithOverdraft = async (
               { session },
             );
           } else {
-            // Update outstanding amounts
             loan.outstandingPrincipal = Math.max(
               0,
               loan.amount - loan.principalRepaidToDate,
@@ -602,27 +508,28 @@ exports.processDepositWithOverdraft = async (
 
           await loan.save({ session });
 
-          // ===== CORRECTED: Update customer balance =====
-          // Balance was negative, add the deposit, then subtract repayment
-          // Or simpler: balance increases by remainingForCustomer
-          // If balance was -5000 and deposit 3000 (all goes to repayment):
-          // new balance = -5000 + 3000 = -2000
-          const newCashBalance =
-            (customer.cashBalance || 0) + netDeposit - repaymentAmount;
+          // FIX 1: Correct balance calculation based on whether balance is negative or positive
+          const oldBalance = customer.cashBalance || 0;
+          let newCashBalance;
+
+          if (oldBalance < 0) {
+            // When balance is negative, deposit reduces the debt directly
+            // Repayment is already accounted for in the loan update
+            newCashBalance = oldBalance + depositAmount - charges;
+          } else {
+            // When balance is positive, repayment is deducted from what customer keeps
+            newCashBalance =
+              oldBalance + depositAmount - charges - repaymentAmount;
+          }
 
           await Customer.findOneAndUpdate(
             { id: customerId },
             {
-              $set: {
-                cashBalance: newCashBalance,
-                balance: newCashBalance,
-              },
+              $set: { cashBalance: newCashBalance, balance: newCashBalance },
             },
             { session },
           );
-          // ================================================
 
-          // Create overdraft repayment transaction
           const overdraftTxn = new Transaction({
             id: "TXN" + Date.now() + Math.random().toString(36).substr(2, 4),
             customerId,
@@ -633,7 +540,7 @@ exports.processDepositWithOverdraft = async (
             principalPortion,
             chargesPortion,
             netAmount: -repaymentAmount,
-            description: `Auto-debit from deposit: Overdraft repayment (Principal: ₦${principalPortion.toLocaleString()}, Charges: ₦${chargesPortion.toLocaleString()})${isFullyPaid ? " - FULLY CLEARED" : ""}`,
+            description: `Auto-debit from deposit: Overdraft repayment (Principal: N${principalPortion.toLocaleString()}, Charges: N${chargesPortion.toLocaleString()})${isFullyPaid ? " - FULLY CLEARED" : ""}`,
             status: "approved",
             approvedBy,
             date: new Date().toISOString(),
@@ -642,36 +549,40 @@ exports.processDepositWithOverdraft = async (
           });
           await overdraftTxn.save({ session });
 
-          // Create charges revenue transaction if charges portion exists
+          // FIX 2: Create charges revenue transaction for overdraft charges portion (only if not already recorded)
           if (chargesPortion > 0) {
-            const revenueTxn = new Transaction({
-              id: "REV" + Date.now() + Math.random().toString(36).substr(2, 4),
-              customerId,
-              customerName: customer.name,
-              type: "overdraft_charges_revenue",
-              amount: chargesPortion,
-              netAmount: chargesPortion,
-              description: `Overdraft charges revenue from auto-debit - ${loan.id}`,
-              status: "approved",
-              approvedBy: "System",
-              date: new Date().toISOString(),
-              loanId: loan.id,
-              isRevenue: true,
-              revenueType: "overdraft_charges",
-            });
-            await revenueTxn.save({ session });
+            const alreadyRecorded = loan.chargesRevenueRecorded || 0;
+            const newRevenue = chargesPortion - alreadyRecorded;
+            if (newRevenue > 0) {
+              const revenueTxn = new Transaction({
+                id:
+                  "REV" + Date.now() + Math.random().toString(36).substr(2, 4),
+                customerId,
+                customerName: customer.name,
+                type: "overdraft_charges_revenue",
+                amount: newRevenue,
+                netAmount: newRevenue,
+                description: `Overdraft charges revenue from auto-debit - ${loan.id}`,
+                status: "approved",
+                approvedBy: "System",
+                date: new Date().toISOString(),
+                loanId: loan.id,
+                isRevenue: true,
+                revenueType: "overdraft_charges",
+              });
+              await revenueTxn.save({ session });
+              loan.chargesRevenueRecorded = alreadyRecorded + newRevenue;
+              await loan.save({ session });
+            }
           }
 
           await session.commitTransaction();
 
-          // SMS notification
           if (customer.phone) {
             try {
-              let msg = `VaultFlow: Dear ${customer.name}, ₦${repaymentAmount.toLocaleString()} auto-debited from your ₦${depositAmount.toLocaleString()} deposit for overdraft repayment. `;
-              if (isFullyPaid) {
-                msg += `🎉 Overdraft FULLY CLEARED! `;
-              }
-              msg += `Outstanding: ₦${loan.outstandingBalance.toLocaleString()}. Available: ₦${remainingForCustomer.toLocaleString()}.`;
+              let msg = `VaultFlow: Dear ${customer.name}, N${repaymentAmount.toLocaleString()} auto-debited from your N${depositAmount.toLocaleString()} deposit for overdraft repayment. `;
+              if (isFullyPaid) msg += `Overdraft FULLY CLEARED! `;
+              msg += `Outstanding: N${loan.outstandingBalance.toLocaleString()}. Available: N${remainingForCustomer.toLocaleString()}.`;
               await smsService.sendSMS({ to: customer.phone, message: msg });
             } catch (smsError) {
               console.error("SMS failed:", smsError.message);
@@ -693,17 +604,14 @@ exports.processDepositWithOverdraft = async (
       }
     }
 
-    // ===== No active overdraft - normal deposit =====
+    // No active overdraft - normal deposit
     const netDeposit = depositAmount - charges;
     const newCashBalance = (customer.cashBalance || 0) + netDeposit;
 
     await Customer.findOneAndUpdate(
       { id: customerId },
       {
-        $set: {
-          cashBalance: newCashBalance,
-          balance: newCashBalance,
-        },
+        $set: { cashBalance: newCashBalance, balance: newCashBalance },
       },
       { session },
     );
@@ -727,7 +635,6 @@ exports.processDepositWithOverdraft = async (
   }
 };
 
-// Record repayment with FULL overdraft charges tracking
 exports.recordRepayment = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -756,14 +663,13 @@ exports.recordRepayment = async (req, res) => {
       return res.status(404).json({ error: "Customer not found" });
     }
 
-    // ========== OVERDRAFT FULL SETTLEMENT ==========
+    // OVERDRAFT FULL SETTLEMENT
     if (loan.type === "overdraft" && isFullSettlement) {
       const totalDue = totalPayable || loan.totalPayable;
       const chargesDue = processingCharges || loan.processingCharges || 0;
       const principalDue = loan.amount || 0;
       const availableBalance = customer.cashBalance || customer.balance || 0;
 
-      // Validate: customer must have enough for FULL amount (principal + charges)
       if (availableBalance < totalDue) {
         await session.abortTransaction();
         return res.status(400).json({
@@ -779,7 +685,6 @@ exports.recordRepayment = async (req, res) => {
         });
       }
 
-      // Mark the single overdraft repayment as paid
       const repayment = loan.repayments[0];
       repayment.status = "paid";
       repayment.paidDate = new Date();
@@ -789,7 +694,6 @@ exports.recordRepayment = async (req, res) => {
       repayment.chargesPortion = chargesDue;
       repayment.interestPortion = 0;
 
-      // Update loan status to completed
       loan.status = "completed";
       loan.amountRepaid = totalDue;
       loan.outstandingBalance = 0;
@@ -801,26 +705,22 @@ exports.recordRepayment = async (req, res) => {
       loan.chargesPaidToDate = chargesDue;
       loan.interestEarnedToDate = 0;
 
-      // Deduct FULL amount from customer (principal + charges)
+      // FIX 3: Use { new: true } instead of { returnDocument: "after" } for Mongoose session compatibility
       const updatedCustomer = await Customer.findOneAndUpdate(
         { id: loan.customerId },
         {
-          $inc: {
-            cashBalance: -totalDue,
-            balance: -totalDue,
-          },
+          $inc: { cashBalance: -totalDue, balance: -totalDue },
           $set: {
             hasActiveLoan: false,
             activeLoanId: null,
             hasActiveOverdraft: false,
           },
         },
-        { returnDocument: "after", session },
+        { new: true, session },
       );
 
       await loan.save({ session });
 
-      // Create overdraft repayment transaction (shows full breakdown)
       const transaction = new Transaction({
         id: "TXN" + Date.now() + Math.random().toString(36).substr(2, 4),
         customerId: loan.customerId,
@@ -833,26 +733,28 @@ exports.recordRepayment = async (req, res) => {
         interestPortion: 0,
         charges: chargesDue,
         netAmount: -totalDue,
-        description: `Overdraft settlement: Principal ₦${principalDue.toLocaleString()} + Processing Charges ₦${chargesDue.toLocaleString()} = ₦${totalDue.toLocaleString()}`,
+        description: `Overdraft settlement: Principal N${principalDue.toLocaleString()} + Processing Charges N${chargesDue.toLocaleString()} = N${totalDue.toLocaleString()}`,
         status: "approved",
         requestedBy: paidBy || "Admin",
         approvedBy: paidBy || "Admin",
         date: new Date().toISOString(),
         loanId: loan.id,
-        repaymentId: repaymentId,
+        repaymentId,
         isOverdraftSettlement: true,
       });
       await transaction.save({ session });
 
-      // Create separate CHARGES REVENUE transaction for accounting
-      if (chargesDue > 0) {
+      // FIX 4: Prevent double-counting charges revenue
+      const alreadyRecorded = loan.chargesRevenueRecorded || 0;
+      const newRevenue = chargesDue - alreadyRecorded;
+      if (newRevenue > 0) {
         const chargesRevenueTransaction = new Transaction({
           id: "REV" + Date.now() + Math.random().toString(36).substr(2, 4),
           customerId: loan.customerId,
           customerName: loan.customerName,
           type: "overdraft_charges_revenue",
-          amount: chargesDue,
-          netAmount: chargesDue,
+          amount: newRevenue,
+          netAmount: newRevenue,
           description: `Overdraft processing charges revenue from ${loan.customerName} - Loan ${loan.id}`,
           status: "approved",
           approvedBy: "System",
@@ -862,16 +764,17 @@ exports.recordRepayment = async (req, res) => {
           revenueType: "overdraft_charges",
         });
         await chargesRevenueTransaction.save({ session });
+        loan.chargesRevenueRecorded = alreadyRecorded + newRevenue;
+        await loan.save({ session });
       }
 
       await session.commitTransaction();
 
-      // Send SMS
       if (customer.phone) {
         try {
           await smsService.sendSMS({
             to: customer.phone,
-            message: `VaultFlow: Dear ${customer.name}, your overdraft of ₦${principalDue.toLocaleString()} has been fully settled. Charges: ₦${chargesDue.toLocaleString()}. Total deducted: ₦${totalDue.toLocaleString()}. New balance: ₦${updatedCustomer.cashBalance.toLocaleString()}.`,
+            message: `VaultFlow: Dear ${customer.name}, your overdraft of N${principalDue.toLocaleString()} has been fully settled. Charges: N${chargesDue.toLocaleString()}. Total deducted: N${totalDue.toLocaleString()}. New balance: N${updatedCustomer.cashBalance.toLocaleString()}.`,
           });
         } catch (smsError) {
           console.error("SMS failed:", smsError.message);
@@ -880,7 +783,7 @@ exports.recordRepayment = async (req, res) => {
 
       return res.json({
         success: true,
-        message: "🎉 Overdraft fully settled!",
+        message: "Overdraft fully settled!",
         loan: {
           id: loan.id,
           status: "completed",
@@ -901,7 +804,7 @@ exports.recordRepayment = async (req, res) => {
       });
     }
 
-    // ========== REGULAR LOAN REPAYMENT ==========
+    // REGULAR LOAN REPAYMENT
     const repaymentIndex = loan.repayments.findIndex(
       (r) => r.id === repaymentId,
     );
@@ -913,10 +816,12 @@ exports.recordRepayment = async (req, res) => {
     const repayment = loan.repayments[repaymentIndex];
     if (repayment.status === "paid") {
       await session.abortTransaction();
-      return res.status(400).json({
-        error: "This installment has already been paid",
-        paidDate: repayment.paidDate,
-      });
+      return res
+        .status(400)
+        .json({
+          error: "This installment has already been paid",
+          paidDate: repayment.paidDate,
+        });
     }
 
     const repaymentAmount = paymentAmount || repayment.amount || 0;
@@ -924,22 +829,21 @@ exports.recordRepayment = async (req, res) => {
 
     if (repaymentAmount > availableBalance) {
       await session.abortTransaction();
-      return res.status(400).json({
-        error: "Insufficient funds for loan repayment",
-        availableBalance,
-        requestedRepayment: repaymentAmount,
-        shortfall: repaymentAmount - availableBalance,
-      });
+      return res
+        .status(400)
+        .json({
+          error: "Insufficient funds for loan repayment",
+          availableBalance,
+          requestedRepayment: repaymentAmount,
+          shortfall: repaymentAmount - availableBalance,
+        });
     }
 
-    // Calculate interest revenue for THIS installment
     const totalInterest = loan.totalPayable - loan.amount;
     const interestRatio = totalInterest / loan.totalPayable;
-
     const interestPortion = repaymentAmount * interestRatio;
     const principalPortion = repaymentAmount - interestPortion;
 
-    // Update repayment record
     repayment.status = "paid";
     repayment.paidDate = new Date();
     repayment.paidBy = paidBy || "Customer";
@@ -949,7 +853,6 @@ exports.recordRepayment = async (req, res) => {
     repayment.interestRevenue = interestPortion;
     repayment.chargesPortion = 0;
 
-    // Update loan totals
     loan.amountRepaid = (loan.amountRepaid || 0) + repaymentAmount;
     loan.outstandingBalance = Math.max(
       0,
@@ -979,12 +882,11 @@ exports.recordRepayment = async (req, res) => {
           totalRepaid: repaymentAmount,
         },
       },
-      { returnDocument: "after", session },
+      { new: true, session },
     );
 
     await loan.save({ session });
 
-    // Create loan repayment transaction
     const transaction = new Transaction({
       id: "TXN" + Date.now() + Math.random().toString(36).substr(2, 4),
       customerId: loan.customerId,
@@ -992,22 +894,21 @@ exports.recordRepayment = async (req, res) => {
       customerPhone: customer.phone || null,
       type: "loan_repayment",
       amount: repaymentAmount,
-      principalPortion: principalPortion,
-      interestPortion: interestPortion,
+      principalPortion,
+      interestPortion,
       interestRevenue: interestPortion,
       charges: 0,
       netAmount: -repaymentAmount,
-      description: `Loan repayment #${repaymentIndex + 1}/${loan.numberOfInstallments} (Principal: ₦${principalPortion.toLocaleString()}, Interest: ₦${interestPortion.toLocaleString()})`,
+      description: `Loan repayment #${repaymentIndex + 1}/${loan.numberOfInstallments} (Principal: N${principalPortion.toLocaleString()}, Interest: N${interestPortion.toLocaleString()})`,
       status: "approved",
       requestedBy: paidBy || "Customer",
       approvedBy: paidBy || "System",
       date: new Date().toISOString(),
       loanId: loan.id,
-      repaymentId: repaymentId,
+      repaymentId,
     });
     await transaction.save({ session });
 
-    // Record interest revenue transaction
     if (interestPortion > 0) {
       const revenueTransaction = new Transaction({
         id: "REV" + Date.now() + Math.random().toString(36).substr(2, 4),
@@ -1021,7 +922,7 @@ exports.recordRepayment = async (req, res) => {
         approvedBy: "System",
         date: new Date().toISOString(),
         loanId: loan.id,
-        repaymentId: repaymentId,
+        repaymentId,
         isRevenue: true,
         revenueType: "loan_interest",
       });
@@ -1030,7 +931,6 @@ exports.recordRepayment = async (req, res) => {
 
     await session.commitTransaction();
 
-    // Send SMS
     if (customer.phone) {
       try {
         await smsService.sendDebitAlert(
@@ -1043,7 +943,7 @@ exports.recordRepayment = async (req, res) => {
         if (loan.status === "completed") {
           await smsService.sendSMS({
             to: customer.phone,
-            message: `VaultFlow: Congratulations ${customer.name}! Your loan ${loan.id} has been fully repaid. Total paid: ₦${loan.amountRepaid.toLocaleString()}.`,
+            message: `VaultFlow: Congratulations ${customer.name}! Your loan ${loan.id} has been fully repaid. Total paid: N${loan.amountRepaid.toLocaleString()}.`,
           });
         }
       } catch (smsError) {
@@ -1055,7 +955,7 @@ exports.recordRepayment = async (req, res) => {
       success: true,
       message:
         loan.status === "completed"
-          ? "🎉 Loan fully repaid!"
+          ? "Loan fully repaid!"
           : "Repayment recorded successfully",
       loan: {
         id: loan.id,
@@ -1068,8 +968,8 @@ exports.recordRepayment = async (req, res) => {
       thisRepayment: {
         installmentNumber: repaymentIndex + 1,
         totalPaid: repaymentAmount,
-        principalPortion: principalPortion,
-        interestPortion: interestPortion,
+        principalPortion,
+        interestPortion,
       },
       customer: {
         newCashBalance: updatedCustomer.cashBalance,
@@ -1086,11 +986,10 @@ exports.recordRepayment = async (req, res) => {
   }
 };
 
-// Get revenue reports
+// FIX 5: Revenue reports - group by payment date, not loan creation date
 exports.getRevenueReports = async (req, res) => {
   try {
     const { period, type } = req.query;
-
     let startDate = new Date();
     if (period === "daily") startDate.setHours(0, 0, 0, 0);
     else if (period === "weekly") startDate.setDate(startDate.getDate() - 7);
@@ -1099,7 +998,7 @@ exports.getRevenueReports = async (req, res) => {
       startDate.setFullYear(startDate.getFullYear() - 1);
     else startDate = new Date(0);
 
-    // Calculate interest from ACTUAL PAYMENTS
+    // FIX 5a: Interest revenue grouped by repayment paidDate, not loan createdAt
     let interestRevenue = [];
     if (!type || type === "all" || type === "interest") {
       interestRevenue = await Loan.aggregate([
@@ -1109,54 +1008,42 @@ exports.getRevenueReports = async (req, res) => {
             amountRepaid: { $gt: 0 },
           },
         },
+        { $unwind: "$repayments" },
         {
-          $project: {
-            interestEarnedToDate: 1,
-            principalRepaidToDate: 1,
-            amountRepaid: 1,
-            repayments: {
-              $filter: {
-                input: "$repayments",
-                as: "repayment",
-                cond: { $eq: ["$$repayment.status", "paid"] },
-              },
-            },
-            createdAt: 1,
-          },
-        },
-        {
-          $addFields: {
-            actualInterestRevenue: {
-              $sum: {
-                $map: {
-                  input: "$repayments",
-                  as: "r",
-                  in: { $ifNull: ["$$r.interestPortion", 0] },
-                },
-              },
-            },
+          $match: {
+            "repayments.status": "paid",
+            "repayments.paidDate": { $gte: startDate },
           },
         },
         {
           $group: {
             _id:
               period === "daily"
-                ? { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } }
+                ? {
+                    $dateToString: {
+                      format: "%Y-%m-%d",
+                      date: "$repayments.paidDate",
+                    },
+                  }
                 : period === "monthly"
-                  ? { $dateToString: { format: "%Y-%m", date: "$createdAt" } }
+                  ? {
+                      $dateToString: {
+                        format: "%Y-%m",
+                        date: "$repayments.paidDate",
+                      },
+                    }
                   : period === "yearly"
-                    ? { $year: "$createdAt" }
+                    ? { $year: "$repayments.paidDate" }
                     : null,
-            totalInterest: { $sum: "$actualInterestRevenue" },
+            totalInterest: { $sum: "$repayments.interestPortion" },
+            totalPrincipal: { $sum: "$repayments.principalPortion" },
             totalLoans: { $sum: 1 },
-            totalPrincipalRepaid: { $sum: "$principalRepaidToDate" },
           },
         },
         { $sort: { _id: 1 } },
       ]);
     }
 
-    // Transaction charges
     let transactionCharges = [];
     if (!type || type === "all" || type === "charges") {
       transactionCharges = await Transaction.aggregate([
@@ -1185,7 +1072,6 @@ exports.getRevenueReports = async (req, res) => {
       ]);
     }
 
-    // Overdraft charges revenue
     let overdraftChargesRevenue = [];
     if (!type || type === "all" || type === "overdraft_charges") {
       overdraftChargesRevenue = await Transaction.aggregate([
@@ -1214,7 +1100,6 @@ exports.getRevenueReports = async (req, res) => {
       ]);
     }
 
-    // Auto-debit overdraft repayments
     let autoDebitRevenue = [];
     if (!type || type === "all" || type === "auto_debit") {
       autoDebitRevenue = await Transaction.aggregate([
@@ -1261,6 +1146,22 @@ exports.getRevenueReports = async (req, res) => {
       0,
     );
 
+    // FIX 5b: Unearned interest excludes overdrafts (they have no interest, only charges)
+    const unearnedInterestResult = await Loan.aggregate([
+      { $match: { status: "active", type: { $ne: "overdraft" } } },
+      {
+        $project: {
+          remainingInterest: {
+            $subtract: [
+              { $subtract: ["$totalPayable", "$amount"] },
+              { $ifNull: ["$interestEarnedToDate", 0] },
+            ],
+          },
+        },
+      },
+      { $group: { _id: null, total: { $sum: "$remainingInterest" } } },
+    ]);
+
     res.json({
       success: true,
       period: period || "all",
@@ -1282,26 +1183,16 @@ exports.getRevenueReports = async (req, res) => {
         totalChargesEarned: totalCharges,
         totalOverdraftChargesEarned: totalOverdraftCharges,
         totalAutoDebitEarned: totalAutoDebit,
-        activeLoansCount: await Loan.countDocuments({ status: "active" }),
+        activeLoansCount: await Loan.countDocuments({
+          status: "active",
+          type: "loan",
+        }),
         completedLoansCount: await Loan.countDocuments({ status: "completed" }),
         activeOverdraftsCount: await Loan.countDocuments({
           status: "active",
           type: "overdraft",
         }),
-        totalUnearnedInterest: await Loan.aggregate([
-          { $match: { status: "active" } },
-          {
-            $project: {
-              remainingInterest: {
-                $subtract: [
-                  { $subtract: ["$totalPayable", "$amount"] },
-                  { $ifNull: ["$interestEarnedToDate", 0] },
-                ],
-              },
-            },
-          },
-          { $group: { _id: null, total: { $sum: "$remainingInterest" } } },
-        ]).then((r) => r[0]?.total || 0),
+        totalUnearnedInterest: unearnedInterestResult[0]?.total || 0,
       },
     });
   } catch (error) {
@@ -1310,7 +1201,6 @@ exports.getRevenueReports = async (req, res) => {
   }
 };
 
-// Get loan summary
 exports.getLoanSummary = async (req, res) => {
   try {
     const summary = await Loan.aggregate([
@@ -1326,7 +1216,6 @@ exports.getLoanSummary = async (req, res) => {
 
     const activeLoans = await Loan.find({ status: "active" });
     const upcomingRepayments = [];
-
     activeLoans.forEach((loan) => {
       loan.repayments.forEach((repayment) => {
         if (
@@ -1342,7 +1231,6 @@ exports.getLoanSummary = async (req, res) => {
         }
       });
     });
-
     upcomingRepayments.sort(
       (a, b) => new Date(a.dueDate) - new Date(b.dueDate),
     );
@@ -1358,23 +1246,15 @@ exports.getLoanSummary = async (req, res) => {
   }
 };
 
-// Get customer loan summary
 exports.getCustomerLoanSummary = async (req, res) => {
   try {
     const { customerId } = req.params;
-
     const customer = await Customer.findOne({ id: customerId });
-    if (!customer) {
-      return res.status(404).json({ error: "Customer not found" });
-    }
+    if (!customer) return res.status(404).json({ error: "Customer not found" });
 
-    const activeLoans = await Loan.find({
-      customerId: customerId,
-      status: "active",
-    });
-
+    const activeLoans = await Loan.find({ customerId, status: "active" });
     const loanHistory = await Loan.find({
-      customerId: customerId,
+      customerId,
       status: { $in: ["completed", "defaulted"] },
     });
 
@@ -1395,7 +1275,6 @@ exports.getCustomerLoanSummary = async (req, res) => {
         }
       });
     });
-
     upcomingRepayments.sort(
       (a, b) => new Date(a.dueDate) - new Date(b.dueDate),
     );
@@ -1434,58 +1313,64 @@ exports.getCustomerLoanSummary = async (req, res) => {
   }
 };
 
-// Get dashboard summary with interest revenue
+// FIX 6: Dashboard summary - correct date grouping and exclude overdrafts from interest
 exports.getDashboardSummary = async (req, res) => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-
     const thisMonth = new Date();
     thisMonth.setDate(1);
     thisMonth.setHours(0, 0, 0, 0);
 
+    // FIX 6a: Interest from actual repayments paid today, not loans created today
     const todayRevenue = await Loan.aggregate([
+      { $match: { status: { $in: ["active", "completed"] } } },
+      { $unwind: "$repayments" },
       {
         $match: {
-          status: { $in: ["active", "completed"] },
-          createdAt: { $gte: today },
+          "repayments.status": "paid",
+          "repayments.paidDate": { $gte: today },
         },
       },
       {
         $group: {
           _id: null,
-          interest: { $sum: { $subtract: ["$totalPayable", "$amount"] } },
+          interest: { $sum: "$repayments.interestPortion" },
+          principal: { $sum: "$repayments.principalPortion" },
           count: { $sum: 1 },
         },
       },
     ]);
 
     const monthRevenue = await Loan.aggregate([
+      { $match: { status: { $in: ["active", "completed"] } } },
+      { $unwind: "$repayments" },
       {
         $match: {
-          status: { $in: ["active", "completed"] },
-          createdAt: { $gte: thisMonth },
+          "repayments.status": "paid",
+          "repayments.paidDate": { $gte: thisMonth },
         },
       },
       {
         $group: {
           _id: null,
-          interest: { $sum: { $subtract: ["$totalPayable", "$amount"] } },
-          principal: { $sum: "$amount" },
+          interest: { $sum: "$repayments.interestPortion" },
+          principal: { $sum: "$repayments.principalPortion" },
           count: { $sum: 1 },
         },
       },
     ]);
 
+    // All-time interest from actual repayments
     const allTime = await Loan.aggregate([
-      {
-        $match: { status: { $in: ["active", "completed"] } },
-      },
+      { $match: { status: { $in: ["active", "completed"] } } },
+      { $unwind: "$repayments" },
+      { $match: { "repayments.status": "paid" } },
       {
         $group: {
           _id: null,
-          totalInterest: { $sum: { $subtract: ["$totalPayable", "$amount"] } },
-          totalPrincipal: { $sum: "$amount" },
+          totalInterest: { $sum: "$repayments.interestPortion" },
+          totalPrincipal: { $sum: "$repayments.principalPortion" },
           totalLoans: { $sum: 1 },
         },
       },
@@ -1495,12 +1380,10 @@ exports.getDashboardSummary = async (req, res) => {
       { $match: { status: "approved", createdAt: { $gte: today } } },
       { $group: { _id: null, total: { $sum: "$charges" } } },
     ]);
-
     const chargesMonth = await Transaction.aggregate([
       { $match: { status: "approved", createdAt: { $gte: thisMonth } } },
       { $group: { _id: null, total: { $sum: "$charges" } } },
     ]);
-
     const overdraftChargesToday = await Transaction.aggregate([
       {
         $match: {
@@ -1511,7 +1394,6 @@ exports.getDashboardSummary = async (req, res) => {
       },
       { $group: { _id: null, total: { $sum: "$amount" } } },
     ]);
-
     const overdraftChargesMonth = await Transaction.aggregate([
       {
         $match: {
@@ -1522,7 +1404,6 @@ exports.getDashboardSummary = async (req, res) => {
       },
       { $group: { _id: null, total: { $sum: "$amount" } } },
     ]);
-
     const autoDebitToday = await Transaction.aggregate([
       {
         $match: {
@@ -1534,7 +1415,6 @@ exports.getDashboardSummary = async (req, res) => {
       },
       { $group: { _id: null, total: { $sum: "$amount" } } },
     ]);
-
     const autoDebitMonth = await Transaction.aggregate([
       {
         $match: {
