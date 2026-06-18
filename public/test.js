@@ -30,14 +30,24 @@ function startTransactionPolling() {
   state.pollingInterval = setInterval(async () => {
     try {
       const response = await api.get("/transactions");
-      const freshTransactions = response.data;
+      // Normalize response data - handle both {data: [...]} and [...] formats
+      const freshTransactions = Array.isArray(response.data)
+        ? response.data
+        : Array.isArray(response.data?.data)
+          ? response.data.data
+          : [];
+
+      // Ensure state.transactions is an array
+      const currentTransactions = Array.isArray(state.transactions)
+        ? state.transactions
+        : [];
 
       // Count pending transactions
       const freshPendingCount = freshTransactions.filter(
         (t) => t.status === "pending",
       ).length;
 
-      const oldPendingCount = state.transactions.filter(
+      const oldPendingCount = currentTransactions.filter(
         (t) => t.status === "pending",
       ).length;
 
@@ -135,8 +145,12 @@ const cachedApi = {
 
     console.log(`%c[CACHE MISS] ${endpoint}`, "color: #facc15");
     const response = await api.get(endpoint, options);
-    apiCache.set(cacheKey, { data: response.data, timestamp: Date.now() });
-    return { data: response.data, fromCache: false };
+
+    // Normalize response - ensure we always return the actual data array/object
+    const responseData = response.data?.data || response.data;
+
+    apiCache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+    return { data: responseData, fromCache: false };
   },
 
   invalidate(endpointPattern) {
@@ -407,6 +421,11 @@ function closeMobileMenu() {
     body.style.overflow = "";
     body.classList.remove("sidebar-open");
   }
+}
+
+function closeCustomerModal() {
+  const modal = document.getElementById("customerModal");
+  if (modal) modal.remove();
 }
 
 // ==================== UTILITY FUNCTIONS ====================
@@ -1029,13 +1048,25 @@ async function loadAllData() {
       cachedApi.get("/transactions"),
     ]);
 
-    state.customers = customersRes.data;
-    state.transactions = transactionsRes.data;
+    // SAFE ASSIGNMENT: Ensure we always get an array
+    // If data is an array, use it. If it's an object with a 'customers' key, use that.
+    // Otherwise, default to an empty array.
+    state.customers = Array.isArray(customersRes.data)
+      ? customersRes.data
+      : customersRes.data?.customers || [];
+
+    state.transactions = Array.isArray(transactionsRes.data)
+      ? transactionsRes.data
+      : transactionsRes.data?.transactions || [];
+
+    // Now .sort() will work because state.transactions is guaranteed to be an array
     state.transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
 
     try {
       const loansRes = await api.get("/loans");
-      state.loans = loansRes.data;
+      state.loans = Array.isArray(loansRes.data)
+        ? loansRes.data
+        : loansRes.data?.loans || [];
     } catch (loansError) {
       console.warn("Could not load loans data:", loansError);
       state.loans = [];
@@ -1044,7 +1075,9 @@ async function loadAllData() {
     if (state.role === "admin") {
       try {
         const staffRes = await api.get("/staff");
-        state.staff = staffRes.data;
+        state.staff = Array.isArray(staffRes.data)
+          ? staffRes.data
+          : staffRes.data?.staff || [];
       } catch (staffError) {
         console.warn("Could not load staff data:", staffError);
         state.staff = [];
@@ -1055,6 +1088,9 @@ async function loadAllData() {
   } catch (error) {
     console.error("Failed to load critical data:", error);
     showNotification("Failed to load data from server", "error");
+    // IMPORTANT: Fallback to empty arrays so the UI doesn't crash
+    state.customers = state.customers || [];
+    state.transactions = state.transactions || [];
   } finally {
     state.isLoading = false;
   }
@@ -1100,7 +1136,11 @@ function renderSidebar() {
 
     let badge = "";
     if (item.badge === "pending") {
-      const pendingCount = state.transactions.filter(
+      // Ensure transactions is an array before filtering
+      const transactions = Array.isArray(state.transactions)
+        ? state.transactions
+        : [];
+      const pendingCount = transactions.filter(
         (t) => t.status === "pending",
       ).length;
       if (pendingCount > 0) {
@@ -2345,9 +2385,12 @@ function showAddCustomerModal() {
     </div>
   `;
 
-  const modalContainer = document.createElement("div");
-  modalContainer.innerHTML = modalHtml;
-  document.body.appendChild(modalContainer);
+  // IMPROVEMENT: We create a temporary div, set the HTML,
+  // but only append the actual #customerModal to the body.
+  // This ensures that when we .remove() the element, the black overlay is gone too.
+  const tempDiv = document.createElement("div");
+  tempDiv.innerHTML = modalHtml;
+  document.body.appendChild(tempDiv.firstElementChild);
 }
 
 function updateAdminRegistrationNet() {
@@ -3244,11 +3287,16 @@ function toggleNotifications() {
 }
 
 function checkPendingNotifications() {
-  const pendingTxnCount = state.transactions.filter(
+  // Ensure arrays before filtering
+  const transactions = Array.isArray(state.transactions)
+    ? state.transactions
+    : [];
+  const loans = Array.isArray(state.loans) ? state.loans : [];
+
+  const pendingTxnCount = transactions.filter(
     (t) => t.status === "pending",
   ).length;
-  const pendingLoanCount =
-    state.loans?.filter((l) => l.status === "pending").length || 0;
+  const pendingLoanCount = loans.filter((l) => l.status === "pending").length;
   const totalPending = pendingTxnCount + pendingLoanCount;
 
   const badge = document.getElementById("notifBadge");
@@ -7648,12 +7696,62 @@ async function checkAuth() {
 let customerIsActive;
 
 // Make functions available globally
-window.viewLoanRepaymentSchedule = viewLoanRepaymentSchedule;
-window.closeRepaymentScheduleModal = closeRepaymentScheduleModal;
-window.recordRepayment = recordRepayment;
+window.selectRole = selectRole;
+window.login = login;
+window.logout = logout;
+window.navigate = navigate;
+window.refreshData = refreshData;
+window.showAddCustomerModal = showAddCustomerModal;
+window.closeCustomerModal = closeCustomerModal;
+window.editCustomer = editCustomer;
+window.viewCustomer = viewCustomer;
+window.renderCustomerSummary = renderCustomerSummary;
+window.renderCustomerTransactions = renderCustomerTransactions;
+window.exportCustomerData = exportCustomerData;
+window.filterCustomers = filterCustomers;
+window.filterCustomersByStaff = filterCustomersByStaff;
 window.filterCustomersByBalance = filterCustomersByBalance;
 window.viewCustomerLoans = viewCustomerLoans;
 window.closeCustomerLoansModal = closeCustomerLoansModal;
+window.viewLoanRepaymentSchedule = viewLoanRepaymentSchedule;
+window.closeRepaymentScheduleModal = closeRepaymentScheduleModal;
+window.recordRepayment = recordRepayment;
+window.showApproveLoanModal = showApproveLoanModal;
+window.closeApproveLoanModal = closeApproveLoanModal;
+window.approveLoan = approveLoan;
+window.rejectLoan = rejectLoan;
+window.processTransaction = processTransaction;
+window.viewTransactionDetails = viewTransactionDetails;
+window.closeTransactionModal = closeTransactionModal;
+window.approveAllPendingTransactions = approveAllPendingTransactions;
+window.approveAllStaffTransactions = approveAllStaffTransactions;
+window.viewStaffPendingTransactions = viewStaffPendingTransactions;
+window.closeStaffPendingModal = closeStaffPendingModal;
+window.filterPendingByStaff = filterPendingByStaff;
+window.filterPendingByCustomer = filterPendingByCustomer;
+window.sortTransactions = sortTransactions;
+window.filterTransactionsByStaff = filterTransactionsByStaff;
+window.showModal = showModal;
+window.closeModal = closeModal;
+window.showAddStaffModal = showAddStaffModal;
+window.closeStaffModal = closeStaffModal;
+window.handleAddStaff = handleAddStaff;
+window.sendSMSReminder = sendSMSReminder;
+window.sendBulkSMSToDormantCustomers = sendBulkSMSToDormantCustomers;
+window.exportDormantCustomers = exportDormantCustomers;
+window.reactivateCustomer = reactivateCustomer;
+window.toggleNotifications = toggleNotifications;
+window.clearNotifications = clearNotifications;
+window.checkAuth = checkAuth;
+window.initializeApp = initializeApp;
+window.loadAllData = loadAllData;
+window.updateUserInfo = updateUserInfo;
+window.renderSidebar = renderSidebar;
+window.startClock = startClock;
+window.showNotification = showNotification;
+window.formatDate = formatDate;
+window.formatSimpleDate = formatSimpleDate;
+window.getStatusStyle = getStatusStyle;
 
 // Make Quick Transaction functions globally available
 window.renderQuickTransaction = renderQuickTransaction;
@@ -7667,6 +7765,7 @@ window.setQuickAmount = setQuickAmount;
 window.updateQuickNet = updateQuickNet;
 window.validateQuickAmount = validateQuickAmount;
 window.validateQuickForm = validateQuickForm;
+window.closeCustomerModal = closeCustomerModal;
 
 // Initialize
 window.onload = () => {
