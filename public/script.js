@@ -3038,10 +3038,6 @@ function initTransactionSearch(customersData) {
   window.updateNetAmount();
 }
 
-// ==================== TRANSACTION HANDLER ====================
-
-// ==================== ENHANCED TRANSACTION HANDLER WITH AUTO-LOAN REPAYMENT ====================
-
 async function handleNewTransaction(e) {
   e.preventDefault();
   const formData = new FormData(e.target);
@@ -3050,49 +3046,26 @@ async function handleNewTransaction(e) {
   const type = formData.get("type");
   const amount = parseFloat(formData.get("amount"));
   const charges = parseFloat(formData.get("charges")) || 0;
-
-  // Extract description from the form
   const description = formData.get("description") || "";
+  const submitBtn = document.getElementById("submitTransactionBtn");
+  const originalText = submitBtn.innerHTML;
 
-  if (!customer) {
-    showNotification("Please select a customer", "error");
-    return;
-  }
+  if (!customer) return showNotification("Select a customer", "error");
 
   const netAmount = amount - charges;
-  if (netAmount < 0) {
-    showNotification("Charges cannot be greater than the amount!", "error");
+  if (netAmount < 0) return showNotification("Charges exceed amount", "error");
+
+  if (charges <= 0 && !confirm(`Proceed without charges for this ${type}?`))
     return;
-  }
 
-  // === CHARGE CONFIRMATION PROMPT ===
-  if (charges <= 0) {
-    const proceedWithoutCharges = confirm(
-      `No charges have been entered for this ${type}.\n\nDo you want to proceed without adding charges?`,
-    );
-    if (!proceedWithoutCharges) {
-      return;
-    }
-  }
+  submitBtn.disabled = true;
+  submitBtn.innerHTML =
+    '<i class="fas fa-spinner fa-spin mr-2"></i>Processing...';
 
-  // Check for withdrawal validity (validation only - no state changes)
-  if (
-    type === "withdrawal" &&
-    netAmount > (customer.cashBalance || customer.balance || 0)
-  ) {
-    showNotification(
-      `Insufficient funds! Customer balance: ₦${(customer.cashBalance || customer.balance || 0).toLocaleString()}. Required: ₦${netAmount.toLocaleString()}`,
-      "error",
-    );
-    return;
-  }
-
-  // Calculate loan repayment info for the backend to use upon approval
-  // BUT DO NOT modify customer state here - the transaction is still pending!
+  // (Logic for loan deduction calculation remains the same...)
   let loanDeduction = 0;
   let loanRepaymentInfo = null;
   let remainingForCustomer = netAmount;
-
   if (
     type === "deposit" &&
     customer.hasActiveLoan &&
@@ -3101,23 +3074,12 @@ async function handleNewTransaction(e) {
     const outstandingLoan = customer.loanBalance;
     loanDeduction = Math.min(netAmount, outstandingLoan);
     remainingForCustomer = netAmount - loanDeduction;
-
-    const newLoanBalance = outstandingLoan - loanDeduction;
-    const isFullyPaid = newLoanBalance <= 0;
-
     loanRepaymentInfo = {
       loanId: customer.activeLoanId,
       amount: loanDeduction,
-      outstandingBefore: outstandingLoan,
-      outstandingAfter: Math.max(0, newLoanBalance),
-      fullyPaid: isFullyPaid,
+      fullyPaid: outstandingLoan - loanDeduction <= 0,
+      outstandingAfter: Math.max(0, outstandingLoan - loanDeduction),
     };
-  }
-
-  // Build description with loan info if applicable
-  let finalDescription = description;
-  if (loanDeduction > 0) {
-    finalDescription = `Deposit ₦${amount.toLocaleString()}: ₦${loanDeduction.toLocaleString()} auto-deducted for loan repayment. Available: ₦${remainingForCustomer.toLocaleString()}`;
   }
 
   const txnData = {
@@ -3129,8 +3091,8 @@ async function handleNewTransaction(e) {
     charges,
     netAmount: remainingForCustomer,
     loanDeduction: loanDeduction > 0 ? loanDeduction : undefined,
-    loanRepaymentInfo: loanRepaymentInfo,
-    description: finalDescription,
+    loanRepaymentInfo,
+    description: description || `${type} request`,
     status: "pending",
     requestedBy: state.currentUser.name,
     requestedById: state.currentUser.id,
@@ -3141,52 +3103,32 @@ async function handleNewTransaction(e) {
   };
 
   try {
-    await api.post("/transactions", txnData);
+    const response = await api.post("/transactions", txnData);
+    const newTxn = response.data;
 
+    // 1. INJECT INTO STATE
+    state.transactions.unshift(newTxn);
     cachedApi.invalidate("/transactions");
 
-    await loadAllData();
+    showNotification("Transaction request submitted!", "success");
 
-    let successMessage = `✅ Transaction request submitted! `;
-    if (type === "deposit") {
-      successMessage += `Deposit ₦${amount.toLocaleString()}`;
-      if (loanDeduction > 0) {
-        successMessage += `. ₦${loanDeduction.toLocaleString()} will be auto-deducted for loan`;
-        if (loanRepaymentInfo?.fullyPaid) {
-          successMessage += ` (loan will be FULLY PAID upon approval)`;
-        } else {
-          successMessage += ` (remaining loan: ₦${loanRepaymentInfo.outstandingAfter.toLocaleString()} after approval)`;
-        }
-        successMessage += `. Available to customer after approval: ₦${remainingForCustomer.toLocaleString()}`;
-      }
-    } else {
-      successMessage += `Withdrawal ₦${amount.toLocaleString()}`;
-    }
-    showNotification(successMessage, "success");
-
-    // Trigger background data refresh so admin sees it immediately
-    setTimeout(async () => {
-      try {
-        await loadAllData();
-        // If admin has this page open in another tab/window, they'll see it on next poll
-      } catch (err) {
-        console.warn("Background refresh failed", err);
-      }
-    }, 1000);
-
+    // 2. RESET FORM & RE-RENDER CURRENT VIEW (FAST)
     e.target.reset();
     document.getElementById("selectedCustomerId").value = "";
     document.getElementById("selectedCustomerDisplay").classList.add("hidden");
     document.getElementById("customerBalanceDisplay").classList.add("hidden");
     document.getElementById("netAmount").textContent = "₦0";
     window.selectedCustomerId = null;
-    window.selectedCustomerBalance = null;
+
+    navigate(state.currentView);
   } catch (error) {
-    console.error("Transaction submission error:", error);
     showNotification(
-      error.response?.data?.message || "Failed to submit transaction",
+      error.response?.data?.message || "Failed to submit",
       "error",
     );
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = originalText;
   }
 }
 async function processTransaction(
@@ -3195,88 +3137,43 @@ async function processTransaction(
   refreshView = true,
   staffId = null,
 ) {
-  // 1. DEBUG: Log the initial input
-  console.log(
-    `%c[DEBUG] processTransaction started | Action: ${action} | txnId: ${txnId}`,
-    "color: cyan; font-weight: bold;",
-  );
-  console.log("[DEBUG] Input parameters:", {
-    txnId,
-    action,
-    refreshView,
-    staffId,
-  });
+  const transaction = state.transactions.find((t) => t.id === txnId);
+  if (!transaction) return;
+
+  // --- STEP 1: CAPTURE OLD STATE (For Rollback) ---
+  const originalStatus = transaction.status;
+
+  // --- STEP 2: OPTIMISTIC UPDATE (The Speed Secret) ---
+  // Change status in local state immediately before the API call
+  transaction.status = action;
+
+  // Re-render the view immediately so the admin sees the green/red color change instantly
+  if (state.currentView === "transactions") {
+    renderAdminTransactions(document.getElementById("contentArea"));
+  } else {
+    navigate(state.currentView);
+  }
 
   try {
-    // 2. Find the transaction in the local state
-    const transaction = state.transactions.find((t) => t.id === txnId);
-
-    if (!transaction) {
-      console.error(
-        `[DEBUG] ERROR: Transaction with ID ${txnId} not found in state.transactions`,
-      );
-      showNotification("Transaction not found", "error");
-      return;
-    }
-
-    console.log("[DEBUG] Transaction found in state:", transaction);
-
-    // 3. FIX: Determine the specific endpoint based on the action
-    // This ensures we hit: /transactions/TXN123/approve OR /transactions/TXN123/reject
     const endpoint = action === "approved" ? "/approve" : "/reject";
-
-    // 4. Prepare the base payload
     let updateData = {
       status: action,
       approvedBy: state.currentUser.name,
       approvedAt: new Date(),
     };
 
-    // 5. ROUTING BRANCH: REJECTION
     if (action === "rejected") {
-      console.log("[DEBUG] Entering REJECTION branch");
-
-      // Add specific fields required for rejection
       updateData.rejectedBy = state.currentUser.name;
       updateData.rejectedAt = new Date();
-      updateData.isRejection = true; // IMPORTANT: Tells backend NOT to change balances
-
-      console.log("[DEBUG] Rejection Payload:", updateData);
-      console.log(`[DEBUG] TARGET URL: /transactions/${txnId}${endpoint}`);
-
-      await api.patch(`/transactions/${txnId}${endpoint}`, updateData);
-      cachedApi.invalidate("/transactions");
-
-      showNotification(`TRANSACTION REJECTED.`, "error");
-
-      // Cleanup UI
-      closeStaffPendingModal();
-      closeTransactionModal();
-      await loadAllData();
-
-      // Fixes the "page did not refresh" issue
-      if (refreshView) navigate(state.currentView);
-      return; // Exit early so we don't run approval logic
-    }
-
-    // 6. ROUTING BRANCH: APPROVAL
-    console.log("[DEBUG] Entering APPROVAL branch");
-
-    // Handle specific case: Deposit that triggers a Loan Repayment
-    if (
+      updateData.isRejection = true;
+    } else if (
       action === "approved" &&
       transaction.type === "deposit" &&
       transaction.loanDeduction > 0
     ) {
-      console.log("[DEBUG] Loan Repayment logic triggered for this approval");
-
+      // Handle special loan repayment data
       const { loanId, amount, fullyPaid, outstandingAfter } =
         transaction.loanRepaymentInfo;
-      const customer = state.customers.find(
-        (c) => c.id === transaction.customerId,
-      );
-
-      // Add loan repayment details to the payload
       updateData.loanRepayment = {
         loanId,
         amount,
@@ -3284,76 +3181,31 @@ async function processTransaction(
         fullyPaid,
         outstandingAfter,
       };
-
-      // Create the detailed description
-      updateData.finalDescription =
-        `Deposit: ₦${transaction.amount.toLocaleString()} | ` +
-        `Charges: ₦${(transaction.charges || 0).toLocaleString()} | ` +
-        `Loan Repayment: ₦${amount.toLocaleString()} | ` +
-        `Available to Customer: ₦${transaction.netAmount.toLocaleString()}`;
-
-      // Detailed success notification
-      let notifMessage = `Approved! ₦${amount.toLocaleString()} deducted for loan repayment.`;
-      if (fullyPaid) {
-        notifMessage += ` Loan FULLY PAID!`;
-      } else {
-        notifMessage += ` ₦${outstandingAfter.toLocaleString()} remaining.`;
-      }
-      if (customer?.phone) {
-        notifMessage += ` SMS sent to ${customer.phone}`;
-      }
-      showNotification(notifMessage, "success");
-    } else {
-      // Standard approval notification
-      showNotification(`✅ Transaction ${action}!`, "success");
     }
 
-    // 7. EXECUTE THE API CALL
-    console.log(
-      `%c[DEBUG] SENDING API PATCH REQUEST TO: /transactions/${txnId}${endpoint}`,
-      "color: yellow; font-weight: bold;",
-    );
-    console.log("[DEBUG] Final Payload being sent:", updateData);
-
+    // --- STEP 3: ACTUAL API CALL ---
     await api.patch(`/transactions/${txnId}${endpoint}`, updateData);
 
-    console.log(
-      "%c[DEBUG] API CALL SUCCESSFUL",
-      "color: green; font-weight: bold;",
-    );
+    // --- STEP 4: SUCCESS ---
+    cachedApi.invalidate("/transactions");
+    showNotification(`Transaction ${action}ed!`, "success");
 
-    // 8. CLEANUP & REFRESH UI
-    closeStaffPendingModal();
-    closeTransactionModal();
+    // We still call loadAllData in background just to ensure balances are perfectly synced
+    // from the server, but the UI is already updated.
     await loadAllData();
-
-    // Fixes the "page did not refresh" issue
-    if (refreshView) navigate(state.currentView);
   } catch (error) {
-    // 9. DEEP ERROR LOGGING
-    console.error(
-      "%c[DEBUG] TRANSACTION PROCESSING FAILED",
-      "color: red; font-weight: bold;",
-    );
-    console.error("[DEBUG] Full Error Object:", error);
+    // --- STEP 5: ROLLBACK ON FAILURE ---
+    // If the server says "No", change the UI back to the original status
+    transaction.status = originalStatus;
 
-    if (error.response) {
-      console.error(
-        "[DEBUG] Server responded with status:",
-        error.response.status,
-      );
-      console.error(
-        "[DEBUG] Server Response Data (Crucial):",
-        error.response.data,
-      );
-    } else {
-      console.error("[DEBUG] Error message:", error.message);
-    }
+    // Refresh view to show the rollback
+    navigate(state.currentView);
 
     showNotification(
-      error.response?.data?.message || "Failed to process transaction",
+      error.response?.data?.message || "Failed to process",
       "error",
     );
+    console.error("Transaction processing error:", error);
   }
 }
 // ==================== LOGOUT FUNCTION ====================
@@ -6861,24 +6713,45 @@ function renderAdminTransactions(container) {
     ),
   ].map((s) => JSON.parse(s));
 
+  // Get unique customer numbers for filter dropdown
+  const uniqueCustomerNumbers = [
+    ...new Map(
+      pending
+        .map((t) => {
+          const customer = state.customers.find((c) => c.id === t.customerId);
+          return {
+            id: t.customerId,
+            number: customer?.customerNumber || null,
+            name: t.customerName,
+          };
+        })
+        .filter((c) => c.number)
+        .map((c) => [c.number, c]),
+    ).values(),
+  ].sort((a, b) => a.number.localeCompare(b.number));
+
   const html = `<div class="space-y-4 sm:space-y-6 animate-fade-in px-4 sm:px-0">
     
-    <!-- STAFF FILTER DROPDOWN - ADD THIS -->
+    <!-- FILTER SECTION -->
     ${
       pending.length > 0
         ? `
       <div class="glass-panel rounded-2xl p-4 sm:p-6 border-l-4 border-blue-500">
-        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
           <div>
             <h3 class="text-base sm:text-lg font-semibold flex items-center gap-2">
               <i class="fas fa-filter text-blue-500"></i>
               Filter Pending Transactions
             </h3>
-            <p class="text-xs text-gray-400 mt-1">Show transactions by specific staff member</p>
+            <p class="text-xs text-gray-400 mt-1">Search by staff member or customer number</p>
           </div>
-          <div class="w-full sm:w-auto">
-            <select id="pendingStaffFilter" onchange="filterPendingByStaff()" 
-              class="w-full sm:w-64 px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+          <!-- Staff Filter -->
+          <div>
+            <label class="block text-xs text-gray-400 mb-1">Filter by Staff</label>
+            <select id="pendingStaffFilter" onchange="filterPendingTransactions()" 
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
               <option value="all">All Staff (${pending.length} pending)</option>
               ${uniqueStaff
                 .map((staff) => {
@@ -6892,6 +6765,47 @@ function renderAdminTransactions(container) {
                 .join("")}
             </select>
           </div>
+          <!-- Customer Number Filter -->
+          <div>
+            <label class="block text-xs text-gray-400 mb-1">Filter by Customer Number</label>
+            <select id="pendingCustomerFilter" onchange="filterPendingTransactions()" 
+              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
+              <option value="all">All Customers (${pending.length} pending)</option>
+              ${uniqueCustomerNumbers
+                .map((customer) => {
+                  const count = pending.filter(
+                    (t) => t.customerId === customer.id,
+                  ).length;
+                  return `<option value="${customer.number}">#${customer.number} - ${customer.name} (${count} pending)</option>`;
+                })
+                .join("")}
+              ${
+                pending.some((t) => {
+                  const customer = state.customers.find(
+                    (c) => c.id === t.customerId,
+                  );
+                  return !customer?.customerNumber;
+                })
+                  ? `<option value="no-number">No Customer Number (${
+                      pending.filter((t) => {
+                        const customer = state.customers.find(
+                          (c) => c.id === t.customerId,
+                        );
+                        return !customer?.customerNumber;
+                      }).length
+                    } pending)</option>`
+                  : ""
+              }
+            </select>
+          </div>
+        </div>
+        <div class="mt-3 flex items-center justify-between">
+          <p class="text-xs text-gray-400" id="pendingFilterResult">
+            Showing all ${pending.length} pending transactions
+          </p>
+          <button onclick="clearPendingFilters()" class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">
+            <i class="fas fa-times-circle"></i> Clear Filters
+          </button>
         </div>
       </div>
     `
@@ -6980,8 +6894,12 @@ function renderAdminTransactions(container) {
                 txn.requestedBy ||
                 "unknown";
               const hasSMS = customer?.phone ? "📱" : "⚠️";
+              const customerNumber = customer?.customerNumber || null;
               return `<div class="pending-transaction-item bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700 hover:border-yellow-500/50 transition-all" 
-                data-staff-id="${staffId}" id="txn-${txn.id}">
+                data-staff-id="${staffId}" 
+                data-customer-number="${customerNumber || "no-number"}"
+                data-customer-id="${txn.customerId}"
+                id="txn-${txn.id}">
                 <div class="flex flex-col lg:flex-row justify-between items-start gap-3 sm:gap-4">
                   <div class="flex items-start gap-3 sm:gap-4 flex-1">
                     <div class="w-8 h-8 sm:w-12 sm:h-12 rounded-full ${
@@ -7004,6 +6922,7 @@ function renderAdminTransactions(container) {
                             : "bg-orange-500/20 text-orange-400"
                         } rounded-full text-xs font-medium">${txn.type}</span>
                         <span class="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full text-xs">${staffName} ${hasSMS}</span>
+                        ${customerNumber ? `<span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded-full text-xs font-mono">#${customerNumber}</span>` : ""}
                       </div>
                       <p class="text-xs sm:text-sm text-gray-300 mt-1">${txn.customerName}</p>
                       <div class="flex items-center gap-2 text-xs text-gray-400 mt-1">
@@ -7139,8 +7058,113 @@ function renderAdminTransactions(container) {
   </div>`;
 
   container.innerHTML = html;
-} // ==================== HELPER FUNCTIONS ====================
+}
+// ==================== HELPER FUNCTIONS ====================
+// ==================== ENHANCED PENDING FILTER FUNCTIONS ====================
 
+function filterPendingTransactions() {
+  const selectedStaffId = document.getElementById("pendingStaffFilter")?.value;
+  const selectedCustomerNumber = document.getElementById(
+    "pendingCustomerFilter",
+  )?.value;
+  const resultLabel = document.getElementById("pendingFilterResult");
+
+  // Filter staff cards
+  const staffCards = document.querySelectorAll(".staff-card");
+  staffCards.forEach((card) => {
+    const cardStaffId = card.dataset.staffId;
+    let show = true;
+
+    if (selectedStaffId !== "all" && cardStaffId !== selectedStaffId) {
+      show = false;
+    }
+
+    card.style.display = show ? "" : "none";
+  });
+
+  // Filter pending transaction items
+  const pendingItems = document.querySelectorAll(".pending-transaction-item");
+  let visibleCount = 0;
+
+  pendingItems.forEach((item) => {
+    const itemStaffId = item.dataset.staffId;
+    const itemCustomerNumber = item.dataset.customerNumber;
+    const itemCustomerId = item.dataset.customerId;
+
+    let showByStaff =
+      selectedStaffId === "all" || itemStaffId === selectedStaffId;
+    let showByCustomer = true;
+
+    if (selectedCustomerNumber !== "all") {
+      if (selectedCustomerNumber === "no-number") {
+        showByCustomer = itemCustomerNumber === "no-number";
+      } else {
+        // Find customer by number to get their ID
+        const customer = state.customers.find(
+          (c) => c.customerNumber === selectedCustomerNumber,
+        );
+        showByCustomer = customer && itemCustomerId === customer.id;
+      }
+    }
+
+    const show = showByStaff && showByCustomer;
+    item.style.display = show ? "" : "none";
+    if (show) visibleCount++;
+  });
+
+  // Update result label
+  const staffLabel =
+    selectedStaffId === "all"
+      ? "All Staff"
+      : document
+          .querySelector(
+            `#pendingStaffFilter option[value="${selectedStaffId}"]`,
+          )
+          ?.textContent.split(" (")[0] || "Selected Staff";
+
+  const customerLabel =
+    selectedCustomerNumber === "all"
+      ? "All Customers"
+      : document
+          .querySelector(
+            `#pendingCustomerFilter option[value="${selectedCustomerNumber}"]`,
+          )
+          ?.textContent.split(" (")[0] || "Selected Customer";
+
+  if (resultLabel) {
+    if (visibleCount === 0) {
+      resultLabel.textContent = `No transactions match: ${staffLabel} + ${customerLabel}`;
+      resultLabel.className = "text-xs text-red-400";
+    } else {
+      resultLabel.textContent = `Showing ${visibleCount} pending transactions (${staffLabel} + ${customerLabel})`;
+      resultLabel.className = "text-xs text-green-400";
+    }
+  }
+}
+
+function clearPendingFilters() {
+  const staffFilter = document.getElementById("pendingStaffFilter");
+  const customerFilter = document.getElementById("pendingCustomerFilter");
+
+  if (staffFilter) staffFilter.value = "all";
+  if (customerFilter) customerFilter.value = "all";
+
+  filterPendingTransactions();
+
+  const resultLabel = document.getElementById("pendingFilterResult");
+  if (resultLabel) {
+    const totalPending = document.querySelectorAll(
+      ".pending-transaction-item",
+    ).length;
+    resultLabel.textContent = `Showing all ${totalPending} pending transactions`;
+    resultLabel.className = "text-xs text-gray-400";
+  }
+}
+
+// Keep old function name for backward compatibility (calls new unified filter)
+function filterPendingByStaff() {
+  filterPendingTransactions();
+}
 function filterPendingByStaff() {
   const selectedStaffId = document.getElementById("pendingStaffFilter")?.value;
 
@@ -7407,14 +7431,10 @@ function closeTransactionModal() {
 
 async function approveAllStaffTransactions(staffIdentifier) {
   if (!staffIdentifier || staffIdentifier === "unknown") {
-    showNotification(
-      "Cannot identify staff member for these transactions",
-      "warning",
-    );
+    showNotification("Cannot identify staff member", "warning");
     return;
   }
 
-  // Find all pending transactions for this staff member
   const pendingTransactions = state.transactions.filter((t) => {
     const txnStaffId =
       t.requestedById || t.staffId || t.requestedBy || "unknown";
@@ -7426,17 +7446,24 @@ async function approveAllStaffTransactions(staffIdentifier) {
   });
 
   if (pendingTransactions.length === 0) {
-    showNotification("No pending transactions for this staff member", "info");
-    closeStaffPendingModal();
+    showNotification("No pending transactions", "info");
     return;
   }
 
   if (
-    !confirm(
-      `Are you sure you want to approve all ${pendingTransactions.length} pending transactions?`,
-    )
+    !confirm(`Approve all ${pendingTransactions.length} pending transactions?`)
   )
     return;
+
+  // Disable the approve all button
+  const approveAllBtn = document.activeElement;
+  let originalText = "";
+  if (approveAllBtn && approveAllBtn.tagName === "BUTTON") {
+    originalText = approveAllBtn.innerHTML;
+    approveAllBtn.disabled = true;
+    approveAllBtn.innerHTML =
+      '<i class="fas fa-spinner fa-spin mr-2"></i>Processing...';
+  }
 
   let approved = 0,
     failed = 0;
@@ -7447,28 +7474,58 @@ async function approveAllStaffTransactions(staffIdentifier) {
 
   for (const txn of pendingTransactions) {
     try {
-      await processTransaction(txn.id, "approved", false);
+      // Call API directly instead of processTransaction to avoid button conflicts
+      const endpoint = "/approve";
+      const updateData = {
+        status: "approved",
+        approvedBy: state.currentUser.name,
+        approvedAt: new Date(),
+      };
+
+      // Handle loan repayment data if needed
+      if (
+        txn.type === "deposit" &&
+        txn.loanDeduction > 0 &&
+        txn.loanRepaymentInfo
+      ) {
+        updateData.loanRepayment = {
+          loanId: txn.loanRepaymentInfo.loanId,
+          amount: txn.loanRepaymentInfo.amount,
+          recordedAt: new Date(),
+          fullyPaid: txn.loanRepaymentInfo.fullyPaid,
+          outstandingAfter: txn.loanRepaymentInfo.outstandingAfter,
+        };
+      }
+
+      await api.patch(`/transactions/${txn.id}${endpoint}`, updateData);
       approved++;
     } catch (error) {
-      console.error(`Failed to approve transaction ${txn.id}:`, error);
+      console.error(`Failed to approve ${txn.id}:`, error);
       failed++;
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Small delay to not overwhelm the server
+    await new Promise((resolve) => setTimeout(resolve, 150));
   }
 
+  cachedApi.invalidate("/transactions");
+  closeStaffPendingModal();
   await loadAllData();
+  navigate(state.currentView);
+
+  // Re-enable button
+  if (approveAllBtn && approveAllBtn.tagName === "BUTTON") {
+    approveAllBtn.disabled = false;
+    approveAllBtn.innerHTML = originalText;
+  }
+
   if (failed === 0) {
     showNotification(
       `Successfully approved all ${approved} transactions`,
       "success",
     );
   } else {
-    showNotification(
-      `Approved ${approved} transactions, ${failed} failed`,
-      "warning",
-    );
+    showNotification(`Approved ${approved}, ${failed} failed`, "warning");
   }
-  closeStaffPendingModal();
 }
 async function approveAllPendingTransactions() {
   const pending = state.transactions.filter((t) => t.status === "pending");
