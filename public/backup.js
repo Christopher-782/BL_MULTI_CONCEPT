@@ -30,14 +30,24 @@ function startTransactionPolling() {
   state.pollingInterval = setInterval(async () => {
     try {
       const response = await api.get("/transactions");
-      const freshTransactions = response.data;
+      // Normalize response data - handle both {data: [...]} and [...] formats
+      const freshTransactions = Array.isArray(response.data)
+        ? response.data
+        : Array.isArray(response.data?.data)
+          ? response.data.data
+          : [];
+
+      // Ensure state.transactions is an array
+      const currentTransactions = Array.isArray(state.transactions)
+        ? state.transactions
+        : [];
 
       // Count pending transactions
       const freshPendingCount = freshTransactions.filter(
         (t) => t.status === "pending",
       ).length;
 
-      const oldPendingCount = state.transactions.filter(
+      const oldPendingCount = currentTransactions.filter(
         (t) => t.status === "pending",
       ).length;
 
@@ -135,8 +145,12 @@ const cachedApi = {
 
     console.log(`%c[CACHE MISS] ${endpoint}`, "color: #facc15");
     const response = await api.get(endpoint, options);
-    apiCache.set(cacheKey, { data: response.data, timestamp: Date.now() });
-    return { data: response.data, fromCache: false };
+
+    // Normalize response - ensure we always return the actual data array/object
+    const responseData = response.data?.data || response.data;
+
+    apiCache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+    return { data: responseData, fromCache: false };
   },
 
   invalidate(endpointPattern) {
@@ -409,8 +423,23 @@ function closeMobileMenu() {
   }
 }
 
-// ==================== UTILITY FUNCTIONS ====================
+function closeCustomerModal() {
+  const modal = document.getElementById("customerModal");
+  if (modal) modal.remove();
+}
 
+// ==================== UTILITY FUNCTIONS ====================
+function isCustomerFlaggedForRecoveryCharge(customerId) {
+  const customerTransactions = state.transactions
+    .filter((t) => t.customerId === customerId && t.status === "approved")
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  // If the most recent approved transaction was a withdrawal, return true
+  if (customerTransactions.length > 0 && customerTransactions[0].type === "withdrawal") {
+    return true;
+  }
+  return false;
+}
 function formatDate(dateString) {
   if (!dateString) return "N/A";
   try {
@@ -1029,13 +1058,25 @@ async function loadAllData() {
       cachedApi.get("/transactions"),
     ]);
 
-    state.customers = customersRes.data;
-    state.transactions = transactionsRes.data;
+    // SAFE ASSIGNMENT: Ensure we always get an array
+    // If data is an array, use it. If it's an object with a 'customers' key, use that.
+    // Otherwise, default to an empty array.
+    state.customers = Array.isArray(customersRes.data)
+      ? customersRes.data
+      : customersRes.data?.customers || [];
+
+    state.transactions = Array.isArray(transactionsRes.data)
+      ? transactionsRes.data
+      : transactionsRes.data?.transactions || [];
+
+    // Now .sort() will work because state.transactions is guaranteed to be an array
     state.transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
 
     try {
       const loansRes = await api.get("/loans");
-      state.loans = loansRes.data;
+      state.loans = Array.isArray(loansRes.data)
+        ? loansRes.data
+        : loansRes.data?.loans || [];
     } catch (loansError) {
       console.warn("Could not load loans data:", loansError);
       state.loans = [];
@@ -1044,7 +1085,9 @@ async function loadAllData() {
     if (state.role === "admin") {
       try {
         const staffRes = await api.get("/staff");
-        state.staff = staffRes.data;
+        state.staff = Array.isArray(staffRes.data)
+          ? staffRes.data
+          : staffRes.data?.staff || [];
       } catch (staffError) {
         console.warn("Could not load staff data:", staffError);
         state.staff = [];
@@ -1055,6 +1098,9 @@ async function loadAllData() {
   } catch (error) {
     console.error("Failed to load critical data:", error);
     showNotification("Failed to load data from server", "error");
+    // IMPORTANT: Fallback to empty arrays so the UI doesn't crash
+    state.customers = state.customers || [];
+    state.transactions = state.transactions || [];
   } finally {
     state.isLoading = false;
   }
@@ -1100,7 +1146,11 @@ function renderSidebar() {
 
     let badge = "";
     if (item.badge === "pending") {
-      const pendingCount = state.transactions.filter(
+      // Ensure transactions is an array before filtering
+      const transactions = Array.isArray(state.transactions)
+        ? state.transactions
+        : [];
+      const pendingCount = transactions.filter(
         (t) => t.status === "pending",
       ).length;
       if (pendingCount > 0) {
@@ -2345,9 +2395,12 @@ function showAddCustomerModal() {
     </div>
   `;
 
-  const modalContainer = document.createElement("div");
-  modalContainer.innerHTML = modalHtml;
-  document.body.appendChild(modalContainer);
+  // IMPROVEMENT: We create a temporary div, set the HTML,
+  // but only append the actual #customerModal to the body.
+  // This ensures that when we .remove() the element, the black overlay is gone too.
+  const tempDiv = document.createElement("div");
+  tempDiv.innerHTML = modalHtml;
+  document.body.appendChild(tempDiv.firstElementChild);
 }
 
 function updateAdminRegistrationNet() {
@@ -3144,10 +3197,11 @@ async function processTransaction(
   const originalStatus = transaction.status;
 
   // --- STEP 2: OPTIMISTIC UPDATE (The Speed Secret) ---
-  // Change status in local state immediately before the API call
+  // Update the local state immediately
   transaction.status = action;
 
-  // Re-render the view immediately so the admin sees the green/red color change instantly
+  // Re-render the view immediately so the admin sees the color change instantly
+  // We do NOT await this; we just want the UI to reflect the change
   if (state.currentView === "transactions") {
     renderAdminTransactions(document.getElementById("contentArea"));
   } else {
@@ -3171,7 +3225,6 @@ async function processTransaction(
       transaction.type === "deposit" &&
       transaction.loanDeduction > 0
     ) {
-      // Handle special loan repayment data
       const { loanId, amount, fullyPaid, outstandingAfter } =
         transaction.loanRepaymentInfo;
       updateData.loanRepayment = {
@@ -3183,23 +3236,20 @@ async function processTransaction(
       };
     }
 
-    // --- STEP 3: ACTUAL API CALL ---
     await api.patch(`/transactions/${txnId}${endpoint}`, updateData);
 
-    // --- STEP 4: SUCCESS ---
     cachedApi.invalidate("/transactions");
     showNotification(`Transaction ${action}ed!`, "success");
 
-    // We still call loadAllData in background just to ensure balances are perfectly synced
-    // from the server, but the UI is already updated.
-    await loadAllData();
+    loadAllData().catch((err) => console.warn("Background sync error:", err));
   } catch (error) {
-    // --- STEP 5: ROLLBACK ON FAILURE ---
-    // If the server says "No", change the UI back to the original status
     transaction.status = originalStatus;
 
-    // Refresh view to show the rollback
-    navigate(state.currentView);
+    if (state.currentView === "transactions") {
+      renderAdminTransactions(document.getElementById("contentArea"));
+    } else {
+      navigate(state.currentView);
+    }
 
     showNotification(
       error.response?.data?.message || "Failed to process",
@@ -3244,11 +3294,16 @@ function toggleNotifications() {
 }
 
 function checkPendingNotifications() {
-  const pendingTxnCount = state.transactions.filter(
+  // Ensure arrays before filtering
+  const transactions = Array.isArray(state.transactions)
+    ? state.transactions
+    : [];
+  const loans = Array.isArray(state.loans) ? state.loans : [];
+
+  const pendingTxnCount = transactions.filter(
     (t) => t.status === "pending",
   ).length;
-  const pendingLoanCount =
-    state.loans?.filter((l) => l.status === "pending").length || 0;
+  const pendingLoanCount = loans.filter((l) => l.status === "pending").length;
   const totalPending = pendingTxnCount + pendingLoanCount;
 
   const badge = document.getElementById("notifBadge");
@@ -6713,45 +6768,24 @@ function renderAdminTransactions(container) {
     ),
   ].map((s) => JSON.parse(s));
 
-  // Get unique customer numbers for filter dropdown
-  const uniqueCustomerNumbers = [
-    ...new Map(
-      pending
-        .map((t) => {
-          const customer = state.customers.find((c) => c.id === t.customerId);
-          return {
-            id: t.customerId,
-            number: customer?.customerNumber || null,
-            name: t.customerName,
-          };
-        })
-        .filter((c) => c.number)
-        .map((c) => [c.number, c]),
-    ).values(),
-  ].sort((a, b) => a.number.localeCompare(b.number));
-
   const html = `<div class="space-y-4 sm:space-y-6 animate-fade-in px-4 sm:px-0">
     
-    <!-- FILTER SECTION -->
+    <!-- STAFF FILTER DROPDOWN - ADD THIS -->
     ${
       pending.length > 0
         ? `
       <div class="glass-panel rounded-2xl p-4 sm:p-6 border-l-4 border-blue-500">
-        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div>
             <h3 class="text-base sm:text-lg font-semibold flex items-center gap-2">
               <i class="fas fa-filter text-blue-500"></i>
               Filter Pending Transactions
             </h3>
-            <p class="text-xs text-gray-400 mt-1">Search by staff member or customer number</p>
+            <p class="text-xs text-gray-400 mt-1">Show transactions by specific staff member</p>
           </div>
-        </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-          <!-- Staff Filter -->
-          <div>
-            <label class="block text-xs text-gray-400 mb-1">Filter by Staff</label>
-            <select id="pendingStaffFilter" onchange="filterPendingTransactions()" 
-              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
+          <div class="w-full sm:w-auto">
+            <select id="pendingStaffFilter" onchange="filterPendingByStaff()" 
+              class="w-full sm:w-64 px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
               <option value="all">All Staff (${pending.length} pending)</option>
               ${uniqueStaff
                 .map((staff) => {
@@ -6765,47 +6799,6 @@ function renderAdminTransactions(container) {
                 .join("")}
             </select>
           </div>
-          <!-- Customer Number Filter -->
-          <div>
-            <label class="block text-xs text-gray-400 mb-1">Filter by Customer Number</label>
-            <select id="pendingCustomerFilter" onchange="filterPendingTransactions()" 
-              class="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 transition-colors">
-              <option value="all">All Customers (${pending.length} pending)</option>
-              ${uniqueCustomerNumbers
-                .map((customer) => {
-                  const count = pending.filter(
-                    (t) => t.customerId === customer.id,
-                  ).length;
-                  return `<option value="${customer.number}">#${customer.number} - ${customer.name} (${count} pending)</option>`;
-                })
-                .join("")}
-              ${
-                pending.some((t) => {
-                  const customer = state.customers.find(
-                    (c) => c.id === t.customerId,
-                  );
-                  return !customer?.customerNumber;
-                })
-                  ? `<option value="no-number">No Customer Number (${
-                      pending.filter((t) => {
-                        const customer = state.customers.find(
-                          (c) => c.id === t.customerId,
-                        );
-                        return !customer?.customerNumber;
-                      }).length
-                    } pending)</option>`
-                  : ""
-              }
-            </select>
-          </div>
-        </div>
-        <div class="mt-3 flex items-center justify-between">
-          <p class="text-xs text-gray-400" id="pendingFilterResult">
-            Showing all ${pending.length} pending transactions
-          </p>
-          <button onclick="clearPendingFilters()" class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">
-            <i class="fas fa-times-circle"></i> Clear Filters
-          </button>
         </div>
       </div>
     `
@@ -6877,7 +6870,19 @@ function renderAdminTransactions(container) {
       pending.length > 0
         ? `
       <div class="glass-panel rounded-2xl p-4 sm:p-6">
-        <h3 class="text-base sm:text-lg font-semibold mb-3 sm:mb-4">All Pending Transactions</h3>
+        <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+          <h3 class="text-base sm:text-lg font-semibold">All Pending Transactions</h3>
+          <div class="w-full sm:w-auto relative">
+            <input 
+              type="text" 
+              id="pendingCustomerSearch" 
+              placeholder="Search by customer number or name..." 
+              oninput="filterPendingByCustomer()"
+              class="w-full sm:w-64 px-4 py-2 pl-10 bg-gray-800 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:border-yellow-500 transition-colors text-sm"
+            />
+            <i class="fas fa-search absolute left-3 top-2.5 text-gray-500 text-sm"></i>
+          </div>
+        </div>
         <div class="space-y-3 sm:space-y-4" id="pendingTransactionsList">
           ${pending
             .map((txn) => {
@@ -6894,12 +6899,8 @@ function renderAdminTransactions(container) {
                 txn.requestedBy ||
                 "unknown";
               const hasSMS = customer?.phone ? "📱" : "⚠️";
-              const customerNumber = customer?.customerNumber || null;
               return `<div class="pending-transaction-item bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700 hover:border-yellow-500/50 transition-all" 
-                data-staff-id="${staffId}" 
-                data-customer-number="${customerNumber || "no-number"}"
-                data-customer-id="${txn.customerId}"
-                id="txn-${txn.id}">
+                data-staff-id="${staffId}" data-customer-number="${customer?.customerNumber || ""}" data-customer-name="${customer?.name || ""}" id="txn-${txn.id}">
                 <div class="flex flex-col lg:flex-row justify-between items-start gap-3 sm:gap-4">
                   <div class="flex items-start gap-3 sm:gap-4 flex-1">
                     <div class="w-8 h-8 sm:w-12 sm:h-12 rounded-full ${
@@ -6922,7 +6923,6 @@ function renderAdminTransactions(container) {
                             : "bg-orange-500/20 text-orange-400"
                         } rounded-full text-xs font-medium">${txn.type}</span>
                         <span class="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded-full text-xs">${staffName} ${hasSMS}</span>
-                        ${customerNumber ? `<span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded-full text-xs font-mono">#${customerNumber}</span>` : ""}
                       </div>
                       <p class="text-xs sm:text-sm text-gray-300 mt-1">${txn.customerName}</p>
                       <div class="flex items-center gap-2 text-xs text-gray-400 mt-1">
@@ -7058,113 +7058,8 @@ function renderAdminTransactions(container) {
   </div>`;
 
   container.innerHTML = html;
-}
-// ==================== HELPER FUNCTIONS ====================
-// ==================== ENHANCED PENDING FILTER FUNCTIONS ====================
+} // ==================== HELPER FUNCTIONS ====================
 
-function filterPendingTransactions() {
-  const selectedStaffId = document.getElementById("pendingStaffFilter")?.value;
-  const selectedCustomerNumber = document.getElementById(
-    "pendingCustomerFilter",
-  )?.value;
-  const resultLabel = document.getElementById("pendingFilterResult");
-
-  // Filter staff cards
-  const staffCards = document.querySelectorAll(".staff-card");
-  staffCards.forEach((card) => {
-    const cardStaffId = card.dataset.staffId;
-    let show = true;
-
-    if (selectedStaffId !== "all" && cardStaffId !== selectedStaffId) {
-      show = false;
-    }
-
-    card.style.display = show ? "" : "none";
-  });
-
-  // Filter pending transaction items
-  const pendingItems = document.querySelectorAll(".pending-transaction-item");
-  let visibleCount = 0;
-
-  pendingItems.forEach((item) => {
-    const itemStaffId = item.dataset.staffId;
-    const itemCustomerNumber = item.dataset.customerNumber;
-    const itemCustomerId = item.dataset.customerId;
-
-    let showByStaff =
-      selectedStaffId === "all" || itemStaffId === selectedStaffId;
-    let showByCustomer = true;
-
-    if (selectedCustomerNumber !== "all") {
-      if (selectedCustomerNumber === "no-number") {
-        showByCustomer = itemCustomerNumber === "no-number";
-      } else {
-        // Find customer by number to get their ID
-        const customer = state.customers.find(
-          (c) => c.customerNumber === selectedCustomerNumber,
-        );
-        showByCustomer = customer && itemCustomerId === customer.id;
-      }
-    }
-
-    const show = showByStaff && showByCustomer;
-    item.style.display = show ? "" : "none";
-    if (show) visibleCount++;
-  });
-
-  // Update result label
-  const staffLabel =
-    selectedStaffId === "all"
-      ? "All Staff"
-      : document
-          .querySelector(
-            `#pendingStaffFilter option[value="${selectedStaffId}"]`,
-          )
-          ?.textContent.split(" (")[0] || "Selected Staff";
-
-  const customerLabel =
-    selectedCustomerNumber === "all"
-      ? "All Customers"
-      : document
-          .querySelector(
-            `#pendingCustomerFilter option[value="${selectedCustomerNumber}"]`,
-          )
-          ?.textContent.split(" (")[0] || "Selected Customer";
-
-  if (resultLabel) {
-    if (visibleCount === 0) {
-      resultLabel.textContent = `No transactions match: ${staffLabel} + ${customerLabel}`;
-      resultLabel.className = "text-xs text-red-400";
-    } else {
-      resultLabel.textContent = `Showing ${visibleCount} pending transactions (${staffLabel} + ${customerLabel})`;
-      resultLabel.className = "text-xs text-green-400";
-    }
-  }
-}
-
-function clearPendingFilters() {
-  const staffFilter = document.getElementById("pendingStaffFilter");
-  const customerFilter = document.getElementById("pendingCustomerFilter");
-
-  if (staffFilter) staffFilter.value = "all";
-  if (customerFilter) customerFilter.value = "all";
-
-  filterPendingTransactions();
-
-  const resultLabel = document.getElementById("pendingFilterResult");
-  if (resultLabel) {
-    const totalPending = document.querySelectorAll(
-      ".pending-transaction-item",
-    ).length;
-    resultLabel.textContent = `Showing all ${totalPending} pending transactions`;
-    resultLabel.className = "text-xs text-gray-400";
-  }
-}
-
-// Keep old function name for backward compatibility (calls new unified filter)
-function filterPendingByStaff() {
-  filterPendingTransactions();
-}
 function filterPendingByStaff() {
   const selectedStaffId = document.getElementById("pendingStaffFilter")?.value;
 
@@ -7417,6 +7312,74 @@ function viewStaffPendingTransactions(staffIdentifier) {
   const modalContainer = document.createElement("div");
   modalContainer.innerHTML = modalHtml;
   document.body.appendChild(modalContainer);
+}
+
+function filterPendingByCustomer() {
+  const searchTerm = document
+    .getElementById("pendingCustomerSearch")
+    ?.value.toLowerCase()
+    .trim();
+  const pendingItems = document.querySelectorAll(".pending-transaction-item");
+
+  if (!searchTerm) {
+    pendingItems.forEach((item) => {
+      item.style.display = "";
+    });
+    return;
+  }
+
+  pendingItems.forEach((item) => {
+    const customerNumber = (item.dataset.customerNumber || "").toLowerCase();
+    const customerName = (item.dataset.customerName || "").toLowerCase();
+
+    // Match by customer number (exact or partial) or customer name
+    const matchesNumber = customerNumber.includes(searchTerm);
+    const matchesName = customerName.includes(searchTerm);
+
+    if (matchesNumber || matchesName) {
+      item.style.display = "";
+    } else {
+      item.style.display = "none";
+    }
+  });
+
+  // Update visible count
+  const visibleCount = document.querySelectorAll(
+    '.pending-transaction-item:not([style*="display: none"])',
+  ).length;
+  const totalCount = pendingItems.length;
+
+  if (visibleCount === 0) {
+    // Check if no-results message already exists
+    let noResultsMsg = document.getElementById("pendingNoResults");
+    if (!noResultsMsg) {
+      noResultsMsg = document.createElement("div");
+      noResultsMsg.id = "pendingNoResults";
+      noResultsMsg.className = "text-center py-8 text-gray-400";
+      noResultsMsg.innerHTML =
+        `
+        <div class="w-12 h-12 mx-auto bg-gray-800 rounded-full flex items-center justify-center mb-3">
+          <i class="fas fa-search text-gray-500 text-xl"></i>
+        </div>
+        <p class="text-sm">No pending transactions match "<span class="text-yellow-400">` +
+        searchTerm +
+        `</span>"</p>
+        <p class="text-xs text-gray-500 mt-1">Try searching by customer number or name</p>
+      `;
+      document
+        .getElementById("pendingTransactionsList")
+        .appendChild(noResultsMsg);
+    } else {
+      noResultsMsg.style.display = "";
+      noResultsMsg.querySelector("span.text-yellow-400").textContent =
+        searchTerm;
+    }
+  } else {
+    const noResultsMsg = document.getElementById("pendingNoResults");
+    if (noResultsMsg) {
+      noResultsMsg.style.display = "none";
+    }
+  }
 }
 
 function closeStaffPendingModal() {
@@ -7740,12 +7703,62 @@ async function checkAuth() {
 let customerIsActive;
 
 // Make functions available globally
-window.viewLoanRepaymentSchedule = viewLoanRepaymentSchedule;
-window.closeRepaymentScheduleModal = closeRepaymentScheduleModal;
-window.recordRepayment = recordRepayment;
+window.selectRole = selectRole;
+window.login = login;
+window.logout = logout;
+window.navigate = navigate;
+window.refreshData = refreshData;
+window.showAddCustomerModal = showAddCustomerModal;
+window.closeCustomerModal = closeCustomerModal;
+window.editCustomer = editCustomer;
+window.viewCustomer = viewCustomer;
+window.renderCustomerSummary = renderCustomerSummary;
+window.renderCustomerTransactions = renderCustomerTransactions;
+window.exportCustomerData = exportCustomerData;
+window.filterCustomers = filterCustomers;
+window.filterCustomersByStaff = filterCustomersByStaff;
 window.filterCustomersByBalance = filterCustomersByBalance;
 window.viewCustomerLoans = viewCustomerLoans;
 window.closeCustomerLoansModal = closeCustomerLoansModal;
+window.viewLoanRepaymentSchedule = viewLoanRepaymentSchedule;
+window.closeRepaymentScheduleModal = closeRepaymentScheduleModal;
+window.recordRepayment = recordRepayment;
+window.showApproveLoanModal = showApproveLoanModal;
+window.closeApproveLoanModal = closeApproveLoanModal;
+window.approveLoan = approveLoan;
+window.rejectLoan = rejectLoan;
+window.processTransaction = processTransaction;
+window.viewTransactionDetails = viewTransactionDetails;
+window.closeTransactionModal = closeTransactionModal;
+window.approveAllPendingTransactions = approveAllPendingTransactions;
+window.approveAllStaffTransactions = approveAllStaffTransactions;
+window.viewStaffPendingTransactions = viewStaffPendingTransactions;
+window.closeStaffPendingModal = closeStaffPendingModal;
+window.filterPendingByStaff = filterPendingByStaff;
+window.filterPendingByCustomer = filterPendingByCustomer;
+window.sortTransactions = sortTransactions;
+window.filterTransactionsByStaff = filterTransactionsByStaff;
+window.showModal = showModal;
+window.closeModal = closeModal;
+window.showAddStaffModal = showAddStaffModal;
+window.closeStaffModal = closeStaffModal;
+window.handleAddStaff = handleAddStaff;
+window.sendSMSReminder = sendSMSReminder;
+window.sendBulkSMSToDormantCustomers = sendBulkSMSToDormantCustomers;
+window.exportDormantCustomers = exportDormantCustomers;
+window.reactivateCustomer = reactivateCustomer;
+window.toggleNotifications = toggleNotifications;
+window.clearNotifications = clearNotifications;
+window.checkAuth = checkAuth;
+window.initializeApp = initializeApp;
+window.loadAllData = loadAllData;
+window.updateUserInfo = updateUserInfo;
+window.renderSidebar = renderSidebar;
+window.startClock = startClock;
+window.showNotification = showNotification;
+window.formatDate = formatDate;
+window.formatSimpleDate = formatSimpleDate;
+window.getStatusStyle = getStatusStyle;
 
 // Make Quick Transaction functions globally available
 window.renderQuickTransaction = renderQuickTransaction;
@@ -7759,6 +7772,7 @@ window.setQuickAmount = setQuickAmount;
 window.updateQuickNet = updateQuickNet;
 window.validateQuickAmount = validateQuickAmount;
 window.validateQuickForm = validateQuickForm;
+window.closeCustomerModal = closeCustomerModal;
 
 // Initialize
 window.onload = () => {

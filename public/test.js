@@ -429,7 +429,20 @@ function closeCustomerModal() {
 }
 
 // ==================== UTILITY FUNCTIONS ====================
+function isCustomerFlaggedForRecoveryCharge(customerId) {
+  const customerTransactions = state.transactions
+    .filter((t) => t.customerId === customerId && t.status === "approved")
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
 
+  // If the most recent approved transaction was a withdrawal, return true
+  if (
+    customerTransactions.length > 0 &&
+    customerTransactions[0].type === "withdrawal"
+  ) {
+    return true;
+  }
+  return false;
+}
 function formatDate(dateString) {
   if (!dateString) return "N/A";
   try {
@@ -851,15 +864,36 @@ function validateQuickForm() {
   const balance = window.quickSelectedCustomer?.balance || 0;
   const net = amount - charges;
 
+  const warning = document.getElementById("quickWarning");
+  const warningText = document.getElementById("quickWarningText");
   const submitBtn = document.getElementById("quickSubmitBtn");
 
-  let isValid = customerId && type && amount > 0 && net >= 0;
+  let hasError = false;
 
-  if (type === "withdrawal" && net > balance) {
-    isValid = false;
+  // --- NEW LOGIC: Mandatory Charge Check for Quick Mode ---
+  const needsCharge = isCustomerFlaggedForRecoveryCharge(customerId);
+
+  if (type === "deposit" && needsCharge && charges <= 0) {
+    warning.classList.remove("hidden");
+    warning.classList.replace("bg-red-500/10", "bg-orange-500/10");
+    warningText.textContent =
+      "⚠️ Mandatory charge required due to previous withdrawal";
+    hasError = true;
+  } else if (type === "withdrawal" && net > balance) {
+    warning.classList.remove("hidden");
+    warning.classList.replace("bg-orange-500/10", "bg-red-500/10");
+    warningText.textContent = `Insufficient funds! Available: ₦${balance.toLocaleString()}, Required: ₦${net.toLocaleString()}`;
+    hasError = true;
+  } else if (net < 0) {
+    warning.classList.remove("hidden");
+    warningText.textContent = "Charges cannot exceed amount";
+    hasError = true;
+  } else {
+    warning.classList.add("hidden");
   }
 
-  if (submitBtn) submitBtn.disabled = !isValid;
+  if (submitBtn) submitBtn.disabled = hasError;
+  return !hasError;
 }
 
 async function handleQuickTransaction(e) {
@@ -2979,6 +3013,25 @@ function initTransactionSearch(customersData) {
     window.selectedCustomerName = name;
     window.selectedCustomerNumber = customerNumber;
 
+    // --- NEW LOGIC: Check for mandatory recovery charge ---
+    window.selectedCustomerNeedsCharge = isCustomerFlaggedForRecoveryCharge(id);
+    const warningDiv = document.getElementById("insufficientFundsWarning");
+
+    if (window.selectedCustomerNeedsCharge) {
+      warningDiv.classList.remove("hidden");
+      warningDiv.classList.replace("bg-red-500/10", "bg-orange-500/10");
+      warningDiv.classList.replace("text-red-200", "text-orange-200");
+      warningDiv.innerHTML = `
+        <div class="flex items-center gap-2">
+          <i class="fas fa-exclamation-triangle text-orange-500"></i>
+          <p class="text-xs sm:text-sm text-orange-200">⚠️ MANDATORY CHARGE: A charge must be entered for this deposit due to a previous withdrawal.</p>
+        </div>
+      `;
+    } else {
+      warningDiv.classList.add("hidden");
+    }
+    // -------------------------------------------------------
+
     document.getElementById("searchResultsDropdown").classList.add("hidden");
     document.getElementById("customerSearchInput").value = "";
     document.getElementById("clearSearchBtn").classList.add("hidden");
@@ -3031,13 +3084,27 @@ function initTransactionSearch(customersData) {
     if (deductionSpan)
       deductionSpan.textContent = "₦" + netAmount.toLocaleString();
 
+    // --- NEW LOGIC: Enforce charge on deposits for flagged customers ---
+    let isInvalid = false;
+
+    // Rule 1: Insufficient funds for withdrawals
     if (transactionType === "withdrawal" && netAmount > balance) {
-      if (warningDiv) warningDiv.classList.remove("hidden");
-      if (submitBtn) {
-        submitBtn.disabled = true;
-        submitBtn.classList.add("opacity-50", "cursor-not-allowed");
-      }
-    } else if (transactionType === "deposit" && netAmount < 0) {
+      isInvalid = true;
+    }
+    // Rule 2: Charges cannot be negative
+    else if (netAmount < 0) {
+      isInvalid = true;
+    }
+    // Rule 3: MANDATORY CHARGE (The new requirement)
+    else if (
+      transactionType === "deposit" &&
+      window.selectedCustomerNeedsCharge &&
+      charges <= 0
+    ) {
+      isInvalid = true;
+    }
+
+    if (isInvalid) {
       if (warningDiv) warningDiv.classList.remove("hidden");
       if (submitBtn) {
         submitBtn.disabled = true;
@@ -3187,10 +3254,11 @@ async function processTransaction(
   const originalStatus = transaction.status;
 
   // --- STEP 2: OPTIMISTIC UPDATE (The Speed Secret) ---
-  // Change status in local state immediately before the API call
+  // Update the local state immediately
   transaction.status = action;
 
-  // Re-render the view immediately so the admin sees the green/red color change instantly
+  // Re-render the view immediately so the admin sees the color change instantly
+  // We do NOT await this; we just want the UI to reflect the change
   if (state.currentView === "transactions") {
     renderAdminTransactions(document.getElementById("contentArea"));
   } else {
@@ -3214,7 +3282,6 @@ async function processTransaction(
       transaction.type === "deposit" &&
       transaction.loanDeduction > 0
     ) {
-      // Handle special loan repayment data
       const { loanId, amount, fullyPaid, outstandingAfter } =
         transaction.loanRepaymentInfo;
       updateData.loanRepayment = {
@@ -3226,23 +3293,20 @@ async function processTransaction(
       };
     }
 
-    // --- STEP 3: ACTUAL API CALL ---
     await api.patch(`/transactions/${txnId}${endpoint}`, updateData);
 
-    // --- STEP 4: SUCCESS ---
     cachedApi.invalidate("/transactions");
     showNotification(`Transaction ${action}ed!`, "success");
 
-    // We still call loadAllData in background just to ensure balances are perfectly synced
-    // from the server, but the UI is already updated.
-    await loadAllData();
+    loadAllData().catch((err) => console.warn("Background sync error:", err));
   } catch (error) {
-    // --- STEP 5: ROLLBACK ON FAILURE ---
-    // If the server says "No", change the UI back to the original status
     transaction.status = originalStatus;
 
-    // Refresh view to show the rollback
-    navigate(state.currentView);
+    if (state.currentView === "transactions") {
+      renderAdminTransactions(document.getElementById("contentArea"));
+    } else {
+      navigate(state.currentView);
+    }
 
     showNotification(
       error.response?.data?.message || "Failed to process",
