@@ -11,92 +11,89 @@ const state = {
   isLoading: false,
   lastTransactionCount: 0,
   pollingInterval: null,
+  expenses: [],
 };
 
 // ==================== REAL-TIME POLLING ====================
 
 function startTransactionPolling() {
-  // Stop any existing polling
+  // Stop any existing polling first
   if (state.pollingInterval) {
     clearInterval(state.pollingInterval);
+    state.pollingInterval = null;
   }
 
-  // Only poll if user is logged in and is admin
+  // Only poll for admin
   if (!state.currentUser || state.role !== "admin") {
     return;
   }
 
-  // Poll every 10 seconds for new transactions
   state.pollingInterval = setInterval(async () => {
     try {
-      const response = await api.get("/transactions");
-      // Normalize response data - handle both {data: [...]} and [...] formats
-      const freshTransactions = Array.isArray(response.data)
-        ? response.data
-        : Array.isArray(response.data?.data)
-          ? response.data.data
-          : [];
+      const response = await api.get("/transactions/pending");
 
-      // Ensure state.transactions is an array
+      const freshPendingTransactions = normalizeApiArray(response.data, [
+        "transactions",
+        "data",
+      ]).sort(
+        (a, b) =>
+          new Date(b.requestedAt || b.date || b.createdAt || 0) -
+          new Date(a.requestedAt || a.date || a.createdAt || 0),
+      );
+
       const currentTransactions = Array.isArray(state.transactions)
         ? state.transactions
         : [];
-
-      // Count pending transactions
-      const freshPendingCount = freshTransactions.filter(
-        (t) => t.status === "pending",
-      ).length;
 
       const oldPendingCount = currentTransactions.filter(
         (t) => t.status === "pending",
       ).length;
 
-      // Check if new pending transactions arrived
-      if (freshPendingCount > oldPendingCount) {
+      const freshPendingCount = freshPendingTransactions.length;
+
+      // Merge pending transactions into local state.
+      mergeTransactionsIntoState(freshPendingTransactions);
+
+      const hasNewPending = freshPendingCount > oldPendingCount;
+
+      if (hasNewPending) {
         const newCount = freshPendingCount - oldPendingCount;
 
-        // Update state with fresh data
-        state.transactions = freshTransactions;
-        state.transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-        // Show notification about new pending transactions
         showNotification(
           `🔔 ${newCount} new transaction${newCount > 1 ? "s" : ""} pending approval from staff`,
           "warning",
         );
 
-        // Update notification badge
-        const badge = document.getElementById("notifBadge");
-        if (badge && freshPendingCount > 0) {
-          badge.classList.remove("hidden");
-        }
-
-        // If admin is on transactions page, auto-refresh it
-        if (state.currentView === "transactions") {
-          renderSidebar(); // Update badge count
-          navigate("transactions"); // Re-render the page
-        } else {
-          // Just update sidebar badge
-          renderSidebar();
-        }
-
-        // Add to notifications panel
         state.notifications.unshift({
           id: Date.now(),
           message: `${newCount} new transaction${newCount > 1 ? "s" : ""} pending approval`,
           time: "Just now",
           unread: true,
         });
+
         updateNotificationList();
       }
 
-      // Also update lastTransactionCount for tracking
-      state.lastTransactionCount = freshTransactions.length;
+      const badge = document.getElementById("notifBadge");
+      if (badge) {
+        if (freshPendingCount > 0) badge.classList.remove("hidden");
+        else badge.classList.add("hidden");
+      }
+
+      renderSidebar();
+
+      if (state.currentView === "transactions" && state.role === "admin") {
+        const contentArea = document.getElementById("contentArea");
+        if (contentArea) {
+          renderAdminTransactions(contentArea);
+        }
+      }
+
+      state.lastTransactionCount = currentTransactions.length;
     } catch (error) {
-      // Silently fail on polling errors - don't spam user
       console.warn("Polling error:", error.message);
     }
-  }, 10000); // Poll every 10 seconds
+  }, 60000);
 }
 
 function stopTransactionPolling() {
@@ -115,7 +112,7 @@ function initRealTimeUpdates() {
 
 // Axios Configuration
 const api = axios.create({
-  baseURL: "https://bl-multi-concept.onrender.com/",
+  baseURL: "http://localhost:3000/",
   timeout: 60000,
   headers: { "Content-Type": "application/json" },
 });
@@ -129,6 +126,13 @@ const CACHE_TTL = {
   staff: 60000, // 1m
 };
 
+// Performance controls: keep the initial dashboard load light.
+// Customer history now fetches that customer's own transactions on demand.
+const TRANSACTION_BOOT_LIMIT = 100;
+const TRANSACTION_POLL_LIMIT = 100;
+const CUSTOMER_TRANSACTION_LIMIT = 200;
+const CLIENT_DEBUG = false;
+
 const cachedApi = {
   async get(endpoint, options = {}) {
     const cacheKey = `${endpoint}${JSON.stringify(options.params || {})}`;
@@ -139,11 +143,13 @@ const cachedApi = {
     const ttl = CACHE_TTL[endpointKey] || 10000;
 
     if (cached && Date.now() - cached.timestamp < ttl) {
-      console.log(`%c[CACHE HIT] ${endpoint}`, "color: #4ade80");
+      if (CLIENT_DEBUG)
+        console.log(`%c[CACHE HIT] ${endpoint}`, "color: #4ade80");
       return { data: cached.data, fromCache: true };
     }
 
-    console.log(`%c[CACHE MISS] ${endpoint}`, "color: #facc15");
+    if (CLIENT_DEBUG)
+      console.log(`%c[CACHE MISS] ${endpoint}`, "color: #facc15");
     const response = await api.get(endpoint, options);
 
     // Normalize response - ensure we always return the actual data array/object
@@ -154,7 +160,8 @@ const cachedApi = {
   },
 
   invalidate(endpointPattern) {
-    console.log(`%c[CACHE INVALIDATE] ${endpointPattern}`, "color: #f87171");
+    if (CLIENT_DEBUG)
+      console.log(`%c[CACHE INVALIDATE] ${endpointPattern}`, "color: #f87171");
     for (const [key] of apiCache) {
       if (key.includes(endpointPattern)) apiCache.delete(key);
     }
@@ -207,6 +214,7 @@ api.interceptors.response.use(
 const menus = {
   admin: [
     { id: "dashboard", icon: "fa-chart-line", label: "Dashboard" },
+    { id: "expenses", icon: "fa-receipt", label: "Expenses" },
     { id: "customers", icon: "fa-users", label: "All Customers" },
     {
       id: "dormant-customers",
@@ -429,18 +437,292 @@ function closeCustomerModal() {
 }
 
 // ==================== UTILITY FUNCTIONS ====================
+function normalizeApiArray(payload, keys = []) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+
+  for (const key of keys) {
+    if (Array.isArray(payload?.[key])) return payload[key];
+    if (Array.isArray(payload?.data?.[key])) return payload.data[key];
+  }
+
+  return [];
+}
+
+function normalizeId(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object") {
+    if (value.$oid) return String(value.$oid).trim();
+    if (value._id) return normalizeId(value._id);
+    if (value.id) return normalizeId(value.id);
+  }
+  return String(value).trim();
+}
+
+function normalizePhone(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function getCustomerPrimaryId(customer) {
+  return normalizeId(
+    customer?.id ||
+      customer?._id ||
+      customer?.customerId ||
+      customer?.customerNumber,
+  );
+}
+
+function getTransactionPrimaryId(transaction) {
+  return normalizeId(
+    transaction?.id || transaction?._id || transaction?.transactionId,
+  );
+}
+
+function getCustomerIdSet(customer) {
+  return new Set(
+    [
+      customer?.id,
+      customer?._id,
+      customer?.customerId,
+      customer?.customerNumber,
+    ]
+      .map(normalizeId)
+      .filter(Boolean),
+  );
+}
+
+function findCustomerByAnyId(customerId) {
+  const target = normalizeId(customerId);
+  if (!target) return null;
+
+  return (
+    state.customers.find((customer) =>
+      getCustomerIdSet(customer).has(target),
+    ) || null
+  );
+}
+
+function isSameCustomerId(left, right) {
+  const a = normalizeId(left);
+  const b = normalizeId(right);
+  return Boolean(a && b && a === b);
+}
+
+function getTransactionsForCustomer(customerOrId) {
+  const customer =
+    typeof customerOrId === "object"
+      ? customerOrId
+      : findCustomerByAnyId(customerOrId);
+
+  if (!customer) return [];
+
+  const customerIds = getCustomerIdSet(customer);
+  const customerPhone = normalizePhone(customer.phone);
+  const customerName = String(customer.name || "")
+    .trim()
+    .toLowerCase();
+
+  return (Array.isArray(state.transactions) ? state.transactions : []).filter(
+    (transaction) => {
+      const transactionCustomerId = normalizeId(transaction.customerId);
+
+      // Primary match: custom id, Mongo _id, customerNumber, or stored customerId.
+      if (transactionCustomerId && customerIds.has(transactionCustomerId)) {
+        return true;
+      }
+
+      // Secondary match: transaction stores a nested customer object.
+      const nestedCustomerId = normalizeId(
+        transaction.customer?.id ||
+          transaction.customer?._id ||
+          transaction.customerId?._id,
+      );
+      if (nestedCustomerId && customerIds.has(nestedCustomerId)) {
+        return true;
+      }
+
+      // Fallback match: only use phone/name when transaction has no usable customerId.
+      const hasNoUsableTransactionCustomerId =
+        !transactionCustomerId && !nestedCustomerId;
+      if (hasNoUsableTransactionCustomerId && customerPhone) {
+        const transactionPhone = normalizePhone(
+          transaction.customerPhone || transaction.phone,
+        );
+        if (transactionPhone && transactionPhone === customerPhone) return true;
+      }
+
+      if (hasNoUsableTransactionCustomerId && customerName) {
+        const transactionName = String(transaction.customerName || "")
+          .trim()
+          .toLowerCase();
+        if (transactionName && transactionName === customerName) return true;
+      }
+
+      return false;
+    },
+  );
+}
+
+function buildTransactionMergeKey(transaction) {
+  const primaryId = getTransactionPrimaryId(transaction);
+  if (primaryId) return `id:${primaryId}`;
+
+  return [
+    normalizeId(transaction?.customerId),
+    transaction?.type || "",
+    transaction?.status || "",
+    transaction?.amount || 0,
+    transaction?.charges || 0,
+    transaction?.netAmount || 0,
+    transaction?.date || transaction?.createdAt || "",
+  ].join("|");
+}
+
+function mergeTransactionsIntoState(transactions) {
+  if (!Array.isArray(transactions) || transactions.length === 0) return;
+
+  const merged = new Map();
+  (Array.isArray(state.transactions) ? state.transactions : []).forEach(
+    (transaction) => {
+      merged.set(buildTransactionMergeKey(transaction), transaction);
+    },
+  );
+
+  transactions.forEach((transaction) => {
+    if (transaction && typeof transaction === "object") {
+      merged.set(buildTransactionMergeKey(transaction), transaction);
+    }
+  });
+
+  state.transactions = Array.from(merged.values()).sort(
+    (a, b) =>
+      new Date(b.date || b.createdAt || 0) -
+      new Date(a.date || a.createdAt || 0),
+  );
+}
+
+async function loadCustomerTransactions(customerId, options = {}) {
+  const safeCustomerId = encodeURIComponent(normalizeId(customerId));
+  if (!safeCustomerId) return [];
+
+  try {
+    const response = await api.get(`/transactions/customer/${safeCustomerId}`, {
+      params: {
+        page: options.page || 1,
+        limit: options.limit || CUSTOMER_TRANSACTION_LIMIT,
+      },
+    });
+
+    const transactions = normalizeApiArray(response.data, [
+      "transactions",
+      "data",
+    ]);
+
+    mergeTransactionsIntoState(transactions);
+    return transactions;
+  } catch (error) {
+    console.warn("Could not load customer transactions:", error.message);
+    return getTransactionsForCustomer(customerId);
+  }
+}
+
+async function loadPendingTransactions(options = {}) {
+  const { silent = true, limit = 500 } = options;
+
+  try {
+    const response = await api.get("/transactions/pending", {
+      params: { limit },
+    });
+
+    const pendingTransactions = normalizeApiArray(response.data, [
+      "transactions",
+      "data",
+    ]).filter((transaction) => transaction?.status === "pending");
+
+    const nonPendingTransactions = (
+      Array.isArray(state.transactions) ? state.transactions : []
+    ).filter((transaction) => transaction?.status !== "pending");
+
+    state.transactions = nonPendingTransactions;
+    mergeTransactionsIntoState(pendingTransactions);
+
+    return pendingTransactions;
+  } catch (error) {
+    console.warn("Could not load pending transactions:", error.message);
+
+    if (!silent) {
+      showNotification(
+        error.response?.data?.message ||
+          error.response?.data?.error ||
+          "Could not load pending transactions",
+        "warning",
+      );
+    }
+
+    return (Array.isArray(state.transactions) ? state.transactions : []).filter(
+      (transaction) => transaction?.status === "pending",
+    );
+  }
+}
+
+function renderLoadingState(container, message = "Loading...") {
+  if (!container) return;
+  container.innerHTML = `
+    <div class="glass-panel rounded-2xl p-6 animate-fade-in text-center">
+      <i class="fas fa-spinner fa-spin text-blue-400 text-2xl mb-3"></i>
+      <p class="text-sm text-gray-400">${escapeHtml(message)}</p>
+    </div>
+  `;
+}
+
+function buildTransactionListSignature(transactions) {
+  return (Array.isArray(transactions) ? transactions : [])
+    .map((transaction) =>
+      [
+        getTransactionPrimaryId(transaction),
+        normalizeId(transaction.customerId),
+        transaction.type || "",
+        transaction.status || "",
+        transaction.amount || 0,
+        transaction.charges || 0,
+        transaction.netAmount || 0,
+        transaction.finalBalance || 0,
+        transaction.date || transaction.createdAt || "",
+        transaction.updatedAt ||
+          transaction.approvedAt ||
+          transaction.rejectedAt ||
+          "",
+      ].join("|"),
+    )
+    .sort()
+    .join("::");
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 function isCustomerFlaggedForRecoveryCharge(customerId) {
-  const customerTransactions = state.transactions
-    .filter((t) => t.customerId === customerId && t.status === "approved")
+  const customer = findCustomerByAnyId(customerId);
+  if (!customer) return false;
+
+  const customerTransactions = getTransactionsForCustomer(customer)
+    .filter((t) => t.status === "approved")
     .sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  // If the most recent approved transaction was a withdrawal, return true
   if (
     customerTransactions.length > 0 &&
     customerTransactions[0].type === "withdrawal"
   ) {
-    return true;
+    const currentBalance = customer?.cashBalance ?? customer?.balance ?? 0;
+    return currentBalance <= 0;
   }
+
   return false;
 }
 function formatDate(dateString) {
@@ -694,7 +976,7 @@ function filterQuickCustomers() {
   const dropdown = document.getElementById("quickSearchResults");
   const list = document.getElementById("quickSearchList");
 
-  if (!searchInput) return;
+  if (!searchInput || !dropdown || !list) return;
   const term = searchInput.value.toLowerCase().trim();
 
   if (!term) {
@@ -702,18 +984,28 @@ function filterQuickCustomers() {
     return;
   }
 
-  const filtered = window.quickCustomersData.filter((c) => {
+  const sourceCustomers = Array.isArray(window.quickCustomersData)
+    ? window.quickCustomersData
+    : [];
+
+  const filtered = sourceCustomers.filter((c) => {
     const name = (c.name || "").toLowerCase();
     const email = (c.email || "").toLowerCase();
     const phone = (c.phone || "").toLowerCase();
     const number = (c.customerNumber || "").toLowerCase();
+    const id = getCustomerPrimaryId(c).toLowerCase();
+    const plainTerm = term.replace(/^#/, "");
+
     return (
       name.includes(term) ||
       email.includes(term) ||
       phone.includes(term) ||
-      number === term
+      number.includes(plainTerm) ||
+      id.includes(plainTerm)
     );
   });
+
+  window.quickCustomerLookup = new Map();
 
   if (filtered.length === 0) {
     list.innerHTML =
@@ -721,6 +1013,9 @@ function filterQuickCustomers() {
   } else {
     list.innerHTML = filtered
       .map((c) => {
+        const customerId = getCustomerPrimaryId(c);
+        window.quickCustomerLookup.set(customerId, c);
+
         const initials = c.name
           ? c.name
               .split(" ")
@@ -729,17 +1024,18 @@ function filterQuickCustomers() {
               .substring(0, 2)
               .toUpperCase()
           : "??";
-        const balance = c.cashBalance || c.balance || 0;
-        return `<div class="p-3 hover:bg-gray-700 cursor-pointer transition-colors" 
-        onclick="selectQuickCustomer('${c.id}', '${c.name.replace(/'/g, "\'")}', ${balance}, '${c.phone || ""}', '${c.customerNumber || ""}', '${initials}')">
+        const balance = c.cashBalance ?? c.balance ?? 0;
+        const safeCustomerId = encodeURIComponent(customerId);
+
+        return `<div class="p-3 hover:bg-gray-700 cursor-pointer transition-colors" onclick="selectQuickCustomerById('${safeCustomerId}')">
         <div class="flex items-center gap-3">
-          <div class="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 text-xs font-bold">${initials}</div>
+          <div class="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 text-xs font-bold">${escapeHtml(initials)}</div>
           <div class="flex-1">
             <div class="flex items-center gap-2">
-              ${c.customerNumber ? `<span class="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-mono">#${c.customerNumber}</span>` : ""}
-              <p class="font-medium text-sm">${c.name}</p>
+              ${c.customerNumber ? `<span class="px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-mono">#${escapeHtml(c.customerNumber)}</span>` : ""}
+              <p class="font-medium text-sm">${escapeHtml(c.name)}</p>
             </div>
-            <p class="text-xs text-gray-400">${c.email} • ₦${balance.toLocaleString()}</p>
+            <p class="text-xs text-gray-400">${escapeHtml(c.email || "No email")} • ₦${Number(balance || 0).toLocaleString()}</p>
           </div>
           <i class="fas fa-chevron-right text-gray-600 text-xs"></i>
         </div>
@@ -751,18 +1047,68 @@ function filterQuickCustomers() {
   dropdown.classList.remove("hidden");
 }
 
+function selectQuickCustomerById(encodedId) {
+  const customerId = decodeURIComponent(encodedId || "");
+  const customer =
+    window.quickCustomerLookup?.get(customerId) ||
+    findCustomerByAnyId(customerId);
+
+  if (!customer) {
+    showNotification("Customer not found", "error");
+    return;
+  }
+
+  const id = getCustomerPrimaryId(customer);
+  const balance = customer.cashBalance ?? customer.balance ?? 0;
+  const initials = customer.name
+    ? customer.name
+        .split(" ")
+        .map((n) => n[0])
+        .join("")
+        .substring(0, 2)
+        .toUpperCase()
+    : "??";
+
+  selectQuickCustomer(
+    id,
+    customer.name || "Unnamed Customer",
+    balance,
+    customer.phone || "",
+    customer.customerNumber || "",
+    initials,
+  );
+}
+
 function selectQuickCustomer(id, name, balance, phone, number, initials) {
-  document.getElementById("quickCustomerId").value = id;
-  document.getElementById("quickCustomerName").textContent = name;
-  document.getElementById("quickCustomerInitials").textContent = initials;
-  document.getElementById("quickCustomerDetails").textContent = phone
-    ? `📱 ${phone}`
+  const customer = findCustomerByAnyId(id) || {
+    id,
+    name,
+    phone,
+    customerNumber: number,
+    cashBalance: balance,
+  };
+
+  const primaryId = getCustomerPrimaryId(customer) || normalizeId(id);
+  const customerBalance =
+    customer.cashBalance ?? customer.balance ?? balance ?? 0;
+
+  document.getElementById("quickCustomerId").value = primaryId;
+  document.getElementById("quickCustomerName").textContent =
+    customer.name || name || "Unnamed Customer";
+  document.getElementById("quickCustomerInitials").textContent =
+    initials || "--";
+  document.getElementById("quickCustomerDetails").textContent = customer.phone
+    ? `📱 ${customer.phone}`
     : "No phone";
   document.getElementById("quickCustomerBalance").textContent =
-    "₦" + balance.toLocaleString();
+    "₦" + Number(customerBalance || 0).toLocaleString();
   document.getElementById("quickSelectedCustomer").classList.remove("hidden");
 
-  window.quickSelectedCustomer = { id, name, balance };
+  window.quickSelectedCustomer = {
+    ...customer,
+    id: primaryId,
+    balance: customerBalance,
+  };
 
   document.getElementById("quickSearchResults").classList.add("hidden");
   document.getElementById("quickCustomerSearch").value = "";
@@ -877,7 +1223,7 @@ function validateQuickForm() {
     warning.classList.remove("hidden");
     warning.classList.replace("bg-red-500/10", "bg-orange-500/10");
     warningText.textContent =
-      "⚠️ Mandatory charge required due to previous withdrawal";
+      "⚠️ Mandatory charge required: Customer's last withdrawal brought balance to zero. Enter a charge to proceed.";
     hasError = true;
   } else if (type === "withdrawal" && net > balance) {
     warning.classList.remove("hidden");
@@ -899,7 +1245,7 @@ function validateQuickForm() {
 async function handleQuickTransaction(e) {
   e.preventDefault();
 
-  const customerId = document.getElementById("quickCustomerId").value;
+  const selectedCustomerId = document.getElementById("quickCustomerId").value;
   const type = document.getElementById("quickType").value;
   const amount = parseFloat(document.getElementById("quickAmount").value);
   const charges =
@@ -907,18 +1253,32 @@ async function handleQuickTransaction(e) {
   const description =
     document.getElementById("quickDescription").value || `Quick ${type}`;
 
-  const customer = state.customers.find((c) => c.id === customerId);
+  const customer = findCustomerByAnyId(selectedCustomerId);
   if (!customer) {
     showNotification("Customer not found", "error");
     return;
   }
 
+  if (!type) {
+    showNotification("Please select transaction type", "error");
+    return;
+  }
+
+  if (!amount || amount <= 0) {
+    showNotification("Please enter a valid amount", "error");
+    return;
+  }
+
+  const canonicalCustomerId = getCustomerPrimaryId(customer);
+  const currentBalance = customer.cashBalance ?? customer.balance ?? 0;
   const netAmount = amount - charges;
 
-  if (
-    type === "withdrawal" &&
-    netAmount > (customer.cashBalance || customer.balance || 0)
-  ) {
+  if (netAmount < 0) {
+    showNotification("Charges cannot exceed amount", "error");
+    return;
+  }
+
+  if (type === "withdrawal" && netAmount > currentBalance) {
     showNotification("Insufficient funds", "error");
     return;
   }
@@ -929,7 +1289,6 @@ async function handleQuickTransaction(e) {
   submitBtn.innerHTML =
     '<i class="fas fa-spinner fa-spin mr-2"></i>Processing...';
 
-  // === CHARGE CONFIRMATION PROMPT ===
   if (charges <= 0) {
     const proceedWithoutCharges = confirm(
       `No charges have been entered for this ${type}.\n\nDo you want to proceed without adding charges?`,
@@ -942,7 +1301,7 @@ async function handleQuickTransaction(e) {
   }
 
   const txnData = {
-    customerId,
+    customerId: canonicalCustomerId,
     customerName: customer.name,
     customerPhone: customer.phone,
     type,
@@ -957,20 +1316,33 @@ async function handleQuickTransaction(e) {
     staffId: state.currentUser.id,
     approvedBy: state.currentUser.name,
     approvedAt: new Date(),
+    requestedAt: new Date(),
     date: new Date(),
     isQuickTransaction: true,
   };
 
   try {
-    await api.post("/transactions", txnData);
+    const response = await api.post("/transactions", txnData);
+    const createdTransaction =
+      response.data?.transaction || response.data?.data || response.data;
+
+    // Optimistic local insert so the customer history updates immediately.
+    if (createdTransaction && typeof createdTransaction === "object") {
+      mergeTransactionsIntoState([createdTransaction]);
+    }
+
+    // Force the next load to pull fresh transactions/customers, not stale cache.
+    cachedApi.invalidate("/transactions");
+    cachedApi.invalidate("/customers");
+
     await loadAllData();
+    renderSidebar();
 
     showNotification(
       `⚡ Quick ${type} of ₦${amount.toLocaleString()} processed! Net: ₦${netAmount.toLocaleString()}`,
       "success",
     );
 
-    // Reset form but stay on page
     clearQuickCustomer();
     document.getElementById("quickAmount").value = "";
     document.getElementById("quickCharges").value = "0";
@@ -993,7 +1365,9 @@ async function handleQuickTransaction(e) {
   } catch (error) {
     console.error("Quick transaction error:", error);
     showNotification(
-      error.response?.data?.message || "Failed to process quick transaction",
+      error.response?.data?.message ||
+        error.response?.data?.error ||
+        "Failed to process quick transaction",
       "error",
     );
   } finally {
@@ -1079,39 +1453,46 @@ async function loadAllData() {
   try {
     const [customersRes, transactionsRes] = await Promise.all([
       cachedApi.get("/customers"),
-      cachedApi.get("/transactions"),
+      cachedApi.get("/transactions", {
+        params: { limit: TRANSACTION_BOOT_LIMIT },
+      }),
     ]);
 
-    // SAFE ASSIGNMENT: Ensure we always get an array
-    // If data is an array, use it. If it's an object with a 'customers' key, use that.
-    // Otherwise, default to an empty array.
-    state.customers = Array.isArray(customersRes.data)
-      ? customersRes.data
-      : customersRes.data?.customers || [];
+    state.customers = normalizeApiArray(customersRes.data, [
+      "customers",
+      "data",
+    ]);
 
-    state.transactions = Array.isArray(transactionsRes.data)
-      ? transactionsRes.data
-      : transactionsRes.data?.transactions || [];
+    state.transactions = normalizeApiArray(transactionsRes.data, [
+      "transactions",
+      "data",
+    ]);
 
-    // Now .sort() will work because state.transactions is guaranteed to be an array
     state.transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
 
     try {
       const loansRes = await api.get("/loans");
-      state.loans = Array.isArray(loansRes.data)
-        ? loansRes.data
-        : loansRes.data?.loans || [];
+      state.loans = normalizeApiArray(loansRes.data, ["loans", "data"]);
     } catch (loansError) {
       console.warn("Could not load loans data:", loansError);
       state.loans = [];
     }
 
+    try {
+      const expensesRes = await api.get("/expenses");
+      state.expenses = normalizeApiArray(expensesRes.data, [
+        "expenses",
+        "data",
+      ]);
+    } catch (expensesError) {
+      console.warn("Could not load expenses data:", expensesError);
+      state.expenses = [];
+    }
+
     if (state.role === "admin") {
       try {
         const staffRes = await api.get("/staff");
-        state.staff = Array.isArray(staffRes.data)
-          ? staffRes.data
-          : staffRes.data?.staff || [];
+        state.staff = normalizeApiArray(staffRes.data, ["staff", "data"]);
       } catch (staffError) {
         console.warn("Could not load staff data:", staffError);
         state.staff = [];
@@ -1122,14 +1503,16 @@ async function loadAllData() {
   } catch (error) {
     console.error("Failed to load critical data:", error);
     showNotification("Failed to load data from server", "error");
-    // IMPORTANT: Fallback to empty arrays so the UI doesn't crash
-    state.customers = state.customers || [];
-    state.transactions = state.transactions || [];
+
+    state.customers = Array.isArray(state.customers) ? state.customers : [];
+    state.transactions = Array.isArray(state.transactions)
+      ? state.transactions
+      : [];
+    state.expenses = Array.isArray(state.expenses) ? state.expenses : [];
   } finally {
     state.isLoading = false;
   }
 }
-
 async function refreshData() {
   const icon = document.getElementById("refreshIcon");
   icon.classList.add("fa-spin");
@@ -1249,6 +1632,9 @@ function navigate(view) {
     case "my-loans":
       renderMyLoans(contentArea);
       break;
+    case "expenses": // <--- Added this case
+      renderExpenses(contentArea);
+      break;
     case "revenue":
       renderRevenueReports(contentArea);
       break;
@@ -1265,7 +1651,7 @@ function navigate(view) {
       renderCustomerReports(contentArea);
       break;
     case "staff-reconciliation":
-      renderStaffReconciliation(contentArea); // Add this
+      renderStaffReconciliation(contentArea);
       break;
     case "repayments":
       renderRepaymentManagement(contentArea);
@@ -1413,7 +1799,7 @@ function renderDashboard(container) {
       0,
     );
     const myTransactions = state.transactions.filter((t) =>
-      myCustomers.some((c) => c.id === t.customerId),
+      myCustomers.some((c) => getTransactionsForCustomer(c).includes(t)),
     );
     const myPendingRequests = myTransactions.filter(
       (t) => t.status === "pending",
@@ -1969,6 +2355,141 @@ function renderRepaymentManagement(container) {
     showNotification(errorMsg, "error");
   }
 }
+
+// ==================== EXPENSES VIEW ====================
+
+function renderExpenses(container) {
+  const totalExpenses = state.expenses.reduce(
+    (sum, exp) => sum + exp.amount,
+    0,
+  );
+
+  const html = `
+    <div class="space-y-6 animate-fade-in px-4 sm:px-0">
+      <div class="flex justify-between items-center">
+        <h3 class="text-xl font-bold">Expense Management</h3>
+        <button onclick="showAddExpenseModal()" class="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-sm transition-colors">
+          <i class="fas fa-plus mr-2"></i>Record Expense
+        </button>
+      </div>
+
+      <!-- Summary Card -->
+      <div class="glass-panel p-6 rounded-2xl border-l-4 border-red-500">
+        <p class="text-sm text-gray-400">Total Expenses Recorded</p>
+        <p class="text-3xl font-bold text-red-400">₦${totalExpenses.toLocaleString()}</p>
+      </div>
+
+      <!-- Expense List -->
+      <div class="glass-panel rounded-2xl overflow-hidden">
+        <table class="min-w-full divide-y divide-gray-700">
+          <thead class="bg-gray-800/50">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Date</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Description</th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase">Category</th>
+              <th class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase">Amount</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800">
+            ${
+              state.expenses.length === 0
+                ? `<tr><td colspan="4" class="px-6 py-12 text-center text-gray-500">No expenses recorded yet.</td></tr>`
+                : state.expenses
+                    .map(
+                      (exp) => `
+                <tr>
+                  <td class="px-6 py-4 text-sm text-gray-400">${formatSimpleDate(exp.date)}</td>
+                  <td class="px-6 py-4 text-sm font-medium text-white">${exp.description}</td>
+                  <td class="px-6 py-4 text-sm"><span class="px-2 py-1 bg-gray-700 rounded text-xs text-gray-300">${exp.category}</span></td>
+                  <td class="px-6 py-4 text-sm font-mono text-red-400 text-right">-₦${exp.amount.toLocaleString()}</td>
+                </tr>
+              `,
+                    )
+                    .join("")
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  container.innerHTML = html;
+}
+
+function showAddExpenseModal() {
+  const modalHtml = `
+    <div id="expenseModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+      <div class="bg-gray-900 rounded-2xl p-6 max-w-md w-full animate-slideIn">
+        <h3 class="text-xl font-bold mb-4">Record New Expense</h3>
+        <form onsubmit="handleExpenseSubmit(event)" class="space-y-4">
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">Description</label>
+            <input type="text" name="description" required class="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">Amount (₦)</label>
+            <input type="number" name="amount" required class="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white font-mono">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-400 mb-1">Category</label>
+            <select name="category" class="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white">
+              <option value="Utilities">Utilities</option>
+              <option value="Salary">Staff Salary</option>
+              <option value="Rent">Rent/Office</option>
+              <option value="Marketing">Marketing</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div class="flex gap-3 pt-4">
+            <button type="button" onclick="closeExpenseModal()" class="flex-1 py-2 border border-gray-600 rounded-lg">Cancel</button>
+            <button type="submit" class="flex-1 py-2 bg-red-600 hover:bg-red-500 rounded-lg font-bold">Save Expense</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  const div = document.createElement("div");
+  div.innerHTML = modalHtml;
+  document.body.appendChild(div.firstElementChild);
+}
+
+async function handleExpenseSubmit(e) {
+  e.preventDefault();
+  const formData = new FormData(e.target);
+  const newExpense = {
+    description: formData.get("description"),
+    amount: parseFloat(formData.get("amount")),
+    category: formData.get("category"),
+    date: new Date().toISOString(),
+  };
+
+  try {
+    // Assuming your backend has a /expenses endpoint
+    await api.post("/expenses", newExpense);
+    state.expenses.push(newExpense);
+
+    // Force refresh data and clear modal
+    cachedApi.invalidate("/expenses");
+    closeExpenseModal();
+    renderExpenses(document.getElementById("contentArea"));
+    showNotification("Expense recorded successfully", "success");
+
+    // Trigger a re-render of revenue reports in the background
+    loadAllData();
+  } catch (error) {
+    showNotification("Failed to save expense", "error");
+  }
+}
+
+function closeExpenseModal() {
+  const modal = document.getElementById("expenseModal");
+  if (modal) modal.remove();
+}
+
+// Add these to your global window exports at the bottom of the file
+window.renderExpenses = renderExpenses;
+window.showAddExpenseModal = showAddExpenseModal;
+window.handleExpenseSubmit = handleExpenseSubmit;
+window.closeExpenseModal = closeExpenseModal;
 // ==================== CUSTOMERS VIEW ====================
 
 function renderCustomers(container) {
@@ -2217,9 +2738,16 @@ function filterCustomersByBalance() {
 
 // View customer loans
 function viewCustomerLoans(customerId) {
-  const customer = state.customers.find((c) => c.id === customerId);
+  const customer = findCustomerByAnyId(customerId);
+  if (!customer) {
+    showNotification("Customer not found", "error");
+    return;
+  }
+  const customerPrimaryId = getCustomerPrimaryId(customer);
   const customerLoans =
-    state.loans?.filter((l) => l.customerId === customerId) || [];
+    state.loans?.filter((l) =>
+      isSameCustomerId(l.customerId, customerPrimaryId),
+    ) || [];
 
   const modalHtml = `
     <div id="customerLoansModal" class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
@@ -3024,7 +3552,7 @@ function initTransactionSearch(customersData) {
       warningDiv.innerHTML = `
         <div class="flex items-center gap-2">
           <i class="fas fa-exclamation-triangle text-orange-500"></i>
-          <p class="text-xs sm:text-sm text-orange-200">⚠️ MANDATORY CHARGE: A charge must be entered for this deposit due to a previous withdrawal.</p>
+          <p class="text-xs sm:text-sm text-orange-200">⚠️ MANDATORY CHARGE: Customer's last withdrawal brought their balance to zero. A charge must be entered for this deposit.</p>
         </div>
       `;
     } else {
@@ -3214,10 +3742,18 @@ async function handleNewTransaction(e) {
 
   try {
     const response = await api.post("/transactions", txnData);
-    const newTxn = response.data;
+
+    const newTxn =
+      response.data?.transaction ||
+      response.data?.data?.transaction ||
+      response.data?.data ||
+      response.data;
 
     // 1. INJECT INTO STATE
-    state.transactions.unshift(newTxn);
+    if (newTxn && newTxn.id) {
+      mergeTransactionsIntoState([newTxn]);
+    }
+
     cachedApi.invalidate("/transactions");
 
     showNotification("Transaction request submitted!", "success");
@@ -3260,7 +3796,9 @@ async function processTransaction(
   // Re-render the view immediately so the admin sees the color change instantly
   // We do NOT await this; we just want the UI to reflect the change
   if (state.currentView === "transactions") {
-    renderAdminTransactions(document.getElementById("contentArea"));
+    renderAdminTransactions(document.getElementById("contentArea"), {
+      forceFetch: false,
+    });
   } else {
     navigate(state.currentView);
   }
@@ -3303,7 +3841,9 @@ async function processTransaction(
     transaction.status = originalStatus;
 
     if (state.currentView === "transactions") {
-      renderAdminTransactions(document.getElementById("contentArea"));
+      renderAdminTransactions(document.getElementById("contentArea"), {
+        forceFetch: false,
+      });
     } else {
       navigate(state.currentView);
     }
@@ -3422,8 +3962,8 @@ function startClock() {
 
 // ==================== CUSTOMER TRANSACTION HISTORY FUNCTIONS ====================
 
-function viewCustomer(id) {
-  const customer = state.customers.find((c) => c.id === id);
+async function viewCustomer(id) {
+  const customer = findCustomerByAnyId(id);
   if (!customer) {
     showNotification("Customer not found", "error");
     navigate("customers");
@@ -3431,6 +3971,11 @@ function viewCustomer(id) {
   }
 
   const container = document.getElementById("contentArea");
+  renderLoadingState(container, "Loading customer transaction history...");
+  await loadCustomerTransactions(getCustomerPrimaryId(customer), {
+    limit: CUSTOMER_TRANSACTION_LIMIT,
+  });
+
   const stats = getCustomerStats(id, "all");
   const transactions = stats?.transactions || [];
   const sortedTransactions = [...transactions].sort(
@@ -3439,7 +3984,9 @@ function viewCustomer(id) {
 
   // Check if customer has active loan
   const activeLoan = state.loans?.find(
-    (l) => l.customerId === id && l.status === "active",
+    (l) =>
+      isSameCustomerId(l.customerId, getCustomerPrimaryId(customer)) &&
+      l.status === "active",
   );
 
   const html = `
@@ -3644,12 +4191,10 @@ function viewCustomer(id) {
     `${customer.name} - Transactions`;
 }
 function getCustomerStats(customerId, period = "all") {
-  const customer = state.customers.find((c) => c.id === customerId);
+  const customer = findCustomerByAnyId(customerId);
   if (!customer) return null;
 
-  const transactions = state.transactions.filter(
-    (t) => t.customerId === customerId,
-  );
+  const transactions = getTransactionsForCustomer(customer);
   const now = new Date();
 
   const isToday = (date) =>
@@ -3679,6 +4224,9 @@ function getCustomerStats(customerId, period = "all") {
   else if (period === "year")
     filteredTransactions = transactions.filter((t) => isThisYear(t.date));
 
+  const approvedTransactions = filteredTransactions.filter(
+    (t) => t.status === "approved",
+  );
   const deposits = filteredTransactions.filter(
     (t) => t.type === "deposit" && t.status === "approved",
   );
@@ -3688,18 +4236,23 @@ function getCustomerStats(customerId, period = "all") {
   const pending = filteredTransactions.filter((t) => t.status === "pending");
   const rejected = filteredTransactions.filter((t) => t.status === "rejected");
 
-  const totalDeposits = deposits.reduce((sum, t) => sum + t.amount, 0);
-  const totalWithdrawals = withdrawals.reduce((sum, t) => sum + t.amount, 0);
+  const totalDeposits = deposits.reduce((sum, t) => sum + (t.amount || 0), 0);
+  const totalWithdrawals = withdrawals.reduce(
+    (sum, t) => sum + (t.amount || 0),
+    0,
+  );
   const totalCharges = filteredTransactions.reduce(
     (sum, t) => sum + (t.charges || 0),
     0,
   );
   const netDeposits = deposits.reduce(
-    (sum, t) => sum + (t.amount - (t.charges || 0)),
+    (sum, t) =>
+      sum + ((t.netAmount ?? t.amount) - (t.netAmount ? 0 : t.charges || 0)),
     0,
   );
   const netWithdrawals = withdrawals.reduce(
-    (sum, t) => sum + (t.amount - (t.charges || 0)),
+    (sum, t) =>
+      sum + ((t.netAmount ?? t.amount) - (t.netAmount ? 0 : t.charges || 0)),
     0,
   );
 
@@ -3708,7 +4261,7 @@ function getCustomerStats(customerId, period = "all") {
     transactions: filteredTransactions,
     stats: {
       totalTransactions: filteredTransactions.length,
-      approved: deposits.length + withdrawals.length,
+      approved: approvedTransactions.length,
       pending: pending.length,
       rejected: rejected.length,
       totalCharges,
@@ -3731,7 +4284,16 @@ function getCustomerStats(customerId, period = "all") {
   };
 }
 
-function renderCustomerTransactions(container, customerId, period = "all") {
+async function renderCustomerTransactions(
+  container,
+  customerId,
+  period = "all",
+) {
+  renderLoadingState(container, "Loading customer transactions...");
+  await loadCustomerTransactions(customerId, {
+    limit: CUSTOMER_TRANSACTION_LIMIT,
+  });
+
   const stats = getCustomerStats(customerId, period);
   if (!stats) {
     showNotification("Customer not found", "error");
@@ -3901,7 +4463,7 @@ function exportCustomerData(customerId) {
 function renderCustomerReports(container) {
   const customersWithStats = state.customers.map((c) => ({
     ...c,
-    stats: getCustomerStats(c.id, "all")?.stats,
+    stats: getCustomerStats(getCustomerPrimaryId(c), "all")?.stats,
   }));
   const totalNetDeposits = customersWithStats.reduce(
     (sum, c) => sum + (c.stats?.deposits.net || 0),
@@ -5424,116 +5986,66 @@ async function renderRevenueReports(container) {
       </div>
     `;
 
-    // Fetch all loans from backend
-    const loansRes = await api.get("/loans");
-    const allLoans = loansRes.data || [];
+    // Fetch data from backend
+    const [loansRes, expensesRes] = await Promise.all([
+      api.get("/loans"),
+      api.get("/expenses"),
+    ]);
 
-    // Helper function to calculate transaction charges for a period
-    const calculateTransactionCharges = (period) => {
+    const allLoans = loansRes.data || [];
+    const allExpenses = expensesRes.data || [];
+
+    // Helper function to get start date for periods
+    const getStartDate = (period) => {
       const now = new Date();
-      let startDate;
       switch (period) {
         case "daily":
-          startDate = new Date(
-            now.getFullYear(),
-            now.getMonth(),
-            now.getDate(),
-          );
-          break;
+          return new Date(now.getFullYear(), now.getMonth(), now.getDate());
         case "weekly":
-          startDate = new Date(now);
-          startDate.setDate(now.getDate() - 7);
-          break;
+          const week = new Date(now);
+          week.setDate(now.getDate() - 7);
+          return week;
         case "monthly":
-          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-          break;
+          return new Date(now.getFullYear(), now.getMonth(), 1);
         case "yearly":
-          startDate = new Date(now.getFullYear(), 0, 1);
-          break;
+          return new Date(now.getFullYear(), 0, 1);
         default:
-          startDate = new Date(0);
+          return new Date(0);
       }
-
-      const charges = state.transactions
-        .filter((t) => t.status === "approved" && new Date(t.date) >= startDate)
-        .reduce((sum, t) => sum + (t.charges || 0), 0);
-
-      return charges;
     };
 
-    // Helper function to calculate loan interest collected for a period
+    // Helper: Calculate Transaction Charges
+    const calculateTransactionCharges = (period) => {
+      const startDate = getStartDate(period);
+      return state.transactions
+        .filter((t) => t.status === "approved" && new Date(t.date) >= startDate)
+        .reduce((sum, t) => sum + (t.charges || 0), 0);
+    };
+
+    // Helper: Calculate Loan Interest
     const calculateLoanInterestCollected = (period) => {
-      const now = new Date();
-      let startDate;
-      switch (period) {
-        case "daily":
-          startDate = new Date(
-            now.getFullYear(),
-            now.getMonth(),
-            now.getDate(),
-          );
-          break;
-        case "weekly":
-          startDate = new Date(now);
-          startDate.setDate(now.getDate() - 7);
-          break;
-        case "monthly":
-          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-          break;
-        case "yearly":
-          startDate = new Date(now.getFullYear(), 0, 1);
-          break;
-        default:
-          startDate = new Date(0);
-      }
-
-      // Calculate interest from loan repayments in this period
+      const startDate = getStartDate(period);
       let totalInterest = 0;
-
       allLoans.forEach((loan) => {
-        if (loan.repayments && loan.repayments.length > 0) {
+        if (loan.repayments) {
           loan.repayments.forEach((repayment) => {
-            if (repayment.status === "paid" && repayment.paidDate) {
-              const paidDate = new Date(repayment.paidDate);
-              if (paidDate >= startDate) {
-                totalInterest += repayment.interestPortion || 0;
-              }
+            if (
+              repayment.status === "paid" &&
+              repayment.paidDate &&
+              new Date(repayment.paidDate) >= startDate
+            ) {
+              totalInterest += repayment.interestPortion || 0;
             }
           });
         }
       });
-
       return totalInterest;
     };
 
-    // Calculate overdraft charges for a period
+    // Helper: Calculate Overdraft Charges
     const calculateOverdraftCharges = (period) => {
-      const now = new Date();
-      let startDate;
-      switch (period) {
-        case "daily":
-          startDate = new Date(
-            now.getFullYear(),
-            now.getMonth(),
-            now.getDate(),
-          );
-          break;
-        case "weekly":
-          startDate = new Date(now);
-          startDate.setDate(now.getDate() - 7);
-          break;
-        case "monthly":
-          startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-          break;
-        case "yearly":
-          startDate = new Date(now.getFullYear(), 0, 1);
-          break;
-        default:
-          startDate = new Date(0);
-      }
-
-      // Calculate from overdraft charges revenue transactions
-      const charges = state.transactions
+      const startDate = getStartDate(period);
+      return state.transactions
         .filter(
           (t) =>
             t.type === "overdraft_charges_revenue" &&
@@ -5541,55 +6053,57 @@ async function renderRevenueReports(container) {
             new Date(t.date) >= startDate,
         )
         .reduce((sum, t) => sum + (t.amount || 0), 0);
-
-      return charges;
     };
 
-    // Calculate transaction charges for each period
-    const dailyTxnCharges = calculateTransactionCharges("daily");
-    const weeklyTxnCharges = calculateTransactionCharges("weekly");
-    const monthlyTxnCharges = calculateTransactionCharges("monthly");
-    const yearlyTxnCharges = calculateTransactionCharges("yearly");
+    // NEW Helper: Calculate Expenses
+    const calculateExpenses = (period) => {
+      const startDate = getStartDate(period);
+      return allExpenses
+        .filter((exp) => new Date(exp.date) >= startDate)
+        .reduce((sum, exp) => sum + (exp.amount || 0), 0);
+    };
 
-    // Calculate loan interest collected for each period
-    const dailyLoanInterest = calculateLoanInterestCollected("daily");
-    const weeklyLoanInterest = calculateLoanInterestCollected("weekly");
-    const monthlyLoanInterest = calculateLoanInterestCollected("monthly");
-    const yearlyLoanInterest = calculateLoanInterestCollected("yearly");
+    // Calculate Incomes
+    const periods = ["daily", "weekly", "monthly", "yearly"];
+    const incomeData = {};
 
-    // Calculate overdraft charges for each period
-    const dailyOverdraftCharges = calculateOverdraftCharges("daily");
-    const weeklyOverdraftCharges = calculateOverdraftCharges("weekly");
-    const monthlyOverdraftCharges = calculateOverdraftCharges("monthly");
-    const yearlyOverdraftCharges = calculateOverdraftCharges("yearly");
+    periods.forEach((p) => {
+      incomeData[p] = {
+        txn: calculateTransactionCharges(p),
+        loan: calculateLoanInterestCollected(p),
+        od: calculateOverdraftCharges(p),
+        exp: calculateExpenses(p),
+      };
+    });
 
-    // Calculate totals from all data
+    // Calculate Net Revenue per period (Income - Expenses)
+    const totalRevenue = {
+      daily:
+        incomeData.daily.txn +
+        incomeData.daily.loan +
+        incomeData.daily.od -
+        incomeData.daily.exp,
+      weekly:
+        incomeData.weekly.txn +
+        incomeData.weekly.loan +
+        incomeData.weekly.od -
+        incomeData.weekly.exp,
+      monthly:
+        incomeData.monthly.txn +
+        incomeData.monthly.loan +
+        incomeData.monthly.od -
+        incomeData.monthly.exp,
+      yearly:
+        incomeData.yearly.txn +
+        incomeData.yearly.loan +
+        incomeData.yearly.od -
+        incomeData.yearly.exp,
+    };
+
+    // Calculate All-Time Totals for the summary cards
     const totalTransactionCharges = state.transactions
       .filter((t) => t.status === "approved")
       .reduce((sum, t) => sum + (t.charges || 0), 0);
-
-    // Calculate total expected interest from all loans
-    const totalExpectedInterest = allLoans.reduce((sum, loan) => {
-      if (loan.status === "active" || loan.status === "completed") {
-        return sum + ((loan.totalPayable || 0) - (loan.amount || 0));
-      }
-      return sum;
-    }, 0);
-
-    // Calculate total actual interest collected from all loans
-    const totalActualInterest = allLoans.reduce((sum, loan) => {
-      if (loan.status === "active" || loan.status === "completed") {
-        const interestPaid = (loan.repayments || [])
-          .filter((r) => r.status === "paid")
-          .reduce((total, r) => {
-            return total + (r.interestPortion || 0);
-          }, 0);
-        return sum + interestPaid;
-      }
-      return sum;
-    }, 0);
-
-    // Calculate total overdraft charges from transactions
     const totalOverdraftCharges = state.transactions
       .filter(
         (t) =>
@@ -5597,16 +6111,31 @@ async function renderRevenueReports(container) {
       )
       .reduce((sum, t) => sum + (t.amount || 0), 0);
 
-    // Calculate total revenue for each period
-    const totalRevenue = {
-      daily: dailyTxnCharges + dailyLoanInterest + dailyOverdraftCharges,
-      weekly: weeklyTxnCharges + weeklyLoanInterest + weeklyOverdraftCharges,
-      monthly:
-        monthlyTxnCharges + monthlyLoanInterest + monthlyOverdraftCharges,
-      yearly: yearlyTxnCharges + yearlyLoanInterest + yearlyOverdraftCharges,
-    };
+    const totalActualInterest = allLoans.reduce((sum, loan) => {
+      if (loan.status === "active" || loan.status === "completed") {
+        return (
+          sum +
+          (loan.repayments || [])
+            .filter((r) => r.status === "paid")
+            .reduce((s, r) => s + (r.interestPortion || 0), 0)
+        );
+      }
+      return sum;
+    }, 0);
 
-    // Get counts for display
+    const totalExpensesAllTime = allExpenses.reduce(
+      (sum, exp) => sum + exp.amount,
+      0,
+    );
+
+    // The logic: Total Revenue = (All Incomes) - (All Expenses)
+    const grandTotalNetRevenue =
+      totalTransactionCharges +
+      totalActualInterest +
+      totalOverdraftCharges -
+      totalExpensesAllTime;
+
+    // Prepare existing variables for the UI
     const activeLoansCount = allLoans.filter(
       (l) => l.status === "active",
     ).length;
@@ -5616,16 +6145,18 @@ async function renderRevenueReports(container) {
     const pendingLoansCount = allLoans.filter(
       (l) => l.status === "pending",
     ).length;
-
-    // Calculate approved transactions count
     const approvedTransactionsCount = state.transactions.filter(
       (t) => t.status === "approved",
     ).length;
-    const pendingTransactionsCount = state.transactions.filter(
-      (t) => t.status === "pending",
-    ).length;
-
-    // Prepare loan data for table
+    const totalExpectedInterest = allLoans.reduce((sum, loan) => {
+      if (loan.status === "active" || loan.status === "completed")
+        return sum + ((loan.totalPayable || 0) - (loan.amount || 0));
+      return sum;
+    }, 0);
+    const collectionRate =
+      totalExpectedInterest > 0
+        ? ((totalActualInterest / totalExpectedInterest) * 100).toFixed(1)
+        : 0;
     const activeAndCompletedLoans = allLoans
       .filter((l) => l.status === "active" || l.status === "completed")
       .sort(
@@ -5634,16 +6165,10 @@ async function renderRevenueReports(container) {
           new Date(a.approvedBy?.approvedAt || 0),
       );
 
-    // Calculate collection rate
-    const collectionRate =
-      totalExpectedInterest > 0
-        ? ((totalActualInterest / totalExpectedInterest) * 100).toFixed(1)
-        : 0;
-
     const html = `
       <div class="space-y-6 animate-fade-in px-4 sm:px-0">
         <div class="flex justify-between items-center mb-4">
-          <h2 class="text-xl font-bold">Revenue Reports</h2>
+          <h2 class="text-xl font-bold">Net Revenue Reports (After Expenses)</h2>
           <button onclick="renderRevenueReports(document.getElementById('contentArea'))" class="px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm transition-colors">
             <i class="fas fa-sync-alt mr-2"></i>Refresh
           </button>
@@ -5651,147 +6176,70 @@ async function renderRevenueReports(container) {
         
         <!-- Period Summary Cards -->
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div class="glass-panel p-6 rounded-xl hover:transform hover:scale-105 transition-all duration-300">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-gray-400">Today's Revenue</span>
-              <i class="fas fa-calendar-day text-blue-400 text-xl"></i>
-            </div>
-            <p class="text-3xl font-bold text-green-400">₦${totalRevenue.daily.toLocaleString()}</p>
-            <div class="text-xs text-gray-400 mt-2 space-y-1">
-              <div class="flex justify-between">
-                <span>💰 Charges:</span>
-                <span class="text-blue-400">₦${dailyTxnCharges.toLocaleString()}</span>
+          ${periods
+            .map((p) => {
+              const label = p.charAt(0).toUpperCase() + p.slice(1);
+              const net = totalRevenue[p];
+              const income =
+                incomeData[p].txn + incomeData[p].loan + incomeData[p].od;
+              const exp = incomeData[p].exp;
+
+              return `
+            <div class="glass-panel p-6 rounded-xl hover:transform hover:scale-105 transition-all duration-300">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-gray-400">${label}'s Net Revenue</span>
+                <i class="fas fa-chart-pie text-blue-400 text-xl"></i>
               </div>
-              <div class="flex justify-between">
-                <span>📈 Interest:</span>
-                <span class="text-green-400">₦${dailyLoanInterest.toLocaleString()}</span>
+              <p class="text-3xl font-bold ${net >= 0 ? "text-green-400" : "text-red-400"}">₦${net.toLocaleString()}</p>
+              <div class="text-xs text-gray-400 mt-2 space-y-1">
+                <div class="flex justify-between">
+                  <span>Gross Income:</span>
+                  <span class="text-gray-300">₦${income.toLocaleString()}</span>
+                </div>
+                <div class="flex justify-between">
+                  <span>Expenses:</span>
+                  <span class="text-red-400">-₦${exp.toLocaleString()}</span>
+                </div>
               </div>
-              <div class="flex justify-between">
-                <span>💳 OD Charges:</span>
-                <span class="text-orange-400">₦${dailyOverdraftCharges.toLocaleString()}</span>
-              </div>
-            </div>
-          </div>
-          
-          <div class="glass-panel p-6 rounded-xl hover:transform hover:scale-105 transition-all duration-300">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-gray-400">This Week</span>
-              <i class="fas fa-calendar-week text-green-400 text-xl"></i>
-            </div>
-            <p class="text-3xl font-bold text-green-400">₦${totalRevenue.weekly.toLocaleString()}</p>
-            <div class="text-xs text-gray-400 mt-2 space-y-1">
-              <div class="flex justify-between">
-                <span>💰 Charges:</span>
-                <span class="text-blue-400">₦${weeklyTxnCharges.toLocaleString()}</span>
-              </div>
-              <div class="flex justify-between">
-                <span>📈 Interest:</span>
-                <span class="text-green-400">₦${weeklyLoanInterest.toLocaleString()}</span>
-              </div>
-              <div class="flex justify-between">
-                <span>💳 OD Charges:</span>
-                <span class="text-orange-400">₦${weeklyOverdraftCharges.toLocaleString()}</span>
-              </div>
-            </div>
-          </div>
-          
-          <div class="glass-panel p-6 rounded-xl hover:transform hover:scale-105 transition-all duration-300">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-gray-400">This Month</span>
-              <i class="fas fa-calendar-alt text-yellow-400 text-xl"></i>
-            </div>
-            <p class="text-3xl font-bold text-green-400">₦${totalRevenue.monthly.toLocaleString()}</p>
-            <div class="text-xs text-gray-400 mt-2 space-y-1">
-              <div class="flex justify-between">
-                <span>💰 Charges:</span>
-                <span class="text-blue-400">₦${monthlyTxnCharges.toLocaleString()}</span>
-              </div>
-              <div class="flex justify-between">
-                <span>📈 Interest:</span>
-                <span class="text-green-400">₦${monthlyLoanInterest.toLocaleString()}</span>
-              </div>
-              <div class="flex justify-between">
-                <span>💳 OD Charges:</span>
-                <span class="text-orange-400">₦${monthlyOverdraftCharges.toLocaleString()}</span>
-              </div>
-            </div>
-          </div>
-          
-          <div class="glass-panel p-6 rounded-xl hover:transform hover:scale-105 transition-all duration-300">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-gray-400">This Year</span>
-              <i class="fas fa-calendar text-purple-400 text-xl"></i>
-            </div>
-            <p class="text-3xl font-bold text-green-400">₦${totalRevenue.yearly.toLocaleString()}</p>
-            <div class="text-xs text-gray-400 mt-2 space-y-1">
-              <div class="flex justify-between">
-                <span>💰 Charges:</span>
-                <span class="text-blue-400">₦${yearlyTxnCharges.toLocaleString()}</span>
-              </div>
-              <div class="flex justify-between">
-                <span>📈 Interest:</span>
-                <span class="text-green-400">₦${yearlyLoanInterest.toLocaleString()}</span>
-              </div>
-              <div class="flex justify-between">
-                <span>💳 OD Charges:</span>
-                <span class="text-orange-400">₦${yearlyOverdraftCharges.toLocaleString()}</span>
-              </div>
-            </div>
-          </div>
+            </div>`;
+            })
+            .join("")}
         </div>
 
         <!-- Revenue Breakdown Section -->
         <div class="glass-panel rounded-2xl p-6">
-          <h3 class="text-lg font-semibold mb-4">Revenue Breakdown</h3>
-          
+          <h3 class="text-lg font-semibold mb-4">Revenue Composition (Inflows)</h3>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
             <div class="bg-gradient-to-br from-blue-500/10 to-blue-600/5 p-5 rounded-xl border border-blue-500/20">
-              <div class="flex items-center justify-between mb-3">
-                <h4 class="text-sm font-medium text-gray-400">
-                  <i class="fas fa-percent text-blue-400 mr-2"></i>
-                  Transaction Charges
-                </h4>
-                <i class="fas fa-money-bill-wave text-blue-400 text-2xl"></i>
-              </div>
+              <h4 class="text-sm font-medium text-gray-400 mb-3">Transaction Charges</h4>
               <p class="text-4xl font-bold text-blue-400">₦${totalTransactionCharges.toLocaleString()}</p>
-              <p class="text-xs text-gray-500 mt-2">From ${approvedTransactionsCount} approved transactions</p>
-              <div class="mt-3 flex gap-2 text-xs">
-                <span class="px-2 py-1 bg-blue-500/20 text-blue-300 rounded-full">Deposits</span>
-                <span class="px-2 py-1 bg-orange-500/20 text-orange-300 rounded-full">Withdrawals</span>
-              </div>
             </div>
-            
             <div class="bg-gradient-to-br from-green-500/10 to-green-600/5 p-5 rounded-xl border border-green-500/20">
-              <div class="flex items-center justify-between mb-3">
-                <h4 class="text-sm font-medium text-gray-400">
-                  <i class="fas fa-chart-line text-green-400 mr-2"></i>
-                  Loan Interest Collected
-                </h4>
-                <i class="fas fa-hand-holding-usd text-green-400 text-2xl"></i>
-              </div>
+              <h4 class="text-sm font-medium text-gray-400 mb-3">Loan Interest</h4>
               <p class="text-4xl font-bold text-green-400">₦${totalActualInterest.toLocaleString()}</p>
-              <p class="text-xs text-gray-500 mt-2">From ${activeLoansCount + completedLoansCount} loans</p>
-              <div class="mt-3 flex gap-2 text-xs">
-                <span class="px-2 py-1 bg-green-500/20 text-green-300 rounded-full">Active: ${activeLoansCount}</span>
-                <span class="px-2 py-1 bg-blue-500/20 text-blue-300 rounded-full">Completed: ${completedLoansCount}</span>
-              </div>
             </div>
-
             <div class="bg-gradient-to-br from-orange-500/10 to-orange-600/5 p-5 rounded-xl border border-orange-500/20">
-              <div class="flex items-center justify-between mb-3">
-                <h4 class="text-sm font-medium text-gray-400">
-                  <i class="fas fa-credit-card text-orange-400 mr-2"></i>
-                  Overdraft Charges
-                </h4>
-                <i class="fas fa-hand-holding-usd text-orange-400 text-2xl"></i>
-              </div>
+              <h4 class="text-sm font-medium text-gray-400 mb-3">Overdraft Charges</h4>
               <p class="text-4xl font-bold text-orange-400">₦${totalOverdraftCharges.toLocaleString()}</p>
-              <p class="text-xs text-gray-500 mt-2">From settled overdrafts</p>
+            </div>
+          </div>
+
+          <!-- THE NEW EXPENSE HIGHLIGHT -->
+          <div class="bg-red-500/10 border border-red-500/20 p-5 rounded-xl mb-6">
+            <div class="flex justify-between items-center">
+              <div class="flex items-center gap-3">
+                <i class="fas fa-money-bill-wave text-red-400 text-2xl"></i>
+                <div>
+                  <h4 class="text-sm font-medium text-red-300">Total Expenses Deducted</h4>
+                  <p class="text-xs text-red-400/70">Total cost of operations across all periods</p>
+                </div>
+              </div>
+              <p class="text-3xl font-bold text-red-400">₦${totalExpensesAllTime.toLocaleString()}</p>
             </div>
           </div>
 
           <!-- Expected vs Collected -->
-          <div class="bg-gray-800/30 p-5 rounded-xl mb-6">
+          <div class="bg-gray-800/30 p-5 rounded-xl">
             <div class="flex items-center gap-2 mb-4">
               <i class="fas fa-chart-simple text-yellow-400 text-lg"></i>
               <h4 class="text-sm font-medium text-gray-300">Loan Interest Performance</h4>
@@ -5800,12 +6248,10 @@ async function renderRevenueReports(container) {
               <div class="text-center p-3 bg-gray-800/50 rounded-lg">
                 <p class="text-xs text-gray-400 mb-1">Expected Interest</p>
                 <p class="text-2xl font-bold text-yellow-400">₦${totalExpectedInterest.toLocaleString()}</p>
-                <p class="text-xs text-gray-500 mt-1">From all approved loans</p>
               </div>
               <div class="text-center p-3 bg-gray-800/50 rounded-lg">
                 <p class="text-xs text-gray-400 mb-1">Collected So Far</p>
                 <p class="text-2xl font-bold text-green-400">₦${totalActualInterest.toLocaleString()}</p>
-                <p class="text-xs text-gray-500 mt-1">Actual payments received</p>
               </div>
             </div>
             <div class="mt-2">
@@ -5814,181 +6260,13 @@ async function renderRevenueReports(container) {
                 <span class="text-yellow-400 font-semibold">${collectionRate}%</span>
               </div>
               <div class="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
-                <div class="bg-gradient-to-r from-green-500 to-yellow-500 h-full rounded-full transition-all duration-500" style="width: ${collectionRate}%"></div>
-              </div>
-              <p class="text-xs text-gray-400 mt-2">
-                ₦${totalActualInterest.toLocaleString()} out of ₦${totalExpectedInterest.toLocaleString()} expected interest collected
-              </p>
-            </div>
-          </div>
-          
-          <!-- Revenue Composition Chart -->
-          <div class="mt-4">
-            <div class="flex justify-between text-sm mb-3">
-              <span class="text-gray-300">Revenue Composition</span>
-            </div>
-            <div class="w-full bg-gray-700 rounded-full h-8 overflow-hidden flex">
-              <div class="bg-blue-500 h-full transition-all duration-500 flex items-center justify-center text-xs text-white font-medium" style="width: ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? (totalTransactionCharges / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100 : 0}%">
-                ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? `${((totalTransactionCharges / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100).toFixed(0)}%` : "0%"}
-              </div>
-              <div class="bg-green-500 h-full transition-all duration-500 flex items-center justify-center text-xs text-white font-medium" style="width: ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? (totalActualInterest / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100 : 0}%">
-                ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? `${((totalActualInterest / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100).toFixed(0)}%` : "0%"}
-              </div>
-              <div class="bg-orange-500 h-full transition-all duration-500 flex items-center justify-center text-xs text-white font-medium" style="width: ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? (totalOverdraftCharges / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100 : 0}%">
-                ${totalTransactionCharges + totalActualInterest + totalOverdraftCharges > 0 ? `${((totalOverdraftCharges / (totalTransactionCharges + totalActualInterest + totalOverdraftCharges)) * 100).toFixed(0)}%` : "0%"}
+                <div class="bg-gradient-to-r from-green-500 to-yellow-500 h-full rounded-full" style="width: ${collectionRate}%"></div>
               </div>
             </div>
-            <div class="flex gap-6 mt-4 text-sm justify-center flex-wrap">
-              <div class="flex items-center gap-2">
-                <div class="w-4 h-4 bg-blue-500 rounded"></div>
-                <span class="text-gray-300">Transaction Charges: ₦${totalTransactionCharges.toLocaleString()}</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="w-4 h-4 bg-green-500 rounded"></div>
-                <span class="text-gray-300">Loan Interest: ₦${totalActualInterest.toLocaleString()}</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="w-4 h-4 bg-orange-500 rounded"></div>
-                <span class="text-gray-300">Overdraft Charges: ₦${totalOverdraftCharges.toLocaleString()}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- Recent Revenue Activity -->
-        <div class="glass-panel rounded-2xl p-6">
-          <h3 class="text-lg font-semibold mb-4">Recent Revenue Activity</h3>
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div class="bg-blue-500/10 p-4 rounded-lg border border-blue-500/20">
-              <p class="text-xs text-gray-400 mb-2">Last 7 Days</p>
-              <div class="flex justify-between items-end">
-                <div>
-                  <p class="text-sm text-gray-400">Transaction Charges</p>
-                  <p class="text-2xl font-bold text-blue-400">₦${weeklyTxnCharges.toLocaleString()}</p>
-                </div>
-                <i class="fas fa-arrow-trend-up text-blue-400 text-2xl"></i>
-              </div>
-              <p class="text-xs text-gray-500 mt-2">from approved deposits & withdrawals</p>
-            </div>
-            <div class="bg-green-500/10 p-4 rounded-lg border border-green-500/20">
-              <p class="text-xs text-gray-400 mb-2">Last 7 Days</p>
-              <div class="flex justify-between items-end">
-                <div>
-                  <p class="text-sm text-gray-400">Loan Interest Collected</p>
-                  <p class="text-2xl font-bold text-green-400">₦${weeklyLoanInterest.toLocaleString()}</p>
-                </div>
-                <i class="fas fa-hand-holding-usd text-green-400 text-2xl"></i>
-              </div>
-              <p class="text-xs text-gray-500 mt-2">from loan repayments</p>
-            </div>
-            <div class="bg-orange-500/10 p-4 rounded-lg border border-orange-500/20">
-              <p class="text-xs text-gray-400 mb-2">Last 7 Days</p>
-              <div class="flex justify-between items-end">
-                <div>
-                  <p class="text-sm text-gray-400">Overdraft Charges</p>
-                  <p class="text-2xl font-bold text-orange-400">₦${weeklyOverdraftCharges.toLocaleString()}</p>
-                </div>
-                <i class="fas fa-credit-card text-orange-400 text-2xl"></i>
-              </div>
-              <p class="text-xs text-gray-500 mt-2">from settled overdrafts</p>
-            </div>
-          </div>
-        </div>
-        
-        <!-- Detailed Loan Breakdown -->
-        <div class="glass-panel rounded-2xl p-6">
-          <div class="flex justify-between items-center mb-4">
-            <h3 class="text-lg font-semibold">Loan Interest Breakdown by Customer</h3>
-            <div class="text-sm text-gray-400">
-              <span class="text-green-400">${activeLoansCount}</span> Active | 
-              <span class="text-blue-400">${completedLoansCount}</span> Completed | 
-              <span class="text-yellow-400">${pendingLoansCount}</span> Pending
-            </div>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-700">
-              <thead>
-                <tr class="text-left text-gray-400 text-sm">
-                  <th class="pb-3 px-2">Customer</th>
-                  <th class="pb-3 px-2">Type</th>
-                  <th class="pb-3 px-2">Principal</th>
-                  <th class="pb-3 px-2">Interest Rate</th>
-                  <th class="pb-3 px-2">Expected Interest</th>
-                  <th class="pb-3 px-2">Collected</th>
-                  <th class="pb-3 px-2">Progress</th>
-                  <th class="pb-3 px-2">Status</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-800">
-                ${
-                  activeAndCompletedLoans.length > 0
-                    ? activeAndCompletedLoans
-                        .map((loan) => {
-                          const expectedInterest =
-                            (loan.totalPayable || 0) - (loan.amount || 0);
-                          const collectedInterest = (loan.repayments || [])
-                            .filter((r) => r.status === "paid")
-                            .reduce(
-                              (sum, r) => sum + (r.interestPortion || 0),
-                              0,
-                            );
-                          const collectionPercentage =
-                            expectedInterest > 0
-                              ? (
-                                  (collectedInterest / expectedInterest) *
-                                  100
-                                ).toFixed(1)
-                              : 0;
-
-                          return `
-                    <tr class="hover:bg-gray-800/30 transition-colors">
-                      <td class="py-3 px-2">
-                        <div class="font-medium text-sm">${loan.customerName}</div>
-                        <div class="text-xs text-gray-500">${loan.customerNumber || "N/A"}</div>
-                      </td>
-                      <td class="py-3 px-2">
-                        <span class="px-2 py-1 rounded text-xs ${loan.type === "loan" ? "bg-green-500/20 text-green-400" : "bg-orange-500/20 text-orange-400"}">
-                          ${loan.type.toUpperCase()}
-                        </span>
-                      </td>
-                      <td class="py-3 px-2 font-mono text-sm">₦${(loan.amount || 0).toLocaleString()}</td>
-                      <td class="py-3 px-2 text-sm">${loan.interestRate || 0}%</td>
-                      <td class="py-3 px-2 font-mono text-yellow-400 text-sm">₦${expectedInterest.toLocaleString()}</td>
-                      <td class="py-3 px-2 font-mono text-green-400 text-sm">₦${collectedInterest.toLocaleString()}</td>
-                      <td class="py-3 px-2">
-                        <div class="w-24">
-                          <div class="flex justify-between text-xs mb-1">
-                            <span class="text-gray-400">${collectionPercentage}%</span>
-                          </div>
-                          <div class="bg-gray-700 rounded-full h-2">
-                            <div class="bg-green-500 h-2 rounded-full" style="width: ${collectionPercentage}%"></div>
-                          </div>
-                        </div>
-                      </td>
-                      <td class="py-3 px-2">
-                        <span class="px-2 py-1 rounded text-xs ${getStatusStyle(loan.status)}">
-                          ${loan.status}
-                        </span>
-                      </td>
-                    </tr>
-                  `;
-                        })
-                        .join("")
-                    : `
-                  <tr>
-                    <td colspan="8" class="py-8 text-center text-gray-400">
-                      <i class="fas fa-chart-line text-4xl mb-3 block"></i>
-                      No approved loans yet. Interest revenue will appear here once loans are approved and repayments are made.
-                    </td>
-                  </tr>
-                `
-                }
-              </tbody>
-            </table>
           </div>
         </div>
 
-        <!-- Summary Stats -->
+        <!-- Final Summary Stats -->
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div class="glass-panel p-4 rounded-xl text-center">
             <i class="fas fa-users text-blue-400 text-2xl mb-2"></i>
@@ -6004,13 +6282,11 @@ async function renderRevenueReports(container) {
             <i class="fas fa-exchange-alt text-purple-400 text-2xl mb-2"></i>
             <p class="text-sm text-gray-400">Total Transactions</p>
             <p class="text-xl font-bold">${state.transactions.length}</p>
-            <p class="text-xs text-gray-500">${pendingTransactionsCount} pending</p>
           </div>
-          <div class="glass-panel p-4 rounded-xl text-center">
-            <i class="fas fa-chart-line text-yellow-400 text-2xl mb-2"></i>
-            <p class="text-sm text-gray-400">Total Revenue</p>
-            <p class="text-xl font-bold text-green-400">₦${(totalTransactionCharges + totalActualInterest + totalOverdraftCharges).toLocaleString()}</p>
-            <p class="text-xs text-gray-500">All time</p>
+          <div class="glass-panel p-4 rounded-xl text-center border-2 border-green-500/50">
+            <i class="fas fa-coins text-green-400 text-2xl mb-2"></i>
+            <p class="text-sm text-gray-400">NET PROFIT (All Time)</p>
+            <p class="text-xl font-bold text-green-400">₦${grandTotalNetRevenue.toLocaleString()}</p>
           </div>
         </div>
       </div>
@@ -6023,7 +6299,6 @@ async function renderRevenueReports(container) {
       <div class="text-center text-red-400 py-12">
         <i class="fas fa-exclamation-circle text-5xl mb-4"></i>
         <p class="text-lg mb-2">Failed to load revenue reports</p>
-        <p class="text-sm text-gray-400 mb-4">${error.response?.data?.error || error.message || "Please check your connection"}</p>
         <button onclick="renderRevenueReports(document.getElementById('contentArea'))" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors">
           <i class="fas fa-sync-alt mr-2"></i>Retry
         </button>
@@ -6763,7 +7038,7 @@ function renderHistory(container) {
       : state.transactions.filter((t) =>
           state.customers.some(
             (c) =>
-              c.id === t.customerId &&
+              getTransactionsForCustomer(c).includes(t) &&
               c.addedBy?.staffId === state.currentUser?.id,
           ),
         );
@@ -6784,9 +7059,24 @@ function renderHistory(container) {
 
 // ==================== ADMIN TRANSACTIONS VIEW ====================
 
-function renderAdminTransactions(container) {
-  const pending = state.transactions.filter((t) => t.status === "pending");
-  const others = state.transactions.filter((t) => t.status !== "pending");
+async function renderAdminTransactions(container, options = {}) {
+  const { forceFetch = true } = options;
+
+  if (!container) return;
+
+  if (forceFetch) {
+    renderLoadingState(container, "Loading pending approvals...");
+    await loadPendingTransactions({ silent: true });
+  }
+
+  if (state.currentView !== "transactions") return;
+
+  const allTransactions = Array.isArray(state.transactions)
+    ? state.transactions
+    : [];
+
+  const pending = allTransactions.filter((t) => t.status === "pending");
+  const others = allTransactions.filter((t) => t.status !== "pending");
 
   // Group pending by staff for the cards
   const pendingByStaff = {};
@@ -7548,20 +7838,26 @@ async function approveAllStaffTransactions(staffIdentifier) {
   }
 }
 async function approveAllPendingTransactions() {
-  const pending = state.transactions.filter((t) => t.status === "pending");
+  const pending = await loadPendingTransactions({ silent: false });
+
   if (pending.length === 0) {
     showNotification("No pending transactions to approve", "info");
     return;
   }
+
   if (
     !confirm(
       `Are you sure you want to approve all ${pending.length} pending transactions?`,
     )
-  )
+  ) {
     return;
-  let approved = 0,
-    failed = 0;
+  }
+
+  let approved = 0;
+  let failed = 0;
+
   showNotification(`Processing ${pending.length} transactions...`, "info");
+
   for (const txn of pending) {
     try {
       await processTransaction(txn.id, "approved", false);
@@ -7570,25 +7866,38 @@ async function approveAllPendingTransactions() {
       console.error(`Failed to approve transaction ${txn.id}:`, error);
       failed++;
     }
+
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  await loadAllData();
-  if (failed === 0)
+
+  cachedApi.invalidate("/transactions");
+  cachedApi.invalidate("/customers");
+  cachedApi.invalidate("/loans");
+
+  await loadPendingTransactions({ silent: true });
+  renderAdminTransactions(document.getElementById("contentArea"), {
+    forceFetch: false,
+  });
+
+  if (failed === 0) {
     showNotification(
       `Successfully approved all ${approved} transactions`,
       "success",
     );
-  else
+  } else {
     showNotification(
       `Approved ${approved} transactions, ${failed} failed`,
       "warning",
     );
+  }
+
+  loadAllData().catch((err) => console.warn("Background sync error:", err));
 }
 
 function viewTransactionDetails(txnId) {
   const transaction = state.transactions.find((t) => t.id === txnId);
   if (!transaction) return;
-  const customer = state.customers.find((c) => c.id === transaction.customerId);
+  const customer = findCustomerByAnyId(transaction.customerId);
   const staffName = customer?.addedBy?.staffName || "System";
   const charges = transaction.charges || 0;
   const netAmount = transaction.amount - charges;
@@ -7809,6 +8118,7 @@ window.clearNotifications = clearNotifications;
 window.checkAuth = checkAuth;
 window.initializeApp = initializeApp;
 window.loadAllData = loadAllData;
+window.loadCustomerTransactions = loadCustomerTransactions;
 window.updateUserInfo = updateUserInfo;
 window.renderSidebar = renderSidebar;
 window.startClock = startClock;

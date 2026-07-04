@@ -10,6 +10,7 @@ const staffRouter = require("./routes/staffRoutes");
 const transactionRouter = require("./routes/transactionRoutes");
 const loanRoutes = require("./routes/loanRoutes");
 const reportRoutes = require("./routes/reportRoutes");
+const expensesRouter = require("./routes/expensesRouter");
 
 const app = express();
 
@@ -70,6 +71,7 @@ app.use("/", customerRouter);
 app.use("/transactions", transactionRouter);
 app.use("/", loanRoutes);
 app.use("/", reportRoutes);
+app.use("/expenses", expensesRouter);
 
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
