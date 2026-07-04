@@ -112,7 +112,7 @@ function initRealTimeUpdates() {
 
 // Axios Configuration
 const api = axios.create({
-  baseURL: "http://localhost:3000/",
+  baseURL: "https://bl-multi-concept-api.onrender.com/",
   timeout: 60000,
   headers: { "Content-Type": "application/json" },
 });
