@@ -14,23 +14,18 @@ const expensesRouter = require("./routes/expensesRouter");
 
 const app = express();
 
-// Required for Render.com and express-rate-limit
 app.set("trust proxy", 1);
 
-// VERY IMPORTANT: Put this before express.json(), static files, limiters, and routes
 app.use((req, res, next) => {
   const allowedOrigins = [
     "https://bl-multi-concept.onrender.com",
-    "https://bl-multi-concept-api.onrender.com",
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5500",
+    // "https://bl-multi-concept-api.onrender.com",
+    // "http://localhost:3000",
+    // "http://localhost:5173",
+    // "http://127.0.0.1:5500",
   ];
 
   const origin = req.headers.origin;
-
-  // Helpful debug log for Render logs
-  console.log("Request Origin:", origin || "No origin");
 
   if (!origin || allowedOrigins.includes(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin || "*");
@@ -153,5 +148,5 @@ createAdmin();
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Server running `);
 });
