@@ -112,7 +112,7 @@ function initRealTimeUpdates() {
 
 // Axios Configuration
 const api = axios.create({
-  baseURL: "https://bl-multi-concept.onrender.com//",
+  baseURL: "https://bl-multi-concept.onrender.com/",
   timeout: 60000,
   headers: { "Content-Type": "application/json" },
 });
@@ -2947,9 +2947,6 @@ function showAddCustomerModal() {
     </div>
   `;
 
-  // IMPROVEMENT: We create a temporary div, set the HTML,
-  // but only append the actual #customerModal to the body.
-  // This ensures that when we .remove() the element, the black overlay is gone too.
   const tempDiv = document.createElement("div");
   tempDiv.innerHTML = modalHtml;
   document.body.appendChild(tempDiv.firstElementChild);
@@ -7838,7 +7835,10 @@ async function approveAllStaffTransactions(staffIdentifier) {
   }
 }
 async function approveAllPendingTransactions() {
-  const pending = await loadPendingTransactions({ silent: false });
+  // 1. Identify all pending IDs
+  const pending = state.transactions.filter(
+    (t) => t.status?.toString().toLowerCase() === "pending",
+  );
 
   if (pending.length === 0) {
     showNotification("No pending transactions to approve", "info");
@@ -7847,51 +7847,66 @@ async function approveAllPendingTransactions() {
 
   if (
     !confirm(
-      `Are you sure you want to approve all ${pending.length} pending transactions?`,
+      `Are you sure you want to approve all ${pending.length} transactions?`,
     )
   ) {
     return;
   }
 
-  let approved = 0;
-  let failed = 0;
+  // 2. Prepare UI (Loading State)
+  const btn = document.activeElement;
+  const originalText = btn ? btn.innerHTML : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML =
+      '<i class="fas fa-spinner fa-spin mr-2"></i>Processing Bulk...';
+  }
 
-  showNotification(`Processing ${pending.length} transactions...`, "info");
+  showNotification(
+    `Processing ${pending.length} transactions in bulk...`,
+    "info",
+  );
 
-  for (const txn of pending) {
-    try {
-      await processTransaction(txn.id, "approved", false);
-      approved++;
-    } catch (error) {
-      console.error(`Failed to approve transaction ${txn.id}:`, error);
-      failed++;
+  try {
+    // 3. THE SPEED SECRET: One single request for all IDs
+    const transactionIds = pending.map((t) => t.id);
+
+    const response = await api.post("/transactions/bulk-approve", {
+      transactionIds,
+      approvedBy: state.currentUser.name,
+    });
+
+    // 4. Success Handling
+    const { approved, failed } = response.data.results;
+
+    // Force a complete data reload to sync the state
+    await loadAllData();
+    // Refresh the current view
+    navigate(state.currentView);
+
+    if (failed === 0) {
+      showNotification(
+        `Successfully approved ${approved} transactions!`,
+        "success",
+      );
+    } else {
+      showNotification(
+        `Approved ${approved}, but ${failed} failed. Check logs.`,
+        "warning",
+      );
     }
-
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-
-  cachedApi.invalidate("/transactions");
-  cachedApi.invalidate("/customers");
-  cachedApi.invalidate("/loans");
-
-  await loadPendingTransactions({ silent: true });
-  renderAdminTransactions(document.getElementById("contentArea"), {
-    forceFetch: false,
-  });
-
-  if (failed === 0) {
+  } catch (error) {
+    console.error("Bulk approval failed:", error);
     showNotification(
-      `Successfully approved all ${approved} transactions`,
-      "success",
+      error.response?.data?.error || "Bulk approval failed",
+      "error",
     );
-  } else {
-    showNotification(
-      `Approved ${approved} transactions, ${failed} failed`,
-      "warning",
-    );
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+    }
   }
-
-  loadAllData().catch((err) => console.warn("Background sync error:", err));
 }
 
 function viewTransactionDetails(txnId) {

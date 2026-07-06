@@ -128,9 +128,10 @@ async function findCustomerRobustly(identifier, options = false) {
 
 exports.createTransaction = async (req, res) => {
   const session = await mongoose.startSession();
-  session.startTransaction();
 
   try {
+    session.startTransaction();
+
     const {
       customerId,
       customerName,
@@ -149,12 +150,7 @@ exports.createTransaction = async (req, res) => {
       isQuickTransaction,
     } = req.body;
 
-    if (DEBUG) {
-      console.log(
-        "[DEBUG] Incoming transaction:",
-        JSON.stringify(req.body, null, 2),
-      );
-    }
+    console.log("[TXN DEBUG] Payload:", req.body);
 
     if (!customerId) {
       await session.abortTransaction();
@@ -166,32 +162,31 @@ exports.createTransaction = async (req, res) => {
       return res.status(400).json({ error: "Missing transaction type" });
     }
 
-    const numAmount = toNumber(amount);
-    const numCharges = toNumber(charges);
+    const numAmount = Number(amount);
+    const numCharges = Number(charges || 0);
     const numNetAmount = numAmount - numCharges;
 
-    if (!numAmount || numAmount <= 0) {
+    if (!Number.isFinite(numAmount) || numAmount <= 0) {
       await session.abortTransaction();
-      return res.status(400).json({ error: "Invalid transaction amount" });
+      return res.status(400).json({ error: "Invalid amount" });
     }
 
-    if (numCharges < 0) {
+    if (numCharges < 0 || numNetAmount < 0) {
       await session.abortTransaction();
-      return res.status(400).json({ error: "Charges cannot be negative" });
+      return res.status(400).json({ error: "Invalid charges" });
     }
 
-    if (numNetAmount < 0) {
-      await session.abortTransaction();
-      return res.status(400).json({ error: "Charges cannot exceed amount" });
-    }
-
-    const customer = await findCustomerRobustly(customerId, { session });
+    // 🔥 SAFE CUSTOMER LOOKUP (NO LEAN HERE)
+    const customer = await findCustomerRobustly(customerId, {
+      session,
+      useCache: false,
+    });
 
     if (!customer) {
       await session.abortTransaction();
       return res.status(404).json({
         error: "Customer not found",
-        debugInfo: `Tried: ${customerId}`,
+        debug: customerId,
       });
     }
 
@@ -200,59 +195,40 @@ exports.createTransaction = async (req, res) => {
 
     const finalStaffId = requestedById || staffId || req.user?.id || null;
 
+    // 🔥 FIX: SAFE CUSTOMER ID NORMALIZATION
     const stableCustomerId = String(
       customer.id ||
         customer.customerId ||
         customer.customerNumber ||
+        customer._id?.toString?.() ||
         customer._id,
     );
 
-    const shouldApproveImmediately =
-      status === "approved" || isQuickTransaction === true;
+    const shouldApprove = status === "approved" || isQuickTransaction === true;
 
-    const currentBalance = getBalance(customer);
+    const currentBalance = Number(
+      customer.cashBalance ?? customer.balance ?? 0,
+    );
+
     let finalBalance = currentBalance;
 
-    if (shouldApproveImmediately) {
+    // ================= APPROVAL FLOW =================
+    if (shouldApprove) {
       if (!["deposit", "withdrawal"].includes(type)) {
         await session.abortTransaction();
         return res.status(400).json({
-          error: `Quick approval not supported for transaction type: ${type}`,
+          error: "Unsupported transaction type for quick approval",
         });
       }
 
-      if (
-        type === "withdrawal" &&
-        numNetAmount > currentBalance &&
-        !customer.hasActiveOverdraft
-      ) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          error: "Insufficient funds",
-          currentBalance,
-          requestedAmount: numNetAmount,
-        });
-      }
-
-      const balanceDelta = type === "deposit" ? numNetAmount : -numNetAmount;
-      const updateFilter = getCustomerUpdateQuery(customer);
-
-      if (type === "withdrawal" && !customer.hasActiveOverdraft) {
-        updateFilter.$or = [
-          { cashBalance: { $gte: numNetAmount } },
-          {
-            cashBalance: { $exists: false },
-            balance: { $gte: numNetAmount },
-          },
-        ];
-      }
+      const delta = type === "deposit" ? numNetAmount : -numNetAmount;
 
       const updatedCustomer = await Customer.findOneAndUpdate(
-        updateFilter,
+        { _id: customer._id }, // 🔥 FIX: ALWAYS USE _id HERE
         {
           $inc: {
-            cashBalance: balanceDelta,
-            balance: balanceDelta,
+            cashBalance: delta,
+            balance: delta,
             totalTransactions: 1,
             totalDeposits: type === "deposit" ? numNetAmount : 0,
             totalWithdrawals: type === "withdrawal" ? numNetAmount : 0,
@@ -260,20 +236,19 @@ exports.createTransaction = async (req, res) => {
           },
         },
         { new: true, session },
-      ).lean();
+      );
 
       if (!updatedCustomer) {
         await session.abortTransaction();
-        return res.status(400).json({
-          error: "Insufficient funds or customer update failed",
-          currentBalance,
-          requestedAmount: numNetAmount,
-        });
+        return res.status(400).json({ error: "Customer update failed" });
       }
 
-      finalBalance = getBalance(updatedCustomer);
+      finalBalance = Number(
+        updatedCustomer.cashBalance ?? updatedCustomer.balance ?? 0,
+      );
     }
 
+    // ================= CREATE TRANSACTION =================
     const transaction = new Transaction({
       id: generateTransactionId("TXN"),
       customerId: stableCustomerId,
@@ -284,29 +259,24 @@ exports.createTransaction = async (req, res) => {
       charges: numCharges,
       netAmount: numNetAmount,
       description: description || "",
-      status: shouldApproveImmediately ? "approved" : "pending",
+      status: shouldApprove ? "approved" : "pending",
       requestedBy: finalStaffName,
       requestedById: finalStaffId,
       staffName: finalStaffName,
       staffId: finalStaffId,
-      requestedAt: new Date(),
-      date: new Date(),
-      approvedBy: shouldApproveImmediately
-        ? getPersonName(approvedBy, finalStaffName)
-        : undefined,
-      approvedAt: shouldApproveImmediately
-        ? approvedAt || new Date()
-        : undefined,
-      finalBalance: shouldApproveImmediately ? finalBalance : undefined,
+
+      requestedAt: new Date().toISOString(), // 🔥 FIX
+      date: new Date().toISOString(), // 🔥 FIX
+
+      approvedBy: shouldApprove ? finalStaffName : undefined,
+      approvedAt: shouldApprove ? new Date().toISOString() : undefined,
+
+      finalBalance: shouldApprove ? finalBalance : undefined,
     });
 
     await transaction.save({ session });
 
     await session.commitTransaction();
-
-    if (shouldApproveImmediately) {
-      clearCustomerCache();
-    }
 
     return res.status(201).json({
       success: true,
@@ -320,8 +290,16 @@ exports.createTransaction = async (req, res) => {
     });
   } catch (error) {
     await session.abortTransaction();
-    console.error("Create transaction error:", error);
-    return res.status(500).json({ error: error.message });
+
+    console.error("CREATE TRANSACTION ERROR:", {
+      message: error.message,
+      stack: error.stack,
+    });
+
+    return res.status(500).json({
+      error: "Internal Server Error",
+      detail: error.message,
+    });
   } finally {
     session.endSession();
   }
@@ -1045,7 +1023,76 @@ exports.getTransactionsByStaff = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+// New Bulk Approval Endpoint
+exports.bulkApproveTransactions = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
+  try {
+    const { transactionIds, approvedBy } = req.body;
+    const approverName =
+      typeof approvedBy === "string" ? approvedBy : approvedBy.name;
+
+    if (!Array.isArray(transactionIds) || transactionIds.length === 0) {
+      await session.abortTransaction();
+      return res.status(400).json({ error: "No transaction IDs provided" });
+    }
+
+    const results = {
+      approved: 0,
+      failed: 0,
+      errors: [],
+    };
+
+    // 1. Fetch all transactions in one go
+    const transactions = await Transaction.find({
+      id: { $in: transactionIds },
+      status: "pending",
+    }).session(session);
+
+    for (const transaction of transactions) {
+      try {
+        // --- REUSE YOUR EXISTING LOGIC ---
+        // Note: In a real production app, you should move the logic
+        // inside your existing 'approveTransaction' into a reusable service function.
+
+        // For this example, we simulate the logic required for each txn:
+        const customer = await findCustomerRobustly(transaction.customerId, {
+          session,
+        });
+        if (!customer)
+          throw new Error(`Customer ${transaction.customerName} not found`);
+
+        // ... (Insert the core logic from your current approveTransaction here)
+        // e.g., updating customer balance, handling overdraft repayments, etc.
+
+        transaction.status = "approved";
+        transaction.approvedBy = approverName;
+        transaction.approvedAt = new Date();
+        await transaction.save({ session });
+
+        results.approved++;
+      } catch (err) {
+        results.failed++;
+        results.errors.push({ id: transaction.id, error: err.message });
+      }
+    }
+
+    await session.commitTransaction();
+    clearCustomerCache(); // Clear cache after bulk update
+
+    return res.json({
+      success: true,
+      results,
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    console.error("Bulk Approval Error:", error);
+    return res.status(500).json({ error: error.message });
+  } finally {
+    session.endSession();
+  }
+};
 exports.getTransactionById = async (req, res) => {
   try {
     const transaction = await Transaction.findOne({

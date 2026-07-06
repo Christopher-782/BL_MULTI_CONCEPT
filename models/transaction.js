@@ -1,5 +1,9 @@
 const mongoose = require("mongoose");
 
+/**
+ * Generates a unique transaction ID
+ * Format: TXN + Timestamp + 6 random alphanumeric characters
+ */
 function generateTransactionId() {
   return `TXN${Date.now()}${Math.random()
     .toString(36)
@@ -29,13 +33,13 @@ const transactionSchema = new mongoose.Schema(
     amount: {
       type: Number,
       required: true,
-      min: 0,
+      min: [0, "Amount cannot be negative"],
       default: 0,
     },
 
     charges: {
       type: Number,
-      min: 0,
+      min: [0, "Charges cannot be negative"],
       default: 0,
     },
 
@@ -44,6 +48,7 @@ const transactionSchema = new mongoose.Schema(
       default: 0,
     },
 
+    // Loan & Repayment Tracking
     principalPortion: { type: Number, default: 0 },
     interestPortion: { type: Number, default: 0 },
     interestRevenue: { type: Number, default: 0 },
@@ -52,10 +57,10 @@ const transactionSchema = new mongoose.Schema(
     loanId: { type: String, default: null },
     repaymentId: { type: String, default: null },
 
+    // Overdraft & Automated Recovery
     isOverdraftSettlement: { type: Boolean, default: false },
     isRevenue: { type: Boolean, default: false },
     revenueType: { type: String, default: null },
-
     isAutoDebit: { type: Boolean, default: false },
     autoDebitAmount: { type: Number, default: 0 },
     overdraftCleared: { type: Boolean, default: false },
@@ -92,24 +97,25 @@ const transactionSchema = new mongoose.Schema(
       index: true,
     },
 
+    // Approval/Rejection Audit Trail
     approvedBy: String,
     approvedAt: Date,
-
     rejectedBy: String,
     rejectedAt: Date,
     rejectionReason: String,
 
     description: String,
 
+    // Staff Attribution
     requestedBy: { type: String, default: "System" },
     requestedById: { type: String, default: null, index: true },
-
     staffName: { type: String, default: "System" },
     staffId: { type: String, default: null, index: true },
 
     requestedAt: Date,
     finalBalance: Number,
 
+    // Reversal/Void Tracking
     voidedBy: { type: String, default: null },
     voidedAt: Date,
     voidReason: { type: String, default: "" },
@@ -121,25 +127,28 @@ const transactionSchema = new mongoose.Schema(
   },
 );
 
-transactionSchema.pre("validate", function (next) {
-  if (!this.id) {
-    this.id = generateTransactionId();
-  }
-
+/**
+ * MIDDLEWARE: Pre-validation
+ * Ensures data integrity before the document is saved to MongoDB.
+ */
+transactionSchema.pre("validate", async function () {
+  // 1. Net Amount Integrity
+  // We only calculate if netAmount is missing to allow manual overrides if necessary.
+  // Using Number() with fallback to 0 prevents 'NaN' from breaking the database.
   if (this.netAmount === undefined || this.netAmount === null) {
-    this.netAmount = Number(this.amount || 0) - Number(this.charges || 0);
+    const amount = Number(this.amount) || 0;
+    const charges = Number(this.charges) || 0;
+    this.netAmount = amount - charges;
   }
-
-  next();
 });
 
+// ==================== INDEXES ====================
+// Optimized for common queries: history, staff lookups, and reporting
 transactionSchema.index({ createdAt: -1 });
 transactionSchema.index({ date: -1 });
 transactionSchema.index({ status: 1, requestedById: 1 });
 transactionSchema.index({ customerId: 1, date: -1 });
-transactionSchema.index({ customerId: 1, createdAt: -1 });
 transactionSchema.index({ type: 1, status: 1 });
-transactionSchema.index({ status: 1, createdAt: -1 });
 transactionSchema.index({ requestedAt: -1 });
 transactionSchema.index({ loanId: 1 });
 transactionSchema.index({ isAutoDebit: 1, type: 1 });

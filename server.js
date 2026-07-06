@@ -19,10 +19,10 @@ app.set("trust proxy", 1);
 app.use((req, res, next) => {
   const allowedOrigins = [
     "https://bl-multi-concept.onrender.com",
-    // "https://bl-multi-concept-api.onrender.com",
-    // "http://localhost:3000",
-    // "http://localhost:5173",
-    // "http://127.0.0.1:5500",
+    "https://bl-multi-concept-api.onrender.com",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5500",
   ];
 
   const origin = req.headers.origin;
@@ -73,7 +73,7 @@ const generalLimiter = rateLimit({
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 200,
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => req.method === "OPTIONS",
@@ -148,5 +148,5 @@ createAdmin();
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`Server running `);
+  console.log(`Server running`);
 });

@@ -10,6 +10,7 @@ const {
   rejectTransaction,
   getTransactionsByCustomer,
   getPendingTransactions,
+  bulkApproveTransactions,
 } = require("../controllers/transactionController");
 
 // Health check/debug route
@@ -32,5 +33,6 @@ router.post("/", createTransaction);
 // PATCH routes
 router.patch("/:transactionId/approve", approveTransaction);
 router.patch("/:transactionId/reject", rejectTransaction);
+router.post("/bulk-approve", bulkApproveTransactions);
 
 module.exports = router;
