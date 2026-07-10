@@ -11,6 +11,7 @@ const {
   getTransactionsByCustomer,
   getPendingTransactions,
   bulkApproveTransactions,
+  getRevenueSummary,
 } = require("../controllers/transactionController");
 
 // Health check/debug route
@@ -26,6 +27,7 @@ router.get("/", getAllTransactions);
 router.get("/stats", getTransactionStats);
 router.get("/pending", getPendingTransactions);
 router.get("/customer/:customerId", getTransactionsByCustomer);
+router.get("/revenue/summary", getRevenueSummary);
 
 // POST route
 router.post("/", createTransaction);

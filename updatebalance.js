@@ -1,80 +1,72 @@
 const mongoose = require("mongoose");
+const Customer = require("./models/customer"); // Ensure this path is correct
+const Transaction = require("./models/transaction"); // Ensure this path is correct
 
-// 1. PASTE YOUR DATABASE CONNECTION STRING HERE
-const MONGO_URI =
-  "mongodb+srv://okpokorchristopher_db_user:Clement1256@nodejs.rbwp35a.mongodb.net/BL_MULTI_CONCEPT?appName=nodejs";
+async function repairAllCustomerBalances() {
+  // 1. Connect to your DB
+  await mongoose.connect(
+    "mongodb+srv://okpokorchristopher_db_user:Clement1256@nodejs.rbwp35a.mongodb.net/BL_MULTI_CONCEPT?appName=nodejs",
+  );
+  console.log("🚀 Connected to database. Starting Customer Balance Repair...");
 
-// 2. IMPORT YOUR MODELS
-const Transaction = require("./models/Transaction");
-const Customer = require("./models/Customer");
+  const customers = await Customer.find({});
+  let fixedCount = 0;
+  let errorCount = 0;
 
-async function runMigration() {
-  try {
-    await mongoose.connect(MONGO_URI);
-    console.log("✅ Connected to database successfully.");
+  for (const customer of customers) {
+    try {
+      // 2. Find every APPROVED transaction for this specific customer
+      const transactions = await Transaction.find({
+        customerId: customer.id,
+        status: "approved",
+      });
 
-    const transactions = await Transaction.find({});
-    console.log(
-      `🔍 Found ${transactions.length} transactions. Starting SILENT migration...`,
-    );
+      // 3. Calculate the mathematically correct balance
+      // Sum up all netAmounts (deposits add, withdrawals subtract)
+      const calculatedBalance = transactions.reduce((sum, txn) => {
+        // If it's a deposit, add. If it's a withdrawal, subtract.
+        // Note: Transaction.netAmount should already be correctly signed
+        // based on your transaction controller logic.
+        const amount = txn.netAmount || 0;
 
-    let updatedCount = 0;
-    let skippedCount = 0;
-    let errorCount = 0;
-
-    for (const txn of transactions) {
-      try {
-        // 1. Skip if already fixed
-        if (txn.staffName && txn.staffId) {
-          skippedCount++;
-          continue;
-        }
-
-        // 2. Find the customer using the custom string ID (CUST...)
-        // We use findOne({ id: ... }) to avoid the ObjectId CastError
-        const customer = await Customer.findOne({ id: txn.customerId });
-
-        if (customer && customer.addedBy) {
-          // 3. THE SURGICAL UPDATE
-          // We use updateOne() instead of .save()
-          // This bypasss all backend "hooks" and prevents balance recalculation
-          await Transaction.updateOne(
-            { _id: txn._id },
-            {
-              $set: {
-                staffName: customer.addedBy.staffName,
-                staffId: customer.addedBy.staffId,
-                requestedBy: customer.addedBy.staffName,
-                requestedById: customer.addedBy.staffId,
-              },
-            },
-          );
-
-          updatedCount++;
-          console.log(`✔️ Silently updated Txn ${txn._id}`);
+        if (txn.type === "deposit" || txn.type === "loan_disbursement") {
+          return sum + amount;
+        } else if (txn.type === "withdrawal" || txn.type === "loan_repayment") {
+          return sum - Math.abs(amount);
         } else {
-          console.log(
-            `⚠️ Skipped Txn ${txn._id}: No customer/staff link found.`,
-          );
-          skippedCount++;
+          return sum;
         }
-      } catch (err) {
-        console.error(`❌ Error on Txn ${txn._id}: ${err.message}`);
-        errorCount++;
+      }, 0);
+
+      // 4. Only update if the current balance is different from the calculated one
+      if (Math.abs(customer.cashBalance - calculatedBalance) > 0.01) {
+        console.log(
+          `🛠️ Fixing ${customer.name} (${customer.id}): ${customer.cashBalance} -> ${calculatedBalance}`,
+        );
+
+        await Customer.updateOne(
+          { _id: customer._id },
+          {
+            $set: {
+              cashBalance: calculatedBalance,
+              balance: calculatedBalance,
+            },
+          },
+        );
+        fixedCount++;
       }
+    } catch (err) {
+      console.error(`❌ Error repairing customer ${customer.id}:`, err.message);
+      errorCount++;
     }
-
-    console.log("\n--- MIGRATION SUMMARY ---");
-    console.log(`✅ Successfully updated: ${updatedCount} transactions`);
-    console.log(`⏭️  Skipped/No Info: ${skippedCount} transactions`);
-    console.log(`❌ Errors: ${errorCount} transactions`);
-    console.log("--------------------------");
-
-    process.exit(0);
-  } catch (error) {
-    console.error("❌ FATAL ERROR:", error);
-    process.exit(1);
   }
+
+  console.log("\n--- REPAIR SUMMARY ---");
+  console.log(`✅ Successfully synchronized: ${fixedCount} customers`);
+  console.log(`❌ Errors encountered: ${errorCount}`);
+  console.log("----------------------\n");
+
+  process.exit();
 }
 
-runMigration();
+repairAllCustomerBalances();

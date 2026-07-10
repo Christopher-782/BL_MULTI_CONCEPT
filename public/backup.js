@@ -17,92 +17,83 @@ const state = {
 // ==================== REAL-TIME POLLING ====================
 
 function startTransactionPolling() {
-  // Stop any existing polling
+  // Stop any existing polling first
   if (state.pollingInterval) {
     clearInterval(state.pollingInterval);
+    state.pollingInterval = null;
   }
 
-  // Only poll if user is logged in and is admin
+  // Only poll for admin
   if (!state.currentUser || state.role !== "admin") {
     return;
   }
 
-  // Poll every 10 seconds for any transaction change, not pending-only changes.
   state.pollingInterval = setInterval(async () => {
     try {
-      const response = await api.get("/transactions", {
-        params: { limit: TRANSACTION_POLL_LIMIT },
-      });
-      const freshTransactions = normalizeApiArray(response.data, [
+      const response = await api.get("/transactions/pending");
+
+      const freshPendingTransactions = normalizeApiArray(response.data, [
         "transactions",
         "data",
-      ]).sort((a, b) => new Date(b.date) - new Date(a.date));
+      ]).sort(
+        (a, b) =>
+          new Date(b.requestedAt || b.date || b.createdAt || 0) -
+          new Date(a.requestedAt || a.date || a.createdAt || 0),
+      );
 
       const currentTransactions = Array.isArray(state.transactions)
         ? state.transactions
         : [];
 
-      const freshPendingCount = freshTransactions.filter(
-        (t) => t.status === "pending",
-      ).length;
       const oldPendingCount = currentTransactions.filter(
         (t) => t.status === "pending",
       ).length;
 
-      const oldSignature = buildTransactionListSignature(currentTransactions);
-      const freshSignature = buildTransactionListSignature(freshTransactions);
-      const hasAnyChange = oldSignature !== freshSignature;
+      const freshPendingCount = freshPendingTransactions.length;
 
-      if (hasAnyChange) {
-        state.transactions = freshTransactions;
-        cachedApi.invalidate("/transactions");
+      // Merge pending transactions into local state.
+      mergeTransactionsIntoState(freshPendingTransactions);
 
-        // Only show warning notification when new pending requests actually arrive.
-        if (freshPendingCount > oldPendingCount) {
-          const newCount = freshPendingCount - oldPendingCount;
-          showNotification(
-            `🔔 ${newCount} new transaction${newCount > 1 ? "s" : ""} pending approval from staff`,
-            "warning",
-          );
+      const hasNewPending = freshPendingCount > oldPendingCount;
 
-          state.notifications.unshift({
-            id: Date.now(),
-            message: `${newCount} new transaction${newCount > 1 ? "s" : ""} pending approval`,
-            time: "Just now",
-            unread: true,
-          });
-          updateNotificationList();
-        }
+      if (hasNewPending) {
+        const newCount = freshPendingCount - oldPendingCount;
 
-        const badge = document.getElementById("notifBadge");
-        if (badge) {
-          if (freshPendingCount > 0) badge.classList.remove("hidden");
-          else badge.classList.add("hidden");
-        }
+        showNotification(
+          `🔔 ${newCount} new transaction${newCount > 1 ? "s" : ""} pending approval from staff`,
+          "warning",
+        );
 
-        renderSidebar();
+        state.notifications.unshift({
+          id: Date.now(),
+          message: `${newCount} new transaction${newCount > 1 ? "s" : ""} pending approval`,
+          time: "Just now",
+          unread: true,
+        });
 
-        // Refresh views that depend on transaction state.
-        const transactionSensitiveViews = [
-          "dashboard",
-          "transactions",
-          "customers",
-          "customer-reports",
-          "staff-reconciliation",
-          "repayments",
-          "history",
-          "revenue",
-        ];
-        if (transactionSensitiveViews.includes(state.currentView)) {
-          navigate(state.currentView);
+        updateNotificationList();
+      }
+
+      const badge = document.getElementById("notifBadge");
+      if (badge) {
+        if (freshPendingCount > 0) badge.classList.remove("hidden");
+        else badge.classList.add("hidden");
+      }
+
+      renderSidebar();
+
+      if (state.currentView === "transactions" && state.role === "admin") {
+        const contentArea = document.getElementById("contentArea");
+        if (contentArea) {
+          renderAdminTransactions(contentArea);
         }
       }
 
-      state.lastTransactionCount = freshTransactions.length;
+      state.lastTransactionCount = currentTransactions.length;
     } catch (error) {
       console.warn("Polling error:", error.message);
     }
-  }, 30000);
+  }, 60000);
 }
 
 function stopTransactionPolling() {
@@ -121,7 +112,7 @@ function initRealTimeUpdates() {
 
 // Axios Configuration
 const api = axios.create({
-  baseURL: "http://localhost:3000/",
+  baseURL: "https://bl-multi-concept.onrender.com/",
   timeout: 60000,
   headers: { "Content-Type": "application/json" },
 });
@@ -632,6 +623,45 @@ async function loadCustomerTransactions(customerId, options = {}) {
   } catch (error) {
     console.warn("Could not load customer transactions:", error.message);
     return getTransactionsForCustomer(customerId);
+  }
+}
+
+async function loadPendingTransactions(options = {}) {
+  const { silent = true, limit = 500 } = options;
+
+  try {
+    const response = await api.get("/transactions/pending", {
+      params: { limit },
+    });
+
+    const pendingTransactions = normalizeApiArray(response.data, [
+      "transactions",
+      "data",
+    ]).filter((transaction) => transaction?.status === "pending");
+
+    const nonPendingTransactions = (
+      Array.isArray(state.transactions) ? state.transactions : []
+    ).filter((transaction) => transaction?.status !== "pending");
+
+    state.transactions = nonPendingTransactions;
+    mergeTransactionsIntoState(pendingTransactions);
+
+    return pendingTransactions;
+  } catch (error) {
+    console.warn("Could not load pending transactions:", error.message);
+
+    if (!silent) {
+      showNotification(
+        error.response?.data?.message ||
+          error.response?.data?.error ||
+          "Could not load pending transactions",
+        "warning",
+      );
+    }
+
+    return (Array.isArray(state.transactions) ? state.transactions : []).filter(
+      (transaction) => transaction?.status === "pending",
+    );
   }
 }
 
@@ -2917,9 +2947,6 @@ function showAddCustomerModal() {
     </div>
   `;
 
-  // IMPROVEMENT: We create a temporary div, set the HTML,
-  // but only append the actual #customerModal to the body.
-  // This ensures that when we .remove() the element, the black overlay is gone too.
   const tempDiv = document.createElement("div");
   tempDiv.innerHTML = modalHtml;
   document.body.appendChild(tempDiv.firstElementChild);
@@ -3555,7 +3582,9 @@ function initTransactionSearch(customersData) {
     const charges = parseFloat(
       document.getElementById("chargeAmount")?.value || 0,
     );
-    const netAmount = amount - charges;
+    const type = document.querySelector('input[name="type"]:checked')?.value;
+    const netAmount =
+      type === "withdrawal" ? amount + charges : amount - charges;
     document.getElementById("netAmount").textContent =
       "₦" + netAmount.toLocaleString();
 
@@ -3712,10 +3741,18 @@ async function handleNewTransaction(e) {
 
   try {
     const response = await api.post("/transactions", txnData);
-    const newTxn = response.data;
+
+    const newTxn =
+      response.data?.transaction ||
+      response.data?.data?.transaction ||
+      response.data?.data ||
+      response.data;
 
     // 1. INJECT INTO STATE
-    state.transactions.unshift(newTxn);
+    if (newTxn && newTxn.id) {
+      mergeTransactionsIntoState([newTxn]);
+    }
+
     cachedApi.invalidate("/transactions");
 
     showNotification("Transaction request submitted!", "success");
@@ -3758,7 +3795,9 @@ async function processTransaction(
   // Re-render the view immediately so the admin sees the color change instantly
   // We do NOT await this; we just want the UI to reflect the change
   if (state.currentView === "transactions") {
-    renderAdminTransactions(document.getElementById("contentArea"));
+    renderAdminTransactions(document.getElementById("contentArea"), {
+      forceFetch: false,
+    });
   } else {
     navigate(state.currentView);
   }
@@ -3801,7 +3840,9 @@ async function processTransaction(
     transaction.status = originalStatus;
 
     if (state.currentView === "transactions") {
-      renderAdminTransactions(document.getElementById("contentArea"));
+      renderAdminTransactions(document.getElementById("contentArea"), {
+        forceFetch: false,
+      });
     } else {
       navigate(state.currentView);
     }
@@ -7017,9 +7058,24 @@ function renderHistory(container) {
 
 // ==================== ADMIN TRANSACTIONS VIEW ====================
 
-function renderAdminTransactions(container) {
-  const pending = state.transactions.filter((t) => t.status === "pending");
-  const others = state.transactions.filter((t) => t.status !== "pending");
+async function renderAdminTransactions(container, options = {}) {
+  const { forceFetch = true } = options;
+
+  if (!container) return;
+
+  if (forceFetch) {
+    renderLoadingState(container, "Loading pending approvals...");
+    await loadPendingTransactions({ silent: true });
+  }
+
+  if (state.currentView !== "transactions") return;
+
+  const allTransactions = Array.isArray(state.transactions)
+    ? state.transactions
+    : [];
+
+  const pending = allTransactions.filter((t) => t.status === "pending");
+  const others = allTransactions.filter((t) => t.status !== "pending");
 
   // Group pending by staff for the cards
   const pendingByStaff = {};
@@ -7781,41 +7837,78 @@ async function approveAllStaffTransactions(staffIdentifier) {
   }
 }
 async function approveAllPendingTransactions() {
-  const pending = state.transactions.filter((t) => t.status === "pending");
+  // 1. Identify all pending IDs
+  const pending = state.transactions.filter(
+    (t) => t.status?.toString().toLowerCase() === "pending",
+  );
+
   if (pending.length === 0) {
     showNotification("No pending transactions to approve", "info");
     return;
   }
+
   if (
     !confirm(
-      `Are you sure you want to approve all ${pending.length} pending transactions?`,
+      `Are you sure you want to approve all ${pending.length} transactions?`,
     )
-  )
+  ) {
     return;
-  let approved = 0,
-    failed = 0;
-  showNotification(`Processing ${pending.length} transactions...`, "info");
-  for (const txn of pending) {
-    try {
-      await processTransaction(txn.id, "approved", false);
-      approved++;
-    } catch (error) {
-      console.error(`Failed to approve transaction ${txn.id}:`, error);
-      failed++;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  await loadAllData();
-  if (failed === 0)
+
+  // 2. Prepare UI (Loading State)
+  const btn = document.activeElement;
+  const originalText = btn ? btn.innerHTML : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML =
+      '<i class="fas fa-spinner fa-spin mr-2"></i>Processing Bulk...';
+  }
+
+  showNotification(
+    `Processing ${pending.length} transactions in bulk...`,
+    "info",
+  );
+
+  try {
+    // 3. THE SPEED SECRET: One single request for all IDs
+    const transactionIds = pending.map((t) => t.id);
+
+    const response = await api.post("/transactions/bulk-approve", {
+      transactionIds,
+      approvedBy: state.currentUser.name,
+    });
+
+    // 4. Success Handling
+    const { approved, failed } = response.data.results;
+
+    // Force a complete data reload to sync the state
+    await loadAllData();
+    // Refresh the current view
+    navigate(state.currentView);
+
+    if (failed === 0) {
+      showNotification(
+        `Successfully approved ${approved} transactions!`,
+        "success",
+      );
+    } else {
+      showNotification(
+        `Approved ${approved}, but ${failed} failed. Check logs.`,
+        "warning",
+      );
+    }
+  } catch (error) {
+    console.error("Bulk approval failed:", error);
     showNotification(
-      `Successfully approved all ${approved} transactions`,
-      "success",
+      error.response?.data?.error || "Bulk approval failed",
+      "error",
     );
-  else
-    showNotification(
-      `Approved ${approved} transactions, ${failed} failed`,
-      "warning",
-    );
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+    }
+  }
 }
 
 function viewTransactionDetails(txnId) {

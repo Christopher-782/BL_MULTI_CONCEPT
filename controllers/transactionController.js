@@ -1,5 +1,6 @@
 const Transaction = require("../models/transaction");
 const Customer = require("../models/customer");
+const Expense = require("../models/expenses");
 const Loan = require("../models/loan");
 const smsService = require("../services/smsService");
 const mongoose = require("mongoose");
@@ -150,33 +151,22 @@ exports.createTransaction = async (req, res) => {
       isQuickTransaction,
     } = req.body;
 
-    console.log("[TXN DEBUG] Payload:", req.body);
-
     if (!customerId) {
       await session.abortTransaction();
       return res.status(400).json({ error: "Missing customerId" });
     }
 
-    if (!type) {
-      await session.abortTransaction();
-      return res.status(400).json({ error: "Missing transaction type" });
-    }
-
     const numAmount = Number(amount);
     const numCharges = Number(charges || 0);
-    const numNetAmount = numAmount - numCharges;
+    const numNetAmount =
+      type === "withdrawal" ? numAmount + numCharges : numAmount - numCharges;
 
     if (!Number.isFinite(numAmount) || numAmount <= 0) {
       await session.abortTransaction();
       return res.status(400).json({ error: "Invalid amount" });
     }
 
-    if (numCharges < 0 || numNetAmount < 0) {
-      await session.abortTransaction();
-      return res.status(400).json({ error: "Invalid charges" });
-    }
-
-    // 🔥 SAFE CUSTOMER LOOKUP (NO LEAN HERE)
+    // 1. Find the customer using the robust helper
     const customer = await findCustomerRobustly(customerId, {
       session,
       useCache: false,
@@ -184,47 +174,31 @@ exports.createTransaction = async (req, res) => {
 
     if (!customer) {
       await session.abortTransaction();
-      return res.status(404).json({
-        error: "Customer not found",
-        debug: customerId,
-      });
+      return res.status(404).json({ error: "Customer not found" });
     }
+
+    // 2. CRITICAL FIX: Use the string 'id' for the update query.
+    // This is much more reliable than _id when working with lean objects and sessions.
+    const customerUpdateQuery = { id: customer.id };
 
     const finalStaffName =
       requestedBy || staffName || req.user?.name || "System";
-
     const finalStaffId = requestedById || staffId || req.user?.id || null;
-
-    // 🔥 FIX: SAFE CUSTOMER ID NORMALIZATION
-    const stableCustomerId = String(
-      customer.id ||
-        customer.customerId ||
-        customer.customerNumber ||
-        customer._id?.toString?.() ||
-        customer._id,
-    );
-
     const shouldApprove = status === "approved" || isQuickTransaction === true;
 
-    const currentBalance = Number(
-      customer.cashBalance ?? customer.balance ?? 0,
-    );
+    let finalBalance = 0;
 
-    let finalBalance = currentBalance;
-
-    // ================= APPROVAL FLOW =================
     if (shouldApprove) {
       if (!["deposit", "withdrawal"].includes(type)) {
         await session.abortTransaction();
-        return res.status(400).json({
-          error: "Unsupported transaction type for quick approval",
-        });
+        return res.status(400).json({ error: "Unsupported transaction type" });
       }
 
       const delta = type === "deposit" ? numNetAmount : -numNetAmount;
 
+      // Update customer balance
       const updatedCustomer = await Customer.findOneAndUpdate(
-        { _id: customer._id }, // 🔥 FIX: ALWAYS USE _id HERE
+        customerUpdateQuery,
         {
           $inc: {
             cashBalance: delta,
@@ -240,18 +214,17 @@ exports.createTransaction = async (req, res) => {
 
       if (!updatedCustomer) {
         await session.abortTransaction();
-        return res.status(400).json({ error: "Customer update failed" });
+        return res
+          .status(400)
+          .json({ error: "Customer balance update failed" });
       }
-
-      finalBalance = Number(
-        updatedCustomer.cashBalance ?? updatedCustomer.balance ?? 0,
-      );
+      finalBalance = updatedCustomer.cashBalance;
     }
 
-    // ================= CREATE TRANSACTION =================
+    // 3. Create the transaction record
     const transaction = new Transaction({
       id: generateTransactionId("TXN"),
-      customerId: stableCustomerId,
+      customerId: customer.id, // Use the stable string ID
       customerName: customerName || customer.name,
       customerPhone: customerPhone || customer.phone || "",
       type,
@@ -264,47 +237,33 @@ exports.createTransaction = async (req, res) => {
       requestedById: finalStaffId,
       staffName: finalStaffName,
       staffId: finalStaffId,
-
-      requestedAt: new Date().toISOString(), // 🔥 FIX
-      date: new Date().toISOString(), // 🔥 FIX
-
+      requestedAt: new Date(),
+      date: new Date(),
       approvedBy: shouldApprove ? finalStaffName : undefined,
-      approvedAt: shouldApprove ? new Date().toISOString() : undefined,
-
+      approvedAt: shouldApprove ? new Date() : undefined,
       finalBalance: shouldApprove ? finalBalance : undefined,
     });
 
     await transaction.save({ session });
-
     await session.commitTransaction();
 
     return res.status(201).json({
       success: true,
       transaction,
       customer: {
-        id: stableCustomerId,
+        id: customer.id,
         name: customer.name,
-        oldBalance: currentBalance,
         newBalance: finalBalance,
       },
     });
   } catch (error) {
     await session.abortTransaction();
-
-    console.error("CREATE TRANSACTION ERROR:", {
-      message: error.message,
-      stack: error.stack,
-    });
-
-    return res.status(500).json({
-      error: "Internal Server Error",
-      detail: error.message,
-    });
+    console.error("CREATE TRANSACTION ERROR:", error);
+    return res.status(500).json({ error: error.message });
   } finally {
     session.endSession();
   }
 };
-
 exports.approveTransaction = async (req, res) => {
   if (DEBUG) console.log("=== APPROVE TRANSACTION ===", req.params, req.body);
 
@@ -778,6 +737,110 @@ exports.approveTransaction = async (req, res) => {
   }
 };
 
+exports.getRevenueSummary = async (req, res) => {
+  try {
+    const { period } = req.query; // 'daily', 'weekly', 'monthly', 'yearly', 'all'
+
+    // 1. Calculate the Start Date based on the period requested
+    const startDate = new Date();
+    if (period === "daily") {
+      startDate.setHours(0, 0, 0, 0);
+    } else if (period === "weekly") {
+      startDate.setDate(startDate.getDate() - 7);
+      startDate.setHours(0, 0, 0, 0);
+    } else if (period === "monthly") {
+      startDate.setMonth(startDate.getMonth() - 1);
+      startDate.setHours(0, 0, 0, 0);
+    } else if (period === "yearly") {
+      startDate.setFullYear(startDate.getFullYear() - 1);
+      startDate.setHours(0, 0, 0, 0);
+    } else {
+      // If 'all', set to a very old date
+      startDate.setFullYear(1970);
+    }
+
+    // 2. Run Aggregation for Transactions (Revenue)
+    const revenueStats = await Transaction.aggregate([
+      {
+        $match: {
+          status: "approved",
+          date: { $gte: startDate }, // THIS IS THE KEY FIX: Filter by date
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          transactionCharges: { $sum: "$charges" },
+          loanInterest: {
+            $sum: {
+              $cond: [{ $eq: ["$type", "interest_revenue"] }, "$amount", 0],
+            },
+          },
+          overdraftCharges: {
+            $sum: {
+              $cond: [
+                { $eq: ["$type", "overdraft_charges_revenue"] },
+                "$amount",
+                0,
+              ],
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          transactionCharges: 1,
+          loanInterest: 1,
+          overdraftCharges: 1,
+          totalInflow: {
+            $add: ["$transactionCharges", "$loanInterest", "$overdraftCharges"],
+          },
+        },
+      },
+    ]);
+
+    // 3. Run Aggregation for Expenses
+    // We must calculate expenses for the same period to get accurate Net Profit
+    const expenseStats = await Expense.aggregate([
+      {
+        $match: {
+          date: { $gte: startDate },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          totalExpenses: { $sum: "$amount" },
+        },
+      },
+    ]);
+
+    // 4. Combine Results
+    const revenue = revenueStats[0] || {
+      transactionCharges: 0,
+      loanInterest: 0,
+      overdraftCharges: 0,
+      totalInflow: 0,
+    };
+
+    const totalExpenses = expenseStats[0]?.totalExpenses || 0;
+    const netProfit = revenue.totalInflow - totalExpenses;
+
+    // 5. Return structured data to the frontend
+    res.json({
+      success: true,
+      data: {
+        ...revenue,
+        totalExpenses: totalExpenses,
+        netProfit: netProfit,
+      },
+    });
+  } catch (error) {
+    console.error("Revenue Summary Error:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
 exports.rejectTransaction = async (req, res) => {
   try {
     const { transactionId } = req.params;
@@ -1079,7 +1142,7 @@ exports.bulkApproveTransactions = async (req, res) => {
     }
 
     await session.commitTransaction();
-    clearCustomerCache(); // Clear cache after bulk update
+    clearCustomerCache();
 
     return res.json({
       success: true,
