@@ -150,7 +150,6 @@ const cachedApi = {
       console.log(`%c[CACHE MISS] ${endpoint}`, "color: #facc15");
     const response = await api.get(endpoint, options);
 
-    // Normalize response - ensure we always return the actual data array/object
     const responseData = response.data?.data || response.data;
 
     apiCache.set(cacheKey, { data: responseData, timestamp: Date.now() });
@@ -4217,73 +4216,113 @@ function getCustomerStats(customerId, period = "all") {
   const transactions = getTransactionsForCustomer(customer);
   const now = new Date();
 
-  const isToday = (date) =>
-    new Date(date).toDateString() === now.toDateString();
-  const isThisWeek = (date) => {
-    const d = new Date(date);
+  const getTransactionDate = (transaction) =>
+    new Date(transaction.date || transaction.createdAt || 0);
+
+  const isToday = (transaction) =>
+    getTransactionDate(transaction).toDateString() === now.toDateString();
+
+  const isThisWeek = (transaction) => {
+    const transactionDate = getTransactionDate(transaction);
     const weekAgo = new Date(now);
+
     weekAgo.setDate(now.getDate() - 7);
-    return d >= weekAgo;
+    return transactionDate >= weekAgo && transactionDate <= now;
   };
-  const isThisMonth = (date) => {
-    const d = new Date(date);
+
+  const isThisMonth = (transaction) => {
+    const transactionDate = getTransactionDate(transaction);
+
     return (
-      d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+      transactionDate.getMonth() === now.getMonth() &&
+      transactionDate.getFullYear() === now.getFullYear()
     );
   };
-  const isThisYear = (date) =>
-    new Date(date).getFullYear() === now.getFullYear();
+
+  const isThisYear = (transaction) =>
+    getTransactionDate(transaction).getFullYear() === now.getFullYear();
 
   let filteredTransactions = transactions;
-  if (period === "today")
-    filteredTransactions = transactions.filter((t) => isToday(t.date));
-  else if (period === "week")
-    filteredTransactions = transactions.filter((t) => isThisWeek(t.date));
-  else if (period === "month")
-    filteredTransactions = transactions.filter((t) => isThisMonth(t.date));
-  else if (period === "year")
-    filteredTransactions = transactions.filter((t) => isThisYear(t.date));
+
+  switch (period) {
+    case "today":
+      filteredTransactions = transactions.filter(isToday);
+      break;
+
+    case "week":
+      filteredTransactions = transactions.filter(isThisWeek);
+      break;
+
+    case "month":
+      filteredTransactions = transactions.filter(isThisMonth);
+      break;
+
+    case "year":
+      filteredTransactions = transactions.filter(isThisYear);
+      break;
+
+    default:
+      filteredTransactions = transactions;
+  }
 
   const approvedTransactions = filteredTransactions.filter(
-    (t) => t.status === "approved",
+    (transaction) => transaction.status === "approved",
   );
-  const deposits = filteredTransactions.filter(
-    (t) => t.type === "deposit" && t.status === "approved",
-  );
-  const withdrawals = filteredTransactions.filter(
-    (t) => t.type === "withdrawal" && t.status === "approved",
-  );
-  const pending = filteredTransactions.filter((t) => t.status === "pending");
-  const rejected = filteredTransactions.filter((t) => t.status === "rejected");
 
-  const totalDeposits = deposits.reduce((sum, t) => sum + (t.amount || 0), 0);
+  const deposits = approvedTransactions.filter(
+    (transaction) => transaction.type === "deposit",
+  );
+
+  const withdrawals = approvedTransactions.filter(
+    (transaction) => transaction.type === "withdrawal",
+  );
+
+  const pending = filteredTransactions.filter(
+    (transaction) => transaction.status === "pending",
+  );
+
+  const rejected = filteredTransactions.filter(
+    (transaction) => transaction.status === "rejected",
+  );
+
+  const totalDeposits = deposits.reduce(
+    (sum, transaction) => sum + Number(transaction.amount || 0),
+    0,
+  );
+
   const totalWithdrawals = withdrawals.reduce(
-    (sum, t) => sum + (t.amount || 0),
+    (sum, transaction) => sum + Number(transaction.amount || 0),
     0,
   );
-  const totalRevenue = state.transactions.reduce((sum, t) => {
-    if (t.status !== "approved") return sum;
 
-    // 1. Add standard transaction fees
-    if (
-      t.type !== "interest_revenue" &&
-      t.type !== "overdraft_charges_revenue"
-    ) {
-      return sum + (t.charges || 0);
-    }
+  const totalCharges = approvedTransactions.reduce(
+    (sum, transaction) => sum + Number(transaction.charges || 0),
+    0,
+  );
 
-    return sum + (t.amount || 0);
+  const netDeposits = deposits.reduce((sum, transaction) => {
+    const amount = Number(transaction.amount || 0);
+    const charges = Number(transaction.charges || 0);
+
+    const netAmount =
+      transaction.netAmount !== null && transaction.netAmount !== undefined
+        ? Number(transaction.netAmount)
+        : amount - charges;
+
+    return sum + netAmount;
   }, 0);
-  const netDeposits = deposits.reduce(
-    (sum, t) =>
-      sum + ((t.netAmount ?? t.amount) - (t.netAmount ? 0 : t.charges || 0)),
-    0,
-  );
-  const netWithdrawals = withdrawals.reduce(
-    (sum, t) =>
-      sum + ((t.netAmount ?? t.amount) - (t.netAmount ? 0 : t.charges || 0)),
-    0,
-  );
+
+  const netWithdrawals = withdrawals.reduce((sum, transaction) => {
+    const amount = Number(transaction.amount || 0);
+    const charges = Number(transaction.charges || 0);
+
+    const totalDeduction =
+      transaction.netAmount !== null && transaction.netAmount !== undefined
+        ? Number(transaction.netAmount)
+        : amount + charges;
+
+    return sum + totalDeduction;
+  }, 0);
 
   return {
     customer,
@@ -4298,14 +4337,13 @@ function getCustomerStats(customerId, period = "all") {
         count: deposits.length,
         total: totalDeposits,
         net: netDeposits,
-        average: deposits.length > 0 ? totalDeposits / deposits.length : 0,
+        average: deposits.length ? totalDeposits / deposits.length : 0,
       },
       withdrawals: {
         count: withdrawals.length,
         total: totalWithdrawals,
         net: netWithdrawals,
-        average:
-          withdrawals.length > 0 ? totalWithdrawals / withdrawals.length : 0,
+        average: withdrawals.length ? totalWithdrawals / withdrawals.length : 0,
       },
       netBalance: netDeposits - netWithdrawals,
       period,

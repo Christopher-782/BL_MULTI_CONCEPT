@@ -1,0 +1,3609 @@
+[
+  {
+    "_id": "69d4ec8c386f2ef52e169e99",
+    "id": "1",
+    "customerNumber": "001",
+    "name": "Uche Aneke",
+    "phone": "09135344958",
+    "email": "uche@gmail.com",
+    "cashBalance": 96400,
+    "balance": 96400,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169e9b",
+    "id": "3",
+    "customerNumber": "003",
+    "name": "Akeem Bola",
+    "cashBalance": 41000,
+    "balance": 41000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169e9d",
+    "id": "5",
+    "customerNumber": "005",
+    "name": "Mr falilat",
+    "cashBalance": 103000,
+    "balance": 103000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169e9e",
+    "id": "6",
+    "customerNumber": "012",
+    "name": "Alisha Adeleke",
+    "cashBalance": 8000,
+    "balance": 8000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ea1",
+    "id": "9",
+    "customerNumber": "015",
+    "name": "Lawal simatu Olamide",
+    "cashBalance": 35000,
+    "balance": 35000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ea6",
+    "id": "14",
+    "customerNumber": "024",
+    "name": "Kemi Abdulfatai zanaib",
+    "phone": "08038890264",
+    "email": "kemi1@gmail.com",
+    "cashBalance": 16000,
+    "balance": 16000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eab",
+    "id": "19",
+    "customerNumber": "063",
+    "name": "Amira olawale Aduke",
+    "phone": "08034694485",
+    "email": "amira@gmail.com",
+    "cashBalance": 5000,
+    "balance": 5000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eae",
+    "id": "22",
+    "customerNumber": "066",
+    "name": "Arege Bola Falilat",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eaf",
+    "id": "23",
+    "customerNumber": "067",
+    "name": "Abiola christiana",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eb4",
+    "id": "28",
+    "customerNumber": "075",
+    "name": "Asuqwo Simon",
+    "phone": "09018929644",
+    "email": "asuqwo@gmail.com",
+    "cashBalance": 22000,
+    "balance": 22000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eb9",
+    "id": "33",
+    "customerNumber": "080",
+    "name": "Ogunfowote Tosin Bunmi",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ebe",
+    "id": "38",
+    "customerNumber": "085",
+    "name": "Adetemitayo Adenike Temitope",
+    "phone": "08148468924",
+    "email": "adenike@gmail.com",
+    "cashBalance": 10500,
+    "balance": 10500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ebf",
+    "id": "39",
+    "customerNumber": "086",
+    "name": "Christiana Fumilayo",
+    "phone": "07072916617",
+    "email": "funmi@gmail.com",
+    "cashBalance": 7500,
+    "balance": 7500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ec4",
+    "id": "44",
+    "customerNumber": "092",
+    "name": "Oshin Bilikisu",
+    "phone": "09138087348",
+    "email": "oshin@gmail.com",
+    "cashBalance": 9000,
+    "balance": 9000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ec5",
+    "id": "45",
+    "customerNumber": "093",
+    "name": "Mamud",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ec8",
+    "id": "48",
+    "customerNumber": "099",
+    "name": "Anthonia",
+    "cashBalance": 60000,
+    "balance": 60000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ec9",
+    "id": "49",
+    "customerNumber": "100",
+    "name": "Baliks Aripe",
+    "phone": "08050893495",
+    "email": "arinpe@gmail.com",
+    "cashBalance": 8000,
+    "balance": 8000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ecd",
+    "id": "53",
+    "customerNumber": "108",
+    "name": "Okwuchukwu Igidio Philomina",
+    "phone": "08066688319",
+    "email": "philomina@gmail.com",
+    "cashBalance": 70000,
+    "balance": 70000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ecf",
+    "id": "55",
+    "customerNumber": "113",
+    "name": "Cecilia Izor Mary",
+    "cashBalance": 400,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ed5",
+    "id": "61",
+    "customerNumber": "120",
+    "name": "Fatimoh Ayinu Toyosi",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ee4",
+    "id": "77",
+    "customerNumber": "161",
+    "name": "Ogunfowote Pelumi Omolola",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eed",
+    "id": "86",
+    "customerNumber": "179",
+    "name": "Rukajat Arike",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169efa",
+    "id": "99",
+    "customerNumber": "214",
+    "name": "Modinat Tope Ajao",
+    "cashBalance": 3000,
+    "balance": 3000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169efb",
+    "id": "100",
+    "customerNumber": "215",
+    "name": "Mariam Ganiu Yusuf",
+    "cashBalance": 3000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eff",
+    "id": "104",
+    "customerNumber": "221",
+    "name": "JIMMY AFIA EDE",
+    "cashBalance": 56000,
+    "balance": 56000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f01",
+    "id": "106",
+    "customerNumber": "226",
+    "name": "Adeleke Aishat",
+    "cashBalance": 6000,
+    "balance": 6000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f09",
+    "id": "114",
+    "customerNumber": "245",
+    "name": "Adekoya Afeez",
+    "cashBalance": -8000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f0a",
+    "id": "115",
+    "customerNumber": "246",
+    "name": "Tawakalitu Jinadu",
+    "cashBalance": 24500,
+    "balance": 24500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f0b",
+    "id": "116",
+    "customerNumber": "248",
+    "name": "Mr Wasiu",
+    "cashBalance": 12000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f0e",
+    "id": "119",
+    "customerNumber": "259",
+    "name": "OLAMILAKUN SUNDAY",
+    "cashBalance": 2500,
+    "balance": 2500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f12",
+    "id": "123",
+    "customerNumber": "264",
+    "name": "Taiwo Stella",
+    "cashBalance": 19500,
+    "balance": 19500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f13",
+    "id": "124",
+    "customerNumber": "265",
+    "name": "Iya Muridir",
+    "cashBalance": 24000,
+    "balance": 24000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f15",
+    "id": "126",
+    "customerNumber": "272",
+    "name": "Bolanke Bankole",
+    "cashBalance": 13000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f17",
+    "id": "128",
+    "customerNumber": "276",
+    "name": "PEACE EFFIONG",
+    "phone": "09035294746",
+    "email": "peace@gmail.com",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f19",
+    "id": "130",
+    "customerNumber": "280",
+    "name": "TOHEEB",
+    "cashBalance": 2400,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f1d",
+    "id": "134",
+    "customerNumber": "290",
+    "name": "AKEEM OLA",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f20",
+    "id": "137",
+    "customerNumber": "294",
+    "name": "OLUOYEDE OMOLAYO",
+    "phone": "09095049612",
+    "email": "oluboyedeomolayo07@gmail.com",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f21",
+    "id": "138",
+    "customerNumber": "299",
+    "name": "Daniel",
+    "cashBalance": 2000,
+    "balance": 2000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f24",
+    "id": "141",
+    "customerNumber": "320",
+    "name": "Keji Shokunbi",
+    "cashBalance": 2000,
+    "balance": 2000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f28",
+    "id": "145",
+    "customerNumber": "008",
+    "name": "Abiola Ayandiran Ashabi",
+    "cashBalance": 12000,
+    "balance": 12000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f2a",
+    "id": "147",
+    "customerNumber": "010",
+    "name": "Basirat Yusuf",
+    "cashBalance": 23000,
+    "balance": 23000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f2f",
+    "id": "152",
+    "customerNumber": "023",
+    "name": "Mr Segun ojo",
+    "phone": "08066519103",
+    "email": "segun2@gmail.com",
+    "cashBalance": 35500,
+    "balance": 7000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f32",
+    "id": "155",
+    "customerNumber": "027",
+    "name": "Ayomide biodun ogundare",
+    "cashBalance": 2000,
+    "balance": 2000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f33",
+    "id": "156",
+    "customerNumber": "028",
+    "name": "Hassan Sadiq lekan",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f39",
+    "id": "162",
+    "customerNumber": "034",
+    "name": "Joshua Igwe Eze",
+    "cashBalance": 6500,
+    "balance": 6500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f3c",
+    "id": "165",
+    "customerNumber": "037",
+    "name": "miuruf uzhairu",
+    "phone": "08132161147",
+    "email": "miuruf@gmail.com",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f3f",
+    "id": "168",
+    "customerNumber": "040",
+    "name": "Mrs Aweda Rashidat Adewunmi",
+    "phone": "07067737902",
+    "email": "savageadewunmi@gmail.com",
+    "cashBalance": 24000,
+    "balance": 24000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f56",
+    "id": "191",
+    "customerNumber": "097",
+    "name": "Mum mistura",
+    "phone": "08032194105",
+    "email": "mummisturah@gmail.com",
+    "cashBalance": 10000,
+    "balance": 10000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f5a",
+    "id": "195",
+    "customerNumber": "107",
+    "name": "Olamilakun Ganni Redwan (awe)",
+    "phone": "07037236411",
+    "email": "awe@gmail.com",
+    "cashBalance": 375000,
+    "balance": 375000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f5e",
+    "id": "200",
+    "customerNumber": "122",
+    "name": "Aweda Wasiu Ariyo",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f5f",
+    "id": "201",
+    "customerNumber": "124",
+    "name": "Adeyemi Olashola Disu",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f64",
+    "id": "206",
+    "customerNumber": "128",
+    "name": "Ayomide Islamist Sanusi",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f6d",
+    "id": "215",
+    "customerNumber": "141",
+    "name": "Aminat Suaima Biola",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f6e",
+    "id": "216",
+    "customerNumber": "142",
+    "name": "Oluwafemi Emmanel",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f72",
+    "id": "220",
+    "customerNumber": "146",
+    "name": "Bolarinwa Grace",
+    "phone": "08166091640",
+    "email": "grace@gmail.com",
+    "cashBalance": 33000,
+    "balance": 33000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f73",
+    "id": "221",
+    "customerNumber": "147",
+    "name": "Muritala Taiwo",
+    "cashBalance": 3000,
+    "balance": 3000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f78",
+    "id": "226",
+    "customerNumber": "160",
+    "name": "Adebayo Muiz Omotunde",
+    "phone": "08137750709",
+    "email": "muiz@gmail.com",
+    "cashBalance": 45000,
+    "balance": 45000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f7a",
+    "id": "229",
+    "customerNumber": "182",
+    "name": "Animashaun Ayobami",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f82",
+    "id": "237",
+    "customerNumber": "189",
+    "name": "Ojo Faith Olashile",
+    "phone": "07019625671",
+    "email": "ojo@gmail.com",
+    "cashBalance": 3500,
+    "balance": 3500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f84",
+    "id": "239",
+    "customerNumber": "191",
+    "name": "mrs Zainab Oseni",
+    "cashBalance": 14000,
+    "balance": 14000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f85",
+    "id": "240",
+    "customerNumber": "194",
+    "name": "ADEBIYI ISMILA",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f86",
+    "id": "241",
+    "customerNumber": "195",
+    "name": "ORAMA KEHINDE",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f97",
+    "id": "258",
+    "customerNumber": "236",
+    "name": "opeyemi Alade",
+    "cashBalance": 41000,
+    "balance": 41000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f9a",
+    "id": "261",
+    "customerNumber": "240",
+    "name": "Faruq Sawmail",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169e9f",
+    "id": "7",
+    "customerNumber": "013",
+    "name": "Adedipe Motunrayo Elizabeth",
+    "phone": "08032057940",
+    "email": "adedipe@gmail.com",
+    "cashBalance": 69000,
+    "balance": 69000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ea5",
+    "id": "13",
+    "customerNumber": "019",
+    "name": "Kafayatu ladeowo Ajoke",
+    "cashBalance": 3000,
+    "balance": -11000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eaa",
+    "id": "18",
+    "customerNumber": "062",
+    "name": "Ajibola Wasiu Ayinde",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eb0",
+    "id": "24",
+    "customerNumber": "068",
+    "name": "Oyedotun kemi Alade",
+    "cashBalance": 8000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eb1",
+    "id": "25",
+    "customerNumber": "069",
+    "name": "Akande Samuel Timeleyin",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eb2",
+    "id": "26",
+    "customerNumber": "073",
+    "name": "Yusuf Ridwan",
+    "phone": "08034234464",
+    "email": "ridwan@gmail.com",
+    "cashBalance": 53600,
+    "balance": 53600,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eb5",
+    "id": "29",
+    "customerNumber": "076",
+    "name": "Aunty Fumilayo",
+    "phone": "08056126486",
+    "email": "aunty@gmail.com",
+    "cashBalance": 37000,
+    "balance": 37000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eba",
+    "id": "34",
+    "customerNumber": "081",
+    "name": "Ishola Omotoyosi",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ebb",
+    "id": "35",
+    "customerNumber": "082",
+    "name": "Minaty Ishola Bolanle",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ec3",
+    "id": "43",
+    "customerNumber": "090",
+    "name": "Christiana Okoronaya Uche",
+    "phone": "08083033563",
+    "email": "christiana@gmail.com",
+    "cashBalance": 140000,
+    "balance": 140000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169edd",
+    "id": "70",
+    "customerNumber": "151",
+    "name": "Okuwobi Rasheed Adebayo",
+    "phone": "08161349565",
+    "email": "okuwobi@gmail.com",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ede",
+    "id": "71",
+    "customerNumber": "152",
+    "name": "Akeem Adisa Sahunwumi",
+    "cashBalance": 1000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169edf",
+    "id": "72",
+    "customerNumber": "154",
+    "name": "Okeoyaju Seran Marelus",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ee0",
+    "id": "73",
+    "customerNumber": "155",
+    "name": "Isioma Rita Oji",
+    "phone": "07013880852",
+    "email": "rita@gmail.com",
+    "cashBalance": 27000,
+    "balance": 27000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ee3",
+    "id": "76",
+    "customerNumber": "159",
+    "name": "Jumoke",
+    "cashBalance": 39000,
+    "balance": 39000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ee9",
+    "id": "82",
+    "customerNumber": "169",
+    "name": "Oluwatosin Adewunmi Kolawole",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eee",
+    "id": "87",
+    "customerNumber": "181",
+    "name": "Suraju Usman",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ef3",
+    "id": "92",
+    "customerNumber": "198",
+    "name": "Iron lady ketu",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ef9",
+    "id": "98",
+    "customerNumber": "212",
+    "name": "Damilola Ajoke",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169efe",
+    "id": "103",
+    "customerNumber": "219",
+    "name": "Mummy Rokiat",
+    "cashBalance": 34800,
+    "balance": 34800,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f00",
+    "id": "105",
+    "customerNumber": "222",
+    "name": "CHRISTIAN UDOCHUWKWU",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f04",
+    "id": "109",
+    "customerNumber": "229",
+    "name": "Ayemi Marian",
+    "cashBalance": 7000,
+    "balance": 7000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f05",
+    "id": "110",
+    "customerNumber": "230",
+    "name": "Mummy Hassan",
+    "cashBalance": 36500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f06",
+    "id": "111",
+    "customerNumber": "231",
+    "name": "Onyeka Dominio",
+    "cashBalance": 1000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f08",
+    "id": "113",
+    "customerNumber": "238",
+    "name": "Olawale Sure",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f0d",
+    "id": "118",
+    "customerNumber": "258",
+    "name": "Imisioluwa Ayomikun",
+    "phone": "09063199011",
+    "email": "imisiolula@gmail.com",
+    "cashBalance": 2000,
+    "balance": 2000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f10",
+    "id": "121",
+    "customerNumber": "261",
+    "name": "Vulganizer",
+    "phone": "07083865902",
+    "email": "vulganizer@gmail.com",
+    "cashBalance": 8000,
+    "balance": 8000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f11",
+    "id": "122",
+    "customerNumber": "263",
+    "name": "Mummy Michael",
+    "cashBalance": 11000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f16",
+    "id": "127",
+    "customerNumber": "275",
+    "name": "HASSAN MUAMADU",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f18",
+    "id": "129",
+    "customerNumber": "277",
+    "name": "RIDWAN OLA",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f1b",
+    "id": "132",
+    "customerNumber": "286",
+    "name": "OLUWOLE ANUOLUWA",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f1e",
+    "id": "135",
+    "customerNumber": "292",
+    "name": "ZAINAB KEMISOLA",
+    "phone": "08038890264",
+    "email": "kemi@gmail.com",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f29",
+    "id": "146",
+    "customerNumber": "009",
+    "name": "odunfuwa omolara oluwabumi",
+    "phone": "08111026696",
+    "email": "odunfuwa@gmail.com",
+    "cashBalance": 7000,
+    "balance": 7000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f2c",
+    "id": "149",
+    "customerNumber": "020",
+    "name": "Mariam Christianah",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f2d",
+    "id": "150",
+    "customerNumber": "021",
+    "name": "Idowu oyewole",
+    "phone": "08133004665",
+    "email": "idowuoyewole@gmail.com",
+    "cashBalance": 169000,
+    "balance": 169000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f35",
+    "id": "158",
+    "customerNumber": "030",
+    "name": "Favour Ikechi",
+    "cashBalance": 3400,
+    "balance": 3400,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f37",
+    "id": "160",
+    "customerNumber": "032",
+    "name": "Iya ebube",
+    "cashBalance": 17000,
+    "balance": 17000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f3a",
+    "id": "163",
+    "customerNumber": "035",
+    "name": "Awawu Usman",
+    "cashBalance": 33000,
+    "balance": 33000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f3e",
+    "id": "167",
+    "customerNumber": "039",
+    "name": "Mrs okemide balikis",
+    "phone": "08067411951",
+    "email": "okerinde@gmail.com",
+    "cashBalance": 13000,
+    "balance": 13000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f43",
+    "id": "172",
+    "customerNumber": "044",
+    "name": "Mr Abby mufutai",
+    "cashBalance": 900,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f44",
+    "id": "173",
+    "customerNumber": "045",
+    "name": "Mr moyosore",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f47",
+    "id": "176",
+    "customerNumber": "048",
+    "name": "Mrs osori Gloria",
+    "cashBalance": 5000,
+    "balance": 5000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f4b",
+    "id": "180",
+    "customerNumber": "053",
+    "name": "Ayomikun damilola Animasau",
+    "cashBalance": 3000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f4e",
+    "id": "183",
+    "customerNumber": "056",
+    "name": "Adeyemi Ayorinde Enoch",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f53",
+    "id": "188",
+    "customerNumber": "071",
+    "name": "opeyemi Funiture",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f55",
+    "id": "190",
+    "customerNumber": "094",
+    "name": "Isaac Matthew",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f57",
+    "id": "192",
+    "customerNumber": "098",
+    "name": "Sikiru Akanni",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f58",
+    "id": "193",
+    "customerNumber": "105",
+    "name": "Ade Funiture Ademola",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f59",
+    "id": "194",
+    "customerNumber": "106",
+    "name": "Imole Oriade",
+    "cashBalance": 19500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f63",
+    "id": "205",
+    "customerNumber": "127",
+    "name": "Saoaban owoyemi",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f68",
+    "id": "210",
+    "customerNumber": "136",
+    "name": "Okikiola Gideon",
+    "cashBalance": 1000,
+    "balance": 1000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f6a",
+    "id": "212",
+    "customerNumber": "138",
+    "name": "Adebiyi Tolani Omolola",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f70",
+    "id": "218",
+    "customerNumber": "144",
+    "name": "Dare Damilare",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f74",
+    "id": "222",
+    "customerNumber": "148",
+    "name": "Oke Oluwafemi Emmanual",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f7c",
+    "id": "231",
+    "customerNumber": "184",
+    "name": "Saka charles",
+    "phone": "08038641026",
+    "email": "saka@gmail.com",
+    "cashBalance": 56000,
+    "balance": 56000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f7e",
+    "id": "233",
+    "customerNumber": "186",
+    "name": "Saheed Animahaun",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f7f",
+    "id": "234",
+    "customerNumber": "187",
+    "name": "Uju Alemu",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f81",
+    "id": "236",
+    "customerNumber": "188",
+    "name": "Glory Orji",
+    "phone": "07072338522",
+    "email": "gloryorji32@gmail.com",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f87",
+    "id": "242",
+    "customerNumber": "196",
+    "name": "AYOMIDE OPEYEMI",
+    "cashBalance": 9200,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f89",
+    "id": "244",
+    "customerNumber": "200",
+    "name": "Subomi",
+    "cashBalance": 6500,
+    "balance": 6500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f8b",
+    "id": "246",
+    "customerNumber": "206",
+    "name": "Yemisi Idiat 0shifade",
+    "phone": "08062658254",
+    "email": "yemisi@gmail.com",
+    "cashBalance": 18000,
+    "balance": 18000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f8f",
+    "id": "250",
+    "customerNumber": "213",
+    "name": "Top1",
+    "phone": "0806 704 2973",
+    "email": "top1@gmail.com",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f90",
+    "id": "251",
+    "customerNumber": "220",
+    "name": "IYA FARIDAH",
+    "phone": "07078735718",
+    "email": "iya@gmail.com",
+    "cashBalance": 48000,
+    "balance": 48000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f93",
+    "id": "254",
+    "customerNumber": "225",
+    "name": "Lolade Waliu",
+    "phone": "08072885316",
+    "email": "lolade@gmail.com",
+    "cashBalance": 31000,
+    "balance": 31000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f9d",
+    "id": "264",
+    "customerNumber": "243",
+    "name": "Segun Sunday Odubanjo",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f9f",
+    "id": "266",
+    "customerNumber": "247",
+    "name": "Quayum korede Muslam",
+    "cashBalance": 4000,
+    "balance": 4000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fa4",
+    "id": "271",
+    "customerNumber": "255",
+    "name": "Yusuf Yusuf Ishola",
+    "cashBalance": 24000,
+    "balance": 24000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fa5",
+    "id": "272",
+    "customerNumber": "266",
+    "name": "Joseph Mency",
+    "cashBalance": 80500,
+    "balance": 80500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fa6",
+    "id": "273",
+    "customerNumber": "267",
+    "name": "Dayo Olugboge",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fa7",
+    "id": "274",
+    "customerNumber": "268",
+    "name": "Adele Obaniwo Femi",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fab",
+    "id": "278",
+    "customerNumber": "274",
+    "name": "AKINOLA",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fac",
+    "id": "279",
+    "customerNumber": "278",
+    "name": "KOLAWOLE QUAM",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fae",
+    "id": "281",
+    "customerNumber": "281",
+    "name": "IFEOLUWA OLUWATOBILOBA",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fb0",
+    "id": "283",
+    "customerNumber": "283",
+    "name": "DAVID OLAITAN OMOTAYO",
+    "cashBalance": 11000,
+    "balance": 11000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fb1",
+    "id": "284",
+    "customerNumber": "284",
+    "name": "ROKIBA BABATUNDE",
+    "cashBalance": 59500,
+    "balance": 59500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fb2",
+    "id": "285",
+    "customerNumber": "288",
+    "name": "HABEEB AWE",
+    "cashBalance": 3000,
+    "balance": 3000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fbb",
+    "id": "294",
+    "customerNumber": "302",
+    "name": "Aoma Idiris",
+    "phone": "09044066777",
+    "email": "aloma@gmail.com",
+    "cashBalance": 96000,
+    "balance": 96000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fbc",
+    "id": "295",
+    "customerNumber": "303",
+    "name": "Hauwa Yusuf",
+    "cashBalance": 17000,
+    "balance": 17000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fbf",
+    "id": "298",
+    "customerNumber": "306",
+    "name": "Segun Ojomo",
+    "cashBalance": 30500,
+    "balance": 30500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e170fbf",
+    "id": "299",
+    "customerNumber": "307",
+    "name": "Popoola",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e175fbf",
+    "id": "304",
+    "customerNumber": "313",
+    "name": "Adeyori Olujomoye",
+    "cashBalance": 73000,
+    "balance": 73000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e177fbf",
+    "id": "306",
+    "customerNumber": "317",
+    "name": "Olamiekun Olajide",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e180fbf",
+    "id": "309",
+    "customerNumber": "321",
+    "name": "Ade Oluwafemi",
+    "cashBalance": 3500,
+    "balance": 3500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e181fbf",
+    "id": "310",
+    "customerNumber": "322",
+    "name": "Adebiyi Christianah 2",
+    "cashBalance": 25500,
+    "balance": 25500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e185fbf",
+    "id": "314",
+    "customerNumber": "328",
+    "name": "Usman",
+    "cashBalance": 8500,
+    "balance": 8500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e188fbf",
+    "id": "317",
+    "customerNumber": "331",
+    "name": "Omowumi Israel",
+    "cashBalance": 3300,
+    "balance": 3300,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e191fbf",
+    "id": "320",
+    "customerNumber": "334",
+    "name": "Atanda Azeez",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e199fbf",
+    "id": "328",
+    "customerNumber": "256",
+    "name": "Eze Amos Ifediba",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e200fbf",
+    "id": "329",
+    "name": "Atunda bello",
+    "cashBalance": 14000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169e9a",
+    "id": "2",
+    "customerNumber": "002",
+    "name": "mum Temi",
+    "phone": "08059682546",
+    "email": "temi@gmail.com",
+    "cashBalance": 194000,
+    "balance": 194000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ea0",
+    "id": "8",
+    "customerNumber": "014",
+    "name": "Sanni Barakat Ashabi",
+    "cashBalance": 10000,
+    "balance": 10000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ea9",
+    "id": "17",
+    "customerNumber": "061",
+    "name": "Jawo Nurudeen",
+    "cashBalance": 14000,
+    "balance": 14000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eac",
+    "id": "20",
+    "customerNumber": "064",
+    "name": "Ajoke olawale",
+    "cashBalance": 110000,
+    "balance": 110000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ead",
+    "id": "21",
+    "customerNumber": "065",
+    "name": "komolafe Eniola Aduke",
+    "phone": "08161220984",
+    "email": "komolafe@gmail.com",
+    "cashBalance": 33999,
+    "balance": 33999,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eb3",
+    "id": "27",
+    "customerNumber": "074",
+    "name": "Afeez",
+    "phone": "0802277407",
+    "email": "afeez@gmail.com",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ebc",
+    "id": "36",
+    "customerNumber": "083",
+    "name": "Oseni Saidat Aramide",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ec0",
+    "id": "40",
+    "customerNumber": "087",
+    "name": "Segun Rotimi Ekunjimi",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ec6",
+    "id": "46",
+    "customerNumber": "095",
+    "name": "Rokiat kikelomo",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ed0",
+    "id": "56",
+    "customerNumber": "114",
+    "name": "Omo Clara",
+    "phone": "07061273266",
+    "email": "omo@gmail.com",
+    "cashBalance": 49200,
+    "balance": 49200,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ed2",
+    "id": "58",
+    "customerNumber": "117",
+    "name": "Abdullahi Oladimaji Ayomide",
+    "phone": "08083689425",
+    "email": "ayomide1@gmail.com",
+    "cashBalance": 2000,
+    "balance": 2000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ed3",
+    "id": "59",
+    "customerNumber": "118",
+    "name": "Iya Fatimoh",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ed4",
+    "id": "60",
+    "customerNumber": "119",
+    "name": "Oladimaji Tenifayo Kudirat",
+    "phone": "07089082838",
+    "email": "kudirat@gmail.com",
+    "cashBalance": 43000,
+    "balance": 43000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ed6",
+    "id": "62",
+    "customerNumber": "121",
+    "name": "Emaka Okereke Ezekiel",
+    "cashBalance": 42000,
+    "balance": 42000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ed7",
+    "id": "63",
+    "customerNumber": "123",
+    "name": "Omeh Thankgod",
+    "cashBalance": 9500,
+    "balance": 9500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ee2",
+    "id": "75",
+    "customerNumber": "157",
+    "name": "Olamide Fathia Oluwatoyin",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ee5",
+    "id": "78",
+    "customerNumber": "162",
+    "name": "Richard Ebete",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ee7",
+    "id": "80",
+    "customerNumber": "167",
+    "name": "Mr Sunday Chinnuo",
+    "cashBalance": 18000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ee8",
+    "id": "81",
+    "customerNumber": "168",
+    "name": "Mr Adewole Wale",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eeb",
+    "id": "84",
+    "customerNumber": "171",
+    "name": "Ogunbanjo Teniola Taiwo",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eef",
+    "id": "88",
+    "customerNumber": "190",
+    "name": "Aisha Balogun",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ef8",
+    "id": "97",
+    "customerNumber": "210",
+    "name": "Esther Samson Ibanga",
+    "phone": "09131506392",
+    "email": "esther1@gmail.com",
+    "cashBalance": 99000,
+    "balance": 99000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169efc",
+    "id": "101",
+    "customerNumber": "217",
+    "name": "Mrs Kemi",
+    "cashBalance": 15000,
+    "balance": 15000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f02",
+    "id": "107",
+    "customerNumber": "227",
+    "name": "Kareem Shachtat",
+    "cashBalance": 20000,
+    "balance": 20000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f1c",
+    "id": "133",
+    "customerNumber": "287",
+    "name": "MOTUNRAYO WAHAB",
+    "cashBalance": 500,
+    "balance": 500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f1f",
+    "id": "136",
+    "customerNumber": "293",
+    "name": "MUMMY USMAN",
+    "cashBalance": 7000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f22",
+    "id": "139",
+    "customerNumber": "308",
+    "name": "Segun Oguntona",
+    "phone": "09068518109",
+    "email": "segun1@gmail.com",
+    "cashBalance": 8000,
+    "balance": 8000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f23",
+    "id": "140",
+    "customerNumber": "315",
+    "name": "Anto Queen",
+    "cashBalance": 47000,
+    "balance": 47000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f25",
+    "id": "142",
+    "customerNumber": "323",
+    "name": "Mummy Boy",
+    "phone": "09046469032",
+    "email": "boys@gmail.com",
+    "cashBalance": 81000,
+    "balance": 81000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f2b",
+    "id": "148",
+    "customerNumber": "011",
+    "name": "Basirat Yusuf",
+    "cashBalance": 23000,
+    "balance": 23000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f38",
+    "id": "161",
+    "customerNumber": "033",
+    "name": "Ijeoma Eze",
+    "cashBalance": 15000,
+    "balance": 15000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f3b",
+    "id": "164",
+    "customerNumber": "036",
+    "name": "Mufutai Akanbi",
+    "cashBalance": 89000,
+    "balance": 89000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f3d",
+    "id": "166",
+    "customerNumber": "038",
+    "name": "Mahler Adetunj",
+    "phone": "09122075759",
+    "email": "adetinji@gmail.com",
+    "cashBalance": 35000,
+    "balance": 35000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f40",
+    "id": "169",
+    "customerNumber": "041",
+    "name": "Hashim ngl",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f41",
+    "id": "170",
+    "customerNumber": "042",
+    "name": "Lawal Adamu idris",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f42",
+    "id": "171",
+    "customerNumber": "043",
+    "name": "Grace oguntabeju bola",
+    "cashBalance": 10500,
+    "balance": 10500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f51",
+    "id": "186",
+    "customerNumber": "059",
+    "name": "Kemi Nurse",
+    "cashBalance": 15000,
+    "balance": 15000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f52",
+    "id": "187",
+    "customerNumber": "070",
+    "name": "opeyemi",
+    "cashBalance": 12000,
+    "balance": 12000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f54",
+    "id": "189",
+    "customerNumber": "072",
+    "name": "Olaniyi Tadhect Imole",
+    "cashBalance": 12000,
+    "balance": 12000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f5b",
+    "id": "197",
+    "customerNumber": "109",
+    "name": "Olaniyi Saheed",
+    "phone": "08039210656",
+    "email": "olaniyi@gmail.com",
+    "cashBalance": 19999,
+    "balance": 19999,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f5d",
+    "id": "199",
+    "customerNumber": "111",
+    "name": "Bright Monday Bobo",
+    "phone": "09016780220",
+    "email": "bright@gmail.com",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f60",
+    "id": "202",
+    "customerNumber": "125",
+    "name": "Kareem Ridwan",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f62",
+    "id": "204",
+    "customerNumber": "126",
+    "name": "Salawudeen Taiwo Hassan",
+    "cashBalance": 516000,
+    "balance": 516000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f67",
+    "id": "209",
+    "customerNumber": "135",
+    "name": "Mubarak Gbolauan",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f75",
+    "id": "223",
+    "customerNumber": "151",
+    "name": "Okuwoi Rasheed Adeayo",
+    "cashBalance": 29000,
+    "balance": 29000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f77",
+    "id": "225",
+    "customerNumber": "158",
+    "name": "Saheed Fayidat",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f79",
+    "id": "228",
+    "customerNumber": "163",
+    "name": "Femi Sunday",
+    "phone": "09124881563",
+    "email": "femi@gmail.com",
+    "cashBalance": 13000,
+    "balance": 13000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f7b",
+    "id": "230",
+    "customerNumber": "183",
+    "name": "Adebiyi Christianah",
+    "cashBalance": 13000,
+    "balance": 13000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f7d",
+    "id": "232",
+    "customerNumber": "185",
+    "name": "Alade Ademola",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f83",
+    "id": "238",
+    "customerNumber": "190",
+    "name": "AYISHA BALOGUN",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f88",
+    "id": "243",
+    "customerNumber": "199",
+    "name": "Azeez Ayomide Olamilekan",
+    "cashBalance": 1200,
+    "balance": 1200,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f8a",
+    "id": "245",
+    "customerNumber": "204",
+    "name": "Amira Taiwo Bidemi",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f8c",
+    "id": "247",
+    "customerNumber": "207",
+    "name": "Boluwatife Odumade",
+    "cashBalance": 45000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f8d",
+    "id": "248",
+    "customerNumber": "208",
+    "name": "Adewale Balogun",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f8e",
+    "id": "249",
+    "customerNumber": "211",
+    "name": "Dauda Adisa Alade",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f91",
+    "id": "252",
+    "customerNumber": "223",
+    "name": "IYA SHAKI Shaki",
+    "cashBalance": 34000,
+    "balance": 34000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f96",
+    "id": "257",
+    "customerNumber": "235",
+    "name": "Korede Hammed",
+    "cashBalance": 5400,
+    "balance": 5400,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f9b",
+    "id": "262",
+    "customerNumber": "241",
+    "name": "Idowu Oyewole",
+    "cashBalance": 74000,
+    "balance": 74000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f9c",
+    "id": "263",
+    "customerNumber": "242",
+    "name": "Toyeeb Muhammed",
+    "phone": "08178925983",
+    "email": "toyeeb@gmail.com",
+    "cashBalance": 32000,
+    "balance": 32000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fa0",
+    "id": "267",
+    "customerNumber": "249",
+    "name": "Kehinde Ijayeoba",
+    "cashBalance": 4000,
+    "balance": 4000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fa3",
+    "id": "270",
+    "customerNumber": "254",
+    "name": "Okewole Adeola ",
+    "phone": "08155718802",
+    "email": "undefinedoke@gmail.com",
+    "cashBalance": 500,
+    "balance": 500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fa9",
+    "id": "276",
+    "customerNumber": "270",
+    "name": "Aayomi Alex",
+    "cashBalance": 3000,
+    "balance": 3000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fad",
+    "id": "280",
+    "customerNumber": "279",
+    "name": "JEBA MUSURAT",
+    "cashBalance": 10000,
+    "balance": 10000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169faf",
+    "id": "282",
+    "customerNumber": "282",
+    "name": "SODIQ YAKUB",
+    "cashBalance": 2000,
+    "balance": 2000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169e9c",
+    "id": "4",
+    "customerNumber": "004",
+    "name": "Toyosi",
+    "cashBalance": 1700,
+    "balance": 1700,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ea2",
+    "id": "10",
+    "customerNumber": "016",
+    "name": "Rashidat Titilayo",
+    "phone": "08030679338",
+    "email": "rashidat@gmai.com",
+    "cashBalance": 90000,
+    "balance": 90000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ea3",
+    "id": "11",
+    "customerNumber": "017",
+    "name": "Tawa bola Bakare",
+    "phone": "07025019669",
+    "email": "tawa@gmai.com",
+    "cashBalance": 115000,
+    "balance": 115000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ea4",
+    "id": "12",
+    "customerNumber": "018",
+    "name": "Mrs oduwole Aisha",
+    "cashBalance": 16000,
+    "balance": 16000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ea7",
+    "id": "15",
+    "customerNumber": "052",
+    "name": "Taiwo muyinat oyenioun",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ea8",
+    "id": "16",
+    "customerNumber": "060",
+    "name": "Alabi Kafilat Opeyemi",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eb6",
+    "id": "30",
+    "customerNumber": "077",
+    "name": "Mum Sandra",
+    "cashBalance": 36000,
+    "balance": 36000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eb7",
+    "id": "31",
+    "customerNumber": "078",
+    "name": "Megodote Hannah",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eb8",
+    "id": "32",
+    "customerNumber": "079",
+    "name": "Adewunmi Ogunfarotee Esther",
+    "phone": "07082428839",
+    "email": "esther@gmail.com",
+    "cashBalance": 10500,
+    "balance": 10500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ebd",
+    "id": "37",
+    "customerNumber": "084",
+    "name": "Saka Tanawa Omotoyosi",
+    "cashBalance": 5500,
+    "balance": 5500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ec1",
+    "id": "41",
+    "customerNumber": "088",
+    "name": "Balogun Olanike Grace",
+    "phone": "09156028711",
+    "email": "balogun@gnail.com",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ec2",
+    "id": "42",
+    "customerNumber": "089",
+    "name": "AdeSegun Rofia Omowumi",
+    "cashBalance": 7000,
+    "balance": 7000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ec7",
+    "id": "47",
+    "customerNumber": "096",
+    "name": "Tunde ogunike Yaya",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eca",
+    "id": "50",
+    "customerNumber": "101",
+    "name": "Fatai Funke Motunrayo",
+    "phone": "08030752599",
+    "email": "fatai@gmail.com",
+    "cashBalance": 41500,
+    "balance": 41500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ecb",
+    "id": "51",
+    "customerNumber": "102",
+    "name": "Ayomikun Ebunoluwa oladotun",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ecc",
+    "id": "52",
+    "customerNumber": "103",
+    "name": "Eze Innocent Chiuzor",
+    "phone": "09034213462",
+    "email": "eze@gmail.com",
+    "cashBalance": 28000,
+    "balance": 28000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ece",
+    "id": "54",
+    "customerNumber": "112",
+    "name": "Bello Tawakalitu Adenike",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ed1",
+    "id": "57",
+    "customerNumber": "115",
+    "name": "ogechi igio",
+    "phone": "08115928504",
+    "email": "oge@gmsil.com",
+    "cashBalance": 17500,
+    "balance": 17500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ed8",
+    "id": "64",
+    "customerNumber": "127",
+    "name": "Saoban owoyemi",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ed9",
+    "id": "65",
+    "customerNumber": "130",
+    "name": "Taye Bilao Lohi",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eda",
+    "id": "66",
+    "customerNumber": "131",
+    "name": "Taiye Bilao Raye",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169edb",
+    "id": "67",
+    "customerNumber": "149",
+    "name": "Olaitan David Omotayo",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ee1",
+    "id": "74",
+    "customerNumber": "156",
+    "name": "Kolawole Titilayo Veronica",
+    "cashBalance": 6000,
+    "balance": 6000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ee6",
+    "id": "79",
+    "customerNumber": "164",
+    "name": "Nicodeanus Haruna",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eea",
+    "id": "83",
+    "customerNumber": "170",
+    "name": "Ogunbanjo Sujiade Kehinde",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169eec",
+    "id": "85",
+    "customerNumber": "172",
+    "name": "Emoruwa Imoleayo Andinting",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ef0",
+    "id": "89",
+    "customerNumber": "192",
+    "name": "yusuf kafayat lawal",
+    "cashBalance": 57000,
+    "balance": 57000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ef1",
+    "id": "90",
+    "customerNumber": "193",
+    "name": "mr BAYO USMAN",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ef2",
+    "id": "91",
+    "customerNumber": "197",
+    "name": "ABDULAHI QURXIM ADIGUN",
+    "phone": "08038347164",
+    "email": "adigun@gmail.com",
+    "cashBalance": 78000,
+    "balance": 78000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ef4",
+    "id": "93",
+    "customerNumber": "201",
+    "name": "Sunna Bakaso",
+    "phone": "09157449490",
+    "email": "undefined@gmail.com",
+    "cashBalance": 28500,
+    "balance": 28500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ef5",
+    "id": "94",
+    "customerNumber": "202",
+    "name": "Qudus Kubody",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ef6",
+    "id": "95",
+    "customerNumber": "203",
+    "name": "Ayolola Olaiya",
+    "cashBalance": 40000,
+    "balance": 40000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169ef7",
+    "id": "96",
+    "customerNumber": "205",
+    "name": "Mummy Twins",
+    "phone": "07066541100",
+    "email": "twins@gmail.com",
+    "cashBalance": 62000,
+    "balance": 62000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169efd",
+    "id": "102",
+    "customerNumber": "218",
+    "name": "Adedayo Adepalyo",
+    "phone": "08141676616",
+    "email": "adefayo@gmail.com",
+    "cashBalance": 15500,
+    "balance": 15500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f03",
+    "id": "108",
+    "customerNumber": "228",
+    "name": "Mr Ijba",
+    "phone": "09127733691",
+    "email": "ijoba@gmail.com",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f07",
+    "id": "112",
+    "customerNumber": "232",
+    "name": "Mr Yusuf",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f0c",
+    "id": "117",
+    "customerNumber": "257",
+    "name": "Mrs simiat . A",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f0f",
+    "id": "120",
+    "customerNumber": "260",
+    "name": "Hassan Adeshina",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f14",
+    "id": "125",
+    "customerNumber": "271",
+    "name": "Preciovs Joseph",
+    "cashBalance": 7800,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f1a",
+    "id": "131",
+    "customerNumber": "285",
+    "name": "AJAYI OLUWASEUN",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f26",
+    "id": "143",
+    "customerNumber": "327",
+    "name": "Mina",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f27",
+    "id": "144",
+    "customerNumber": "007",
+    "name": "Emih Iyimitioluwa paul",
+    "phone": "07034393250",
+    "email": "enih@gmail.com",
+    "cashBalance": 98000,
+    "balance": 98000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f2e",
+    "id": "151",
+    "customerNumber": "022",
+    "name": "Iya Toyin",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f30",
+    "id": "153",
+    "customerNumber": "025",
+    "name": "Muyideen Bakare",
+    "cashBalance": 6000,
+    "balance": 6000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f31",
+    "id": "154",
+    "customerNumber": "026",
+    "name": "Damilare Moses Akonji",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f34",
+    "id": "157",
+    "customerNumber": "029",
+    "name": "Biodun Adegboyega Iyanu",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f36",
+    "id": "159",
+    "customerNumber": "031",
+    "name": "Ebube ikechi",
+    "cashBalance": 5100,
+    "balance": 5100,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f45",
+    "id": "174",
+    "customerNumber": "046",
+    "name": "Mr Tunji limi",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f46",
+    "id": "175",
+    "customerNumber": "047",
+    "name": "Bright salifu prosper",
+    "phone": "08109863252",
+    "email": "bright1@gmail.com",
+    "cashBalance": 5000,
+    "balance": 5000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f48",
+    "id": "177",
+    "customerNumber": "049",
+    "name": "Oyekan ayishat folashade",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f49",
+    "id": "178",
+    "customerNumber": "050",
+    "name": "Tolani oyekan basirat",
+    "phone": "07013282117",
+    "email": "basirat@gmail.com",
+    "cashBalance": 29000,
+    "balance": 29000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f4a",
+    "id": "179",
+    "customerNumber": "051",
+    "name": "Adeyemo moradeke Ruka",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f4c",
+    "id": "181",
+    "customerNumber": "054",
+    "name": "Shaheed kolawole",
+    "cashBalance": 24000,
+    "balance": 24000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f4d",
+    "id": "182",
+    "customerNumber": "055",
+    "name": "Adeyemi Ayorinde Enoch",
+    "cashBalance": 14500,
+    "balance": 14500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f4f",
+    "id": "184",
+    "customerNumber": "057",
+    "name": "Reyanat yakubu",
+    "phone": "09044844267",
+    "email": "reyanat@gmail.com",
+    "cashBalance": 20000,
+    "balance": 20000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f50",
+    "id": "185",
+    "customerNumber": "058",
+    "name": "Ganiyat Selenke",
+    "phone": "08136269481",
+    "email": "ganiyat@gmail.com",
+    "cashBalance": 2000,
+    "balance": 2000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f5c",
+    "id": "198",
+    "customerNumber": "110",
+    "name": "Qudus Yakub",
+    "cashBalance": 13500,
+    "balance": 13500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f65",
+    "id": "207",
+    "customerNumber": "129",
+    "name": "Rotimi Kolawole Michael",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f66",
+    "id": "208",
+    "customerNumber": "132",
+    "name": "Ayelaowo Ayomide",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f69",
+    "id": "211",
+    "customerNumber": "137",
+    "name": "Okikiola Gideon",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f6b",
+    "id": "213",
+    "customerNumber": "139",
+    "name": "Sanui Ajoke Kafayat",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f6c",
+    "id": "214",
+    "customerNumber": "140",
+    "name": "Adam Jimoh",
+    "cashBalance": 12000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f6f",
+    "id": "217",
+    "customerNumber": "143",
+    "name": "Olamilekan Saheed Lekan",
+    "phone": "07044924686",
+    "email": "saheed@gmail.com",
+    "cashBalance": 5000,
+    "balance": 5000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f71",
+    "id": "219",
+    "customerNumber": "145",
+    "name": "Adedayo Aderibege",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fb9",
+    "id": "292",
+    "customerNumber": "300",
+    "name": "Tosin Adepoju",
+    "phone": "08060552857",
+    "email": "toin@gmail.com",
+    "cashBalance": 30500,
+    "balance": 30500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fbd",
+    "id": "296",
+    "customerNumber": "304",
+    "name": "Mary Ode",
+    "cashBalance": 1500,
+    "balance": 1500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e173fbf",
+    "id": "302",
+    "customerNumber": "311",
+    "name": "Soqudeek Abiodun",
+    "cashBalance": 28300,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e178fbf",
+    "id": "307",
+    "customerNumber": "318",
+    "name": "Memunot Enitan",
+    "phone": "07073765592",
+    "email": "enitan@gnail.com",
+    "cashBalance": 8000,
+    "balance": 8000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e182fbf",
+    "id": "311",
+    "customerNumber": "324",
+    "name": "Peace Omachi",
+    "phone": "08168393413",
+    "email": "alaomapeace78@gmail.com",
+    "cashBalance": 59000,
+    "balance": 59000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e190fbf",
+    "id": "319",
+    "customerNumber": "333",
+    "name": "Segun Olarewaju",
+    "phone": "08057828346",
+    "email": "segun@gmail.com",
+    "cashBalance": 8999,
+    "balance": 8999,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e192fbf",
+    "id": "321",
+    "customerNumber": "209",
+    "name": "John Ogbonnaya Akebisi",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e194fbf",
+    "id": "323",
+    "customerNumber": "216",
+    "name": "JUSUAL DANIEL",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e195fbf",
+    "id": "324",
+    "customerNumber": "165",
+    "name": "Adewole Sunday Ade",
+    "phone": "09049230465",
+    "email": "adewole@gmail.com",
+    "cashBalance": 40000,
+    "balance": 40000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e201fbf",
+    "id": "330",
+    "customerNumber": "116",
+    "name": "BOBO",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e203fbf",
+    "id": "332",
+    "customerNumber": "173",
+    "name": "Mr Adeolu Adebayo",
+    "cashBalance": 4000,
+    "balance": 4000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e204fbf",
+    "id": "333",
+    "customerNumber": "177",
+    "name": "Lawal Azeezat",
+    "cashBalance": 17000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e206fbf",
+    "id": "335",
+    "name": "Iya ibrahim",
+    "cashBalance": 29000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f76",
+    "id": "224",
+    "customerNumber": "153",
+    "name": "Lawal Remilekun Bukola",
+    "phone": "09156509276",
+    "email": "lawal@gmail.com",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f92",
+    "id": "253",
+    "customerNumber": "224",
+    "name": "Mrs Olayiya Saidat",
+    "phone": "09153281017",
+    "email": "olayiya@gmail.com",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f94",
+    "id": "255",
+    "customerNumber": "233",
+    "name": "Umaru Shewu",
+    "phone": "09031203255",
+    "email": "umaru@gmail.com",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f95",
+    "id": "256",
+    "customerNumber": "234",
+    "name": "Ayomide Isika",
+    "cashBalance": 1500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f98",
+    "id": "259",
+    "customerNumber": "237",
+    "name": "Kehinde Bello",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fa1",
+    "id": "268",
+    "customerNumber": "251",
+    "name": "Idowu Jame",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169faa",
+    "id": "277",
+    "customerNumber": "273",
+    "name": "Ike Dalinton",
+    "phone": "07080227172",
+    "email": "ik@gmai.com",
+    "cashBalance": 89000,
+    "balance": 89000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fb6",
+    "id": "289",
+    "customerNumber": "296",
+    "name": "Solomom",
+    "cashBalance": 2500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fb7",
+    "id": "290",
+    "customerNumber": "297",
+    "name": "Adebayo yomi",
+    "cashBalance": 7000,
+    "balance": 7000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fbe",
+    "id": "297",
+    "customerNumber": "305",
+    "name": "Bidemi Faleye",
+    "phone": "08134425930",
+    "email": "bidemi@gmail.com",
+    "cashBalance": 5500,
+    "balance": 5500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e171fbf",
+    "id": "300",
+    "customerNumber": "309",
+    "name": "Morgaji Ibrahim",
+    "cashBalance": 33000,
+    "balance": 33000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e172fbf",
+    "id": "301",
+    "customerNumber": "310",
+    "name": "Saheed Oawoye",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e176fbf",
+    "id": "305",
+    "customerNumber": "316",
+    "name": "Taiwo Oladipupo",
+    "phone": "08163367323",
+    "email": "oladipupo@gmail.com",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e187fbf",
+    "id": "316",
+    "customerNumber": "330",
+    "name": "Wasiu Ayomide",
+    "phone": "09115212014",
+    "email": "wasiu@gmail.com",
+    "cashBalance": 1000,
+    "balance": 1000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e189fbf",
+    "id": "318",
+    "customerNumber": "332",
+    "name": "Dami Adebiyi",
+    "phone": "07035465181",
+    "email": "dami@gmail.com",
+    "cashBalance": 23000,
+    "balance": 23000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e197fbf",
+    "id": "326",
+    "name": "muritala Ishola",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e202fbf",
+    "id": "331",
+    "customerNumber": "262",
+    "name": "Damilare Ridwan Adeoye",
+    "cashBalance": 36000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e205fbf",
+    "id": "334",
+    "customerNumber": "314",
+    "name": "Wasiat Jamiu",
+    "cashBalance": 1500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f99",
+    "id": "260",
+    "customerNumber": "239",
+    "name": "Selim Abiodun",
+    "cashBalance": 27000,
+    "balance": 27000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169f9e",
+    "id": "265",
+    "customerNumber": "244",
+    "name": "Yusuf Adam",
+    "cashBalance": 10000,
+    "balance": 10000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fa2",
+    "id": "269",
+    "customerNumber": "252",
+    "name": "Aminu Olariwapelumi",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fa8",
+    "id": "275",
+    "customerNumber": "269",
+    "name": "Yomi",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fb3",
+    "id": "286",
+    "customerNumber": "289",
+    "name": "AZEEZ",
+    "phone": "09112531062",
+    "email": "azeez@gmail.com",
+    "cashBalance": 170000,
+    "balance": 170000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fb4",
+    "id": "287",
+    "customerNumber": "291",
+    "name": "AUSTINE SALIFU",
+    "cashBalance": 5800,
+    "balance": 5800,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fb5",
+    "id": "288",
+    "customerNumber": "295",
+    "name": "yomide moses",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fb8",
+    "id": "291",
+    "customerNumber": "298",
+    "name": "Suliamon Aliamin",
+    "cashBalance": 5000,
+    "balance": 5000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e169fba",
+    "id": "293",
+    "customerNumber": "301",
+    "name": "Samuel Eje",
+    "phone": "09162942630",
+    "email": "eje@gmail.com",
+    "cashBalance": 59000,
+    "balance": 59000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e174fbf",
+    "id": "303",
+    "customerNumber": "312",
+    "name": "Taofeek Ayomide",
+    "cashBalance": 7000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e179fbf",
+    "id": "308",
+    "customerNumber": "319",
+    "name": "Temitope Busayo",
+    "phone": "07066322710",
+    "email": "temitope@gail.com",
+    "cashBalance": 49000,
+    "balance": 49000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e183fbf",
+    "id": "312",
+    "customerNumber": "325",
+    "name": "Adunfe Adeoa Toyin",
+    "phone": "09061693293",
+    "email": "aduni@gail.com",
+    "cashBalance": 11500,
+    "balance": 11500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e184fbf",
+    "id": "313",
+    "customerNumber": "326",
+    "name": "Mr Gaji",
+    "phone": "08023859074",
+    "email": "gaji@gmail.com",
+    "cashBalance": 14000,
+    "balance": 14000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e186fbf",
+    "id": "315",
+    "customerNumber": "329",
+    "name": "Bola Somsa",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e196fbf",
+    "id": "325",
+    "customerNumber": "091",
+    "name": "Olu omo amidele",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69d4ec8c386f2ef52e198fbf",
+    "id": "327",
+    "customerNumber": "253",
+    "name": "Ikenna Wisdom",
+    "phone": "08131806666",
+    "email": "ikenna@gmai.com",
+    "cashBalance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69f16d3cb5acaef85562d3cd",
+    "id": "CUST1777429820035474",
+    "customerNumber": "006",
+    "name": "Hikimat Hammend",
+    "phone": "09044932130",
+    "email": "hikimat@gmai.com",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69f179d39cee158d09edf536",
+    "id": "CUST1777433043007251",
+    "customerNumber": "104",
+    "name": "Omotolani Johnson",
+    "phone": "09157449490",
+    "email": "omotola@gmail.com",
+    "cashBalance": 1000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69f23153a279b21e58a91516",
+    "id": "CUST1777480019100682",
+    "customerNumber": "133",
+    "name": "Basirat Adeni",
+    "phone": "08143119687",
+    "email": "basira@gmail.com",
+    "cashBalance": 3500,
+    "balance": 3500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69f34fb817bd5685df445590",
+    "id": "CUST17775533355852",
+    "customerNumber": "134",
+    "name": "Mufutai omotunde",
+    "phone": "09024126633",
+    "email": "mufu@gmail.com",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69f6c82d1bc4134446c80a21",
+    "id": "CUST1777780780906876",
+    "customerNumber": "150",
+    "name": "Mujib Opeyemi",
+    "phone": "07073773920",
+    "email": "mujib@gmai.com",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69f6cf6b1bc4134446c80af0",
+    "id": "CUST1777782635020956",
+    "customerNumber": "166",
+    "name": "Peter John",
+    "phone": "08028516895",
+    "email": "peter@gmai.com",
+    "cashBalance": 14000,
+    "balance": 14000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69f72a52ca98fbd9c0933b04",
+    "id": "CUST177780590478635",
+    "customerNumber": "174",
+    "name": "Oluwatosin Yahaya",
+    "phone": "08131056617",
+    "email": "oluwatosin@gmai.com",
+    "cashBalance": 19000,
+    "balance": 19000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69f88f98641d84af9786927f",
+    "id": "CUST1777897367974863",
+    "customerNumber": "175",
+    "name": "Ikenna Wisdom",
+    "phone": "08131806666",
+    "email": "ikenna@gmail.com",
+    "cashBalance": 1000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69f9ce3a76ae8577ee3d806a",
+    "id": "CUST1777978937538633",
+    "customerNumber": "176",
+    "name": "Isiaq Abimbola Rukaya",
+    "phone": "07063491435",
+    "email": "rukaya@gmail.com",
+    "cashBalance": 13500,
+    "balance": 13500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69f9db0576ae8577ee3d81b7",
+    "id": "CUST17779822129530",
+    "customerNumber": "178",
+    "name": "mum Odun",
+    "phone": "07055017202",
+    "email": "odu@gmail.com",
+    "cashBalance": 14500,
+    "balance": 14500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69f9dbf476ae8577ee3d81dd",
+    "id": "CUST1777982452064722",
+    "customerNumber": "180",
+    "name": "mum Seun",
+    "phone": "09011583828",
+    "email": "mumseun@gmail.com",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69f9dcd176ae8577ee3d81fc",
+    "id": "CUST1777982672366845",
+    "customerNumber": "250",
+    "name": "Adebiyi Jimoh Oriyomi",
+    "phone": "08036964217",
+    "email": "adebiyi@gmail.com",
+    "cashBalance": 27000,
+    "balance": 27000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69fa3dd9cad7dbde0a72c101",
+    "id": "CUST1778007513002152",
+    "customerNumber": "335",
+    "name": "Ayomide Oluchesi",
+    "phone": "09031479786",
+    "email": "ayomide@gmail.com",
+    "cashBalance": 1000,
+    "balance": 1000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69fa3f17cad7dbde0a72c11d",
+    "id": "CUST1778007831125784",
+    "customerNumber": "336",
+    "name": "Isa Adebayo",
+    "phone": "08032162095",
+    "email": "isa@gmail.com",
+    "cashBalance": 6000,
+    "balance": 6000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "69fcd7253211fb715646c43e",
+    "id": "CUST177817782803521",
+    "customerNumber": "337",
+    "name": "Yoboro",
+    "phone": "09076574131",
+    "email": "yoboro@gmail.com",
+    "cashBalance": 8000,
+    "balance": 8000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a00e2788cdecd590eb9f700",
+    "id": "CUST1778442871997717",
+    "customerNumber": "338",
+    "name": "Oju Loveth",
+    "phone": "08038146796",
+    "email": "oju@gmail.com",
+    "cashBalance": 26000,
+    "balance": 26000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a00e3198cdecd590eb9f715",
+    "id": "CUST177844303306054",
+    "customerNumber": "339",
+    "name": "Atinuke Idowu",
+    "phone": "08142217765",
+    "email": "atinuke@gmail.com",
+    "cashBalance": 7000,
+    "balance": 7000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a02db42d7cdc601a8623444",
+    "id": "CUST1778572097003605",
+    "customerNumber": "340",
+    "name": "Test Customer",
+    "phone": "08072011614",
+    "email": "test@gmail.com",
+    "cashBalance": 500,
+    "balance": 500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a040724d8e8db2148c685de",
+    "id": "CUST1778648867198457",
+    "customerNumber": "341",
+    "name": "Muoghau Jude",
+    "phone": "08023738958",
+    "email": "jude@gmail.com",
+    "cashBalance": 45000.9,
+    "balance": 45000.9,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a047292ed17cbb59e87be26",
+    "id": "CUST1778676369223732",
+    "customerNumber": "342",
+    "name": "Obalaja Kehinde Kazeem",
+    "phone": "08187091157",
+    "email": "kazeem@gmail.com",
+    "cashBalance": 10000,
+    "balance": 10000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a05960ce25793489b122f0c",
+    "id": "CUST1778750987426337",
+    "customerNumber": "343",
+    "name": "Muoghau Jude 2",
+    "phone": "09057956729",
+    "email": "jude2@gmail.com",
+    "cashBalance": 2000,
+    "balance": 2000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a0d63a70b5191099893e073",
+    "id": "CUST1779262374840853",
+    "customerNumber": "344",
+    "name": "Omolola Selim",
+    "phone": "07018833265",
+    "email": "selim@gmail.com",
+    "cashBalance": 46000,
+    "balance": 46000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a0f04db1bd8008cc697cd85",
+    "id": "CUST1779369176781738",
+    "customerNumber": "345",
+    "name": "Gbenga Owoyale",
+    "phone": "08132345679",
+    "email": "gbenga@gmail.com",
+    "cashBalance": 6500,
+    "balance": 6500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a1432572f6a3eba44a59890",
+    "id": "CUST1779708501933748",
+    "customerNumber": "346",
+    "name": "Adeolu Adebayo Oluwaseun",
+    "phone": "08164147737",
+    "email": "adeolu@gmai.com",
+    "cashBalance": 85000,
+    "balance": 85000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a15939042b215c53ef6d782",
+    "id": "CUST1779798927054565",
+    "customerNumber": "347",
+    "name": "Omolara",
+    "phone": "08055667103",
+    "email": "omolara@gmail.com",
+    "cashBalance": 118000,
+    "balance": 118000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a15944142b215c53ef6d79f",
+    "id": "CUST1779799104704717",
+    "customerNumber": "348",
+    "name": "Oluwatobi Famoroti Ayobami",
+    "phone": "08063643247",
+    "email": "ayobami@gmail.com",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a1e8d562835841688ede2f0",
+    "id": "CUST1780387157928927",
+    "customerNumber": "349",
+    "name": "Ifayemi Amosun",
+    "phone": "08084069350",
+    "email": "ifayemi@gmail.com",
+    "cashBalance": 29000,
+    "balance": 29000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a1e8dcf2835841688ede352",
+    "id": "CUST1780387278595291",
+    "customerNumber": "350",
+    "name": "Mutiu Esho",
+    "phone": "08062405597",
+    "email": "mutiu@gmail.com",
+    "cashBalance": 19000,
+    "balance": 19000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a1e9a3b2835841688ede5ac",
+    "id": "CUST1780390458600980",
+    "customerNumber": "351",
+    "name": "Tiyamiu Kazeem Abey",
+    "phone": "07056770477",
+    "email": "abey@gmail.com",
+    "cashBalance": 13500,
+    "balance": 13500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a1ed0c7f83f43314bdebb34",
+    "id": "CUST1780404423022527",
+    "customerNumber": "352",
+    "name": "Omotosho Sodayat",
+    "phone": "08024951911",
+    "email": "sodayat@gmail.com",
+    "cashBalance": 4000,
+    "balance": 4000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a202622da18d461979c5824",
+    "id": "CUST1780491809268994",
+    "customerNumber": "353",
+    "name": "Elewedu nurse",
+    "phone": "08136512353",
+    "email": "nurse@gmail.com",
+    "cashBalance": 2600,
+    "balance": 2600,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a202671da18d461979c582c",
+    "id": "CUST1780491888710479",
+    "customerNumber": "354",
+    "name": "Olamide Eniola",
+    "phone": "08151612307",
+    "email": "olamide@gmail.com",
+    "cashBalance": 24000,
+    "balance": 24000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a2026d1da18d461979c5834",
+    "id": "CUST1780491984933950",
+    "customerNumber": "355",
+    "name": "Omowunmi Sulaimon",
+    "phone": "08132611795",
+    "email": "omowumi@gmail.com",
+    "cashBalance": 21500,
+    "balance": 21500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a21768e939baad63ea578f6",
+    "id": "CUST1780577932705707",
+    "customerNumber": "356",
+    "name": "Rafiu Idris",
+    "phone": "07072657619",
+    "email": "idris@gmail.com",
+    "cashBalance": 28000,
+    "balance": 28000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a217708939baad63ea57902",
+    "id": "CUST1780578055885864",
+    "customerNumber": "357",
+    "name": "Adebemipe Solaimon",
+    "phone": "09026312425",
+    "email": "solaimon@gmail.com",
+    "cashBalance": 12500,
+    "balance": 12500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a217782939baad63ea5790e",
+    "id": "CUST1780578177780398",
+    "customerNumber": "358",
+    "name": "Famoroti Emmanuel",
+    "phone": "08063643246",
+    "email": "emma@gmail.com",
+    "cashBalance": 7000,
+    "balance": 7000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a22ca3d15016333492f1308",
+    "id": "CUST1780664892467633",
+    "customerNumber": "359",
+    "name": "Dolapo French",
+    "phone": "09011009934",
+    "email": "french@gmail.com",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a27dca0233fed249a31641e",
+    "id": "CUST1780997278885615",
+    "customerNumber": "360",
+    "name": "Bamigboye Bunmi",
+    "phone": "08038397135",
+    "email": "bunmi@gmail.com",
+    "cashBalance": 17500,
+    "balance": 17500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a27dca1233fed249a316422",
+    "id": "CUST1780997279468697",
+    "customerNumber": "361",
+    "name": "maliq Adebiyi",
+    "phone": "09124213913",
+    "email": "maliq@gmail.com",
+    "cashBalance": 2000,
+    "balance": 2000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a27dcff233fed249a31642c",
+    "id": "CUST1780997374366920",
+    "customerNumber": "362",
+    "name": "Faith Uche",
+    "phone": "07064906555",
+    "email": "faith@gmail.com",
+    "cashBalance": 32500,
+    "balance": 32500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a296064e597d17ee8e2f1d4",
+    "id": "CUST1781096547920415",
+    "customerNumber": "363",
+    "name": "Tejumade",
+    "phone": "08085211290",
+    "email": "tejumade@gmail.com",
+    "cashBalance": 14000,
+    "balance": 14000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a32a5c6ce6119377bc00251",
+    "id": "CUST1781704133477477",
+    "customerNumber": "364",
+    "name": "IYATEA",
+    "phone": "08023606335",
+    "email": "iyatea@gmail.com",
+    "cashBalance": 11500,
+    "balance": 11500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a32a8d5ce6119377bc0029c",
+    "id": "CUST1781704916633996",
+    "customerNumber": "365",
+    "name": "OMOSHALEWA",
+    "phone": "09162450866",
+    "email": "omoshalewa@gmail.c0m",
+    "cashBalance": 1000,
+    "balance": 1000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a3a0b46834186d204586694",
+    "id": "CUST1782188869455466",
+    "customerNumber": "366",
+    "name": "Chidima",
+    "phone": "09011994925",
+    "email": "chidima@gmail.com",
+    "cashBalance": 7000,
+    "balance": 7000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a3a1964834186d204586ab3",
+    "id": "CUST1782192483801367",
+    "customerNumber": "367",
+    "name": "Basirat",
+    "phone": "08086113085",
+    "email": "basirat@gmail.com",
+    "cashBalance": 500,
+    "balance": 500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a3a1c2a834186d204586b6c",
+    "id": "CUST1782193193318374",
+    "customerNumber": "368",
+    "name": "Ifeanyi proper",
+    "phone": "09122141474",
+    "email": "ifeanyi6547@gmail.com",
+    "cashBalance": 1000,
+    "balance": 1000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a3cfbfbe1a7167b55020fc9",
+    "id": "CUST1782381562250325",
+    "customerNumber": "369",
+    "name": "Anu Fowora",
+    "phone": "08033676644",
+    "email": "anu@gmail.com",
+    "cashBalance": 1000,
+    "balance": 1000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a3cfd76e1a7167b55021022",
+    "id": "CUST1782381941324665",
+    "customerNumber": "370",
+    "name": "Ayomide Saladeen",
+    "phone": "07012529983",
+    "email": "ayomidesalaudeen@gmail.com",
+    "cashBalance": 12000,
+    "balance": 12000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a3e4fd953cf1706cc9b7904",
+    "id": "CUST1782468568568398",
+    "customerNumber": "371",
+    "name": "Favour",
+    "phone": "07041183480",
+    "email": "favourute@gmail.com",
+    "cashBalance": 0,
+    "balance": 0,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a3e4fda53cf1706cc9b7906",
+    "id": "CUST1782468568628843",
+    "customerNumber": "371",
+    "name": "Favour",
+    "phone": "07041183480",
+    "email": "favourute@gmail.com",
+    "cashBalance": 2000,
+    "balance": 2000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a41579ebd672bf5dd2c5b5a",
+    "id": "CUST178266716552923",
+    "customerNumber": "372",
+    "name": "Mr Solomon",
+    "phone": "07035046043",
+    "email": "solomon@gmail.com",
+    "cashBalance": 16000,
+    "balance": 16000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a428d210a861efd80d5c7e5",
+    "id": "CUST1782746400390392",
+    "customerNumber": "373",
+    "name": "Riliwan popoola",
+    "phone": "09023402323",
+    "email": "riliwan@gmail.com",
+    "cashBalance": 3000,
+    "balance": 3000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a450cb879e0deb2c22e9acd",
+    "id": "CUST1782910134899689",
+    "customerNumber": "374",
+    "name": "Mrs Bunmi",
+    "phone": "08119929687",
+    "email": "bunmi342@gmail.com",
+    "cashBalance": 12500,
+    "balance": 12500,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a4842243b668db09b6bbc15",
+    "id": "CUST1783120419857880",
+    "customerNumber": "375",
+    "name": "Kayode Oni",
+    "phone": "08024532617",
+    "email": "oni@gmai.com",
+    "cashBalance": 6000,
+    "balance": 6000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a4842ba3b668db09b6bbc42",
+    "id": "CUST1783120569283665",
+    "customerNumber": "376",
+    "name": "Ayomide Oladele",
+    "phone": "08139585888",
+    "email": "ayomide0ladele@gmail.com",
+    "cashBalance": 3000,
+    "balance": 3000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a4ca9acc3ac10a05e85566d",
+    "id": "CUST1783409066886487",
+    "customerNumber": "377",
+    "name": "Mama nylon",
+    "phone": "08130216097",
+    "email": "mama@gmail.com",
+    "cashBalance": 8000,
+    "balance": 8000,
+    "loanBalance": 0
+  },
+  {
+    "_id": "6a4f2ce90d415839834d737c",
+    "id": "CUST1783573736607439",
+    "customerNumber": "378",
+    "name": "Ifeoluwa Hojadiji",
+    "phone": "07084701488",
+    "email": "ife@gmail.com",
+    "cashBalance": 500,
+    "balance": 500,
+    "loanBalance": 0
+  }
+]
