@@ -2,58 +2,98 @@ const mongoose = require("mongoose");
 
 const customerSchema = new mongoose.Schema(
   {
-    id: { type: String, unique: true },
-    customerNumber: { type: String, unique: true },
-    name: { type: String, required: true },
-    email: { type: String },
-    phone: { type: String },
-    address: { type: String },
+    id: {
+      type: String,
+      required: true,
+      unique: true,
+      immutable: true,
+      trim: true,
+    },
+
+    // Kept for backward compatibility with older controller payloads.
+    customerId: { type: String, default: null, index: true },
+
+    customerNumber: {
+      type: String,
+      required: true,
+      unique: true,
+      immutable: true,
+      trim: true,
+    },
+
+    name: { type: String, required: true, trim: true },
+    email: {
+      type: String,
+      default: "",
+      trim: true,
+      lowercase: true,
+    },
+    phone: { type: String, default: "", trim: true },
+    address: { type: String, default: "", trim: true },
 
     // BALANCE TRACKING
-    cashBalance: { type: Number, default: 0 }, // Can go negative with overdraft
-    balance: { type: Number, default: 0 }, // Alias for cashBalance
-    loanBalance: { type: Number, default: 0 }, // Outstanding regular loan amount
-    totalLoanAmount: { type: Number, default: 0 }, // Total loans taken
-    totalInterestAccrued: { type: Number, default: 0 }, // Total interest on loans
+    cashBalance: { type: Number, default: 0 },
 
-    // OVERDRAFT TRACKING
+    // Kept temporarily because the current frontend/backend still reads it.
+    // Every balance-changing operation must update it with cashBalance.
+    balance: { type: Number, default: 0 },
+
+    loanBalance: { type: Number, default: 0, min: 0 },
+    totalLoanAmount: { type: Number, default: 0, min: 0 },
+    totalInterestAccrued: { type: Number, default: 0, min: 0 },
+    totalRepaid: { type: Number, default: 0, min: 0 },
+
+    // TRANSACTION SUMMARY FIELDS USED BY THE CONTROLLERS
+    totalTransactions: { type: Number, default: 0, min: 0 },
+    totalDeposits: { type: Number, default: 0, min: 0 },
+    totalWithdrawals: { type: Number, default: 0, min: 0 },
+    totalChargesPaid: { type: Number, default: 0, min: 0 },
+
+    // LOAN / OVERDRAFT QUICK REFERENCES
     hasActiveOverdraft: { type: Boolean, default: false },
-    activeLoanId: { type: String, default: null }, // Can be loan or overdraft ID
+    activeLoanId: { type: String, default: null },
     hasActiveLoan: { type: Boolean, default: false },
 
-    // For quick reference
-    status: { type: String, enum: ["active", "inactive"], default: "active" },
-
-    // Metadata
-    addedBy: {
-      staffId: { type: String },
-      staffName: { type: String },
-      staffEmail: { type: String },
+    status: {
+      type: String,
+      enum: ["active", "inactive"],
+      default: "active",
     },
+
+    addedBy: {
+      staffId: { type: String, default: null },
+      staffName: { type: String, default: null },
+      staffEmail: { type: String, default: null },
+    },
+
     joined: { type: Date, default: Date.now },
   },
-  { timestamps: true },
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  },
 );
 
-// Virtual for total balance (cash only - loans not included)
 customerSchema.virtual("availableBalance").get(function () {
-  return this.cashBalance; // Loans are NOT available for withdrawal
+  return Number(this.cashBalance || 0);
 });
 
-// Virtual for net worth (cash minus loans)
 customerSchema.virtual("netWorth").get(function () {
-  return this.cashBalance - this.loanBalance;
+  return Number(this.cashBalance || 0) - Number(this.loanBalance || 0);
 });
 
-// Virtual to check if balance is negative (overdraft active)
 customerSchema.virtual("isNegativeBalance").get(function () {
-  return this.cashBalance < 0;
+  return Number(this.cashBalance || 0) < 0;
 });
 
-// Virtual for overdraft amount used
 customerSchema.virtual("overdraftAmountUsed").get(function () {
-  return this.cashBalance < 0 ? Math.abs(this.cashBalance) : 0;
+  const balance = Number(this.cashBalance || 0);
+  return balance < 0 ? Math.abs(balance) : 0;
 });
+
+customerSchema.index({ status: 1, createdAt: -1 });
+customerSchema.index({ "addedBy.staffId": 1, createdAt: -1 });
 
 module.exports =
   mongoose.models.Customer ||

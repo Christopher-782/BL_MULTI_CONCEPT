@@ -7,6 +7,67 @@ const mongoose = require("mongoose");
 
 const DEBUG = process.env.NODE_ENV !== "production";
 const customerCache = new Map();
+const QUICK_TRANSACTION_ROLES = new Set(["admin", "staff"]);
+const REVENUE_TRANSACTION_TYPES = new Set([
+  "interest_revenue",
+  "overdraft_charges_revenue",
+]);
+
+class TransactionError extends Error {
+  constructor(message, statusCode = 400, details = undefined) {
+    super(message);
+    this.name = "TransactionError";
+    this.statusCode = statusCode;
+    this.details = details;
+  }
+}
+
+function calculateTransactionAmounts(type, amount, charges = 0) {
+  const numericAmount = Number(amount);
+  const numericCharges = Number(charges);
+
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+    throw new TransactionError(
+      "Transaction amount must be greater than zero",
+      400,
+    );
+  }
+
+  if (!Number.isFinite(numericCharges) || numericCharges < 0) {
+    throw new TransactionError("Transaction charges cannot be negative", 400);
+  }
+
+  if (type === "deposit") {
+    const netAmount = numericAmount - numericCharges;
+
+    if (netAmount < 0) {
+      throw new TransactionError(
+        "Deposit charges cannot exceed the deposit amount",
+        400,
+      );
+    }
+
+    return {
+      amount: numericAmount,
+      charges: numericCharges,
+      netAmount,
+      balanceDelta: netAmount,
+    };
+  }
+
+  if (type === "withdrawal") {
+    const netAmount = numericAmount + numericCharges;
+
+    return {
+      amount: numericAmount,
+      charges: numericCharges,
+      netAmount,
+      balanceDelta: -netAmount,
+    };
+  }
+
+  throw new TransactionError(`Unsupported transaction type: ${type}`, 400);
+}
 
 function generateTransactionId(prefix = "TXN") {
   return `${prefix}${Date.now()}${Math.random()
@@ -31,16 +92,50 @@ function getPersonName(value, fallback = "Admin") {
   return fallback;
 }
 
+function getRequestActor(req, fallbackName = "System") {
+  const user = req.user || {};
+  const body = req.body || {};
+
+  return {
+    id:
+      user.id ||
+      user._id?.toString?.() ||
+      body.requestedById ||
+      body.staffId ||
+      null,
+    name:
+      user.name ||
+      user.staffName ||
+      getPersonName(body.approvedBy, "") ||
+      getPersonName(body.voidedBy, "") ||
+      body.requestedBy ||
+      body.staffName ||
+      fallbackName,
+    role: String(user.role || "").toLowerCase(),
+  };
+}
+
 function getCustomerUpdateQuery(customer) {
   if (customer?._id) return { _id: customer._id };
   if (customer?.id) return { id: customer.id };
-  if (customer?.customerNumber)
+  if (customer?.customerNumber) {
     return { customerNumber: customer.customerNumber };
-  throw new Error("Cannot build customer update query");
+  }
+  throw new TransactionError("Cannot build customer update query", 500);
 }
 
 function clearCustomerCache() {
   customerCache.clear();
+}
+
+function buildHttpErrorResponse(error) {
+  return {
+    statusCode: error.statusCode || 500,
+    payload: {
+      error: error.message || "Transaction processing failed",
+      ...(error.details ? { details: error.details } : {}),
+    },
+  };
 }
 
 async function findCustomerRobustly(identifier, options = false) {
@@ -58,7 +153,6 @@ async function findCustomerRobustly(identifier, options = false) {
 
   const cacheKey = identifier.toString();
 
-  // Never use cache inside balance-changing session operations.
   if (useCache && !session && customerCache.has(cacheKey)) {
     return customerCache.get(cacheKey);
   }
@@ -116,7 +210,7 @@ async function findCustomerRobustly(identifier, options = false) {
       if (useCache && !session) customerCache.set(cacheKey, customer);
       return customer;
     }
-  } catch (err) {
+  } catch (error) {
     // Ignore invalid ObjectId cast errors.
   }
 
@@ -127,613 +221,631 @@ async function findCustomerRobustly(identifier, options = false) {
   return null;
 }
 
-exports.createTransaction = async (req, res) => {
-  const session = await mongoose.startSession();
+function buildCustomerStatsIncrement(type, netAmount, charges, direction = 1) {
+  return {
+    totalTransactions: direction,
+    totalDeposits: type === "deposit" ? direction * netAmount : 0,
+    totalWithdrawals: type === "withdrawal" ? direction * netAmount : 0,
+    totalChargesPaid: direction * charges,
+  };
+}
 
-  try {
-    session.startTransaction();
+async function createOverdraftRevenueTransaction({
+  transaction,
+  customer,
+  loan,
+  chargesPortion,
+  approverName,
+  session,
+}) {
+  if (chargesPortion <= 0) return null;
 
-    const {
-      customerId,
-      customerName,
-      customerPhone,
-      type,
-      amount,
-      charges = 0,
-      description,
-      requestedBy,
-      requestedById,
-      staffName,
-      staffId,
-      status,
-      approvedBy,
-      approvedAt,
-      isQuickTransaction,
-    } = req.body;
+  const revenueTransaction = new Transaction({
+    id: generateTransactionId("REV"),
+    customerId: transaction.customerId,
+    customerName: customer.name,
+    customerPhone: customer.phone || "",
+    type: "overdraft_charges_revenue",
+    amount: chargesPortion,
+    charges: 0,
+    netAmount: chargesPortion,
+    balanceDelta: 0,
+    description: `Overdraft charges revenue from auto-debit - ${loan.id}`,
+    status: "approved",
+    approvedBy: approverName,
+    approvedAt: new Date(),
+    requestedBy: "System",
+    staffName: "System",
+    date: new Date(),
+    loanId: loan.id,
+    originalTransactionId: transaction.id,
+    isRevenue: true,
+    revenueType: "overdraft_charges",
+  });
 
-    if (!customerId) {
-      await session.abortTransaction();
-      return res.status(400).json({ error: "Missing customerId" });
-    }
+  await revenueTransaction.save({ session });
+  return revenueTransaction;
+}
 
-    const numAmount = Number(amount);
-    const numCharges = Number(charges || 0);
-    const numNetAmount =
-      type === "withdrawal" ? numAmount + numCharges : numAmount - numCharges;
-
-    if (!Number.isFinite(numAmount) || numAmount <= 0) {
-      await session.abortTransaction();
-      return res.status(400).json({ error: "Invalid amount" });
-    }
-
-    // 1. Find the customer using the robust helper
-    const customer = await findCustomerRobustly(customerId, {
-      session,
-      useCache: false,
-    });
-
-    if (!customer) {
-      await session.abortTransaction();
-      return res.status(404).json({ error: "Customer not found" });
-    }
-
-    // 2. CRITICAL FIX: Use the string 'id' for the update query.
-    // This is much more reliable than _id when working with lean objects and sessions.
-    const customerUpdateQuery = { id: customer.id };
-
-    const finalStaffName =
-      requestedBy || staffName || req.user?.name || "System";
-    const finalStaffId = requestedById || staffId || req.user?.id || null;
-    const shouldApprove = status === "approved" || isQuickTransaction === true;
-
-    let finalBalance = 0;
-
-    if (shouldApprove) {
-      if (!["deposit", "withdrawal"].includes(type)) {
-        await session.abortTransaction();
-        return res.status(400).json({ error: "Unsupported transaction type" });
-      }
-
-      const delta = type === "deposit" ? numNetAmount : -numNetAmount;
-
-      // Update customer balance
-      const updatedCustomer = await Customer.findOneAndUpdate(
-        customerUpdateQuery,
-        {
-          $inc: {
-            cashBalance: delta,
-            balance: delta,
-            totalTransactions: 1,
-            totalDeposits: type === "deposit" ? numNetAmount : 0,
-            totalWithdrawals: type === "withdrawal" ? numNetAmount : 0,
-            totalChargesPaid: numCharges,
-          },
-        },
-        { new: true, session },
-      );
-
-      if (!updatedCustomer) {
-        await session.abortTransaction();
-        return res
-          .status(400)
-          .json({ error: "Customer balance update failed" });
-      }
-      finalBalance = updatedCustomer.cashBalance;
-    }
-
-    // 3. Create the transaction record
-    const transaction = new Transaction({
-      id: generateTransactionId("TXN"),
-      customerId: customer.id, // Use the stable string ID
-      customerName: customerName || customer.name,
-      customerPhone: customerPhone || customer.phone || "",
-      type,
-      amount: numAmount,
-      charges: numCharges,
-      netAmount: numNetAmount,
-      description: description || "",
-      status: shouldApprove ? "approved" : "pending",
-      requestedBy: finalStaffName,
-      requestedById: finalStaffId,
-      staffName: finalStaffName,
-      staffId: finalStaffId,
-      requestedAt: new Date(),
-      date: new Date(),
-      approvedBy: shouldApprove ? finalStaffName : undefined,
-      approvedAt: shouldApprove ? new Date() : undefined,
-      finalBalance: shouldApprove ? finalBalance : undefined,
-    });
-
-    await transaction.save({ session });
-    await session.commitTransaction();
-
-    return res.status(201).json({
-      success: true,
-      transaction,
-      customer: {
-        id: customer.id,
-        name: customer.name,
-        newBalance: finalBalance,
-      },
-    });
-  } catch (error) {
-    await session.abortTransaction();
-    console.error("CREATE TRANSACTION ERROR:", error);
-    return res.status(500).json({ error: error.message });
-  } finally {
-    session.endSession();
+async function processDepositWithActiveOverdraft({
+  transaction,
+  customer,
+  amount,
+  charges,
+  netAmount,
+  approverName,
+  session,
+}) {
+  if (!customer.hasActiveOverdraft || !customer.activeLoanId) {
+    return null;
   }
-};
-exports.approveTransaction = async (req, res) => {
-  if (DEBUG) console.log("=== APPROVE TRANSACTION ===", req.params, req.body);
 
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  const loan = await Loan.findOne({
+    id: customer.activeLoanId,
+    type: "overdraft",
+    status: "active",
+  }).session(session);
 
-  try {
-    const { transactionId } = req.params;
-    const { approvedBy } = req.body;
-    const approverName = getPersonName(approvedBy, "Admin");
+  if (!loan) return null;
 
-    const transaction = await Transaction.findOne({
-      id: transactionId,
-    }).session(session);
+  const outstanding = toNumber(loan.outstandingBalance ?? loan.totalPayable);
+  if (outstanding <= 0) return null;
 
-    if (!transaction) {
-      await session.abortTransaction();
-      return res.status(404).json({ error: "Transaction not found" });
-    }
+  const repaymentAmount = Math.min(netAmount, outstanding);
+  const remainingForCustomer = netAmount - repaymentAmount;
+  const remainingPrincipal = Math.max(
+    0,
+    toNumber(loan.amount) - toNumber(loan.principalRepaidToDate),
+  );
+  const principalPortion = Math.min(repaymentAmount, remainingPrincipal);
+  const chargesPortion = repaymentAmount - principalPortion;
 
-    if (transaction.status !== "pending") {
-      await session.abortTransaction();
-      return res.status(400).json({ error: "Transaction already processed" });
-    }
+  loan.amountRepaid = toNumber(loan.amountRepaid) + repaymentAmount;
+  loan.outstandingBalance = Math.max(0, outstanding - repaymentAmount);
+  loan.principalRepaidToDate =
+    toNumber(loan.principalRepaidToDate) + principalPortion;
+  loan.chargesPaidToDate = toNumber(loan.chargesPaidToDate) + chargesPortion;
+  loan.chargesRevenueRecorded =
+    toNumber(loan.chargesRevenueRecorded) + chargesPortion;
 
-    const customer = await findCustomerRobustly(transaction.customerId, {
-      session,
-      useCache: false,
-    });
+  if (!Array.isArray(loan.repayments)) loan.repayments = [];
+  if (!loan.repayments[0]) loan.repayments.push({});
 
-    if (!customer) {
-      await session.abortTransaction();
-      return res.status(404).json({ error: "Customer not found" });
-    }
+  loan.repayments[0].paidAmount =
+    toNumber(loan.repayments[0].paidAmount) + repaymentAmount;
+  loan.repayments[0].principalPortion =
+    toNumber(loan.repayments[0].principalPortion) + principalPortion;
+  loan.repayments[0].chargesPortion =
+    toNumber(loan.repayments[0].chargesPortion) + chargesPortion;
+  loan.repayments[0].paidDate = new Date();
+  loan.repayments[0].paidBy = approverName;
 
-    const amount = toNumber(transaction.amount);
-    const charges = toNumber(transaction.charges);
-    const netAmount = amount - charges;
+  const isFullyPaid =
+    loan.outstandingBalance <= 0 ||
+    toNumber(loan.amountRepaid) >= toNumber(loan.totalPayable);
 
-    if (amount <= 0) {
-      await session.abortTransaction();
-      return res.status(400).json({ error: "Invalid transaction amount" });
-    }
+  if (isFullyPaid) {
+    loan.status = "completed";
+    loan.completedAt = new Date();
+    loan.outstandingBalance = 0;
+    loan.outstandingPrincipal = 0;
+    loan.outstandingCharges = 0;
+    loan.repayments[0].status = "paid";
+  } else {
+    loan.outstandingPrincipal = Math.max(
+      0,
+      toNumber(loan.amount) - toNumber(loan.principalRepaidToDate),
+    );
+    loan.outstandingCharges = Math.max(
+      0,
+      toNumber(loan.processingCharges) - toNumber(loan.chargesPaidToDate),
+    );
+  }
 
-    if (charges < 0 || netAmount < 0) {
-      await session.abortTransaction();
-      return res.status(400).json({ error: "Invalid transaction charges" });
+  loan.markModified("repayments");
+  await loan.save({ session });
+
+  // Preserve the existing project behaviour for legacy negative balances.
+  const oldBalance = getBalance(customer);
+  const customerBalanceDelta =
+    oldBalance < 0 ? netAmount : remainingForCustomer;
+
+  const customerUpdate = {
+    $inc: {
+      cashBalance: customerBalanceDelta,
+      balance: customerBalanceDelta,
+      ...buildCustomerStatsIncrement("deposit", netAmount, charges),
+    },
+  };
+
+  if (isFullyPaid) {
+    customerUpdate.$set = {
+      hasActiveOverdraft: false,
+      activeLoanId: null,
+      hasActiveLoan: false,
+    };
+  }
+
+  const updatedCustomer = await Customer.findOneAndUpdate(
+    getCustomerUpdateQuery(customer),
+    customerUpdate,
+    { new: true, session },
+  ).lean();
+
+  if (!updatedCustomer) {
+    throw new TransactionError("Customer update failed", 400);
+  }
+
+  const newBalance = getBalance(updatedCustomer);
+
+  const repaymentTransaction = new Transaction({
+    id: generateTransactionId("TXN"),
+    customerId: transaction.customerId,
+    customerName: customer.name,
+    customerPhone: customer.phone || "",
+    type: "overdraft_repayment",
+    amount: repaymentAmount,
+    charges: 0,
+    principalPortion,
+    chargesPortion,
+    netAmount: repaymentAmount,
+    balanceDelta: 0,
+    description: `Auto-debit from deposit: Overdraft repayment (Principal: ₦${principalPortion.toLocaleString()}, Charges: ₦${chargesPortion.toLocaleString()})${
+      isFullyPaid ? " - FULLY CLEARED" : ""
+    }`,
+    status: "approved",
+    approvedBy: approverName,
+    approvedAt: new Date(),
+    requestedBy: "System",
+    staffName: "System",
+    date: new Date(),
+    loanId: loan.id,
+    originalTransactionId: transaction.id,
+    isAutoDebit: true,
+    finalBalance: newBalance,
+  });
+
+  await repaymentTransaction.save({ session });
+
+  await createOverdraftRevenueTransaction({
+    transaction,
+    customer,
+    loan,
+    chargesPortion,
+    approverName,
+    session,
+  });
+
+  transaction.autoDebitAmount = repaymentAmount;
+  transaction.overdraftCleared = isFullyPaid;
+  transaction.remainingAfterAutoDebit = remainingForCustomer;
+  transaction.principalPortion = principalPortion;
+  transaction.chargesPortion = chargesPortion;
+  transaction.loanId = loan.id;
+
+  return {
+    updatedCustomer,
+    newBalance,
+    balanceDelta: customerBalanceDelta,
+    overdraftResult: {
+      autoDebit: repaymentAmount,
+      remainingForCustomer,
+      overdraftCleared: isFullyPaid,
+      principalPortion,
+      chargesPortion,
+      outstandingBalance: toNumber(loan.outstandingBalance),
+      loanId: loan.id,
+    },
+    notification: customer.phone
+      ? {
+          kind: "overdraftDeposit",
+          phone: customer.phone,
+          customerName: customer.name,
+          amount,
+          repaymentAmount,
+          remainingForCustomer,
+          outstandingBalance: toNumber(loan.outstandingBalance),
+          isFullyPaid,
+        }
+      : null,
+  };
+}
+
+async function approveTransactionService({
+  transaction,
+  approverName,
+  session,
+}) {
+  if (!transaction) {
+    throw new TransactionError("Transaction not found", 404);
+  }
+
+  if (transaction.status !== "pending") {
+    throw new TransactionError("Transaction already processed", 409);
+  }
+
+  if (REVENUE_TRANSACTION_TYPES.has(transaction.type)) {
+    const amount = toNumber(transaction.amount, NaN);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new TransactionError("Invalid revenue transaction amount", 400);
     }
 
     transaction.amount = amount;
-    transaction.charges = charges;
-    transaction.netAmount = netAmount;
+    transaction.charges = 0;
+    transaction.netAmount = amount;
+    transaction.balanceDelta = 0;
+    transaction.status = "approved";
+    transaction.approvedBy = approverName;
+    transaction.approvedAt = new Date();
+    await transaction.save({ session });
 
-    let newBalance;
-    let overdraftResult = null;
+    return {
+      transaction,
+      customer: null,
+      newBalance: null,
+      overdraftResult: null,
+      notification: null,
+      message: "Revenue transaction approved",
+    };
+  }
 
-    if (
-      transaction.type === "overdraft_charges_revenue" ||
-      transaction.type === "interest_revenue"
-    ) {
-      transaction.status = "approved";
-      transaction.approvedBy = approverName;
-      transaction.approvedAt = new Date();
-      await transaction.save({ session });
+  if (!["deposit", "withdrawal"].includes(transaction.type)) {
+    throw new TransactionError(
+      `Invalid transaction type for approval: ${transaction.type}`,
+      400,
+    );
+  }
 
-      await session.commitTransaction();
+  const customer = await findCustomerRobustly(transaction.customerId, {
+    session,
+    useCache: false,
+  });
 
-      return res.json({
-        success: true,
-        message: "Revenue transaction approved",
-        transaction: {
-          id: transaction.id,
-          type: transaction.type,
-          status: "approved",
-        },
-      });
-    }
+  if (!customer) {
+    throw new TransactionError("Customer not found", 404);
+  }
 
-    if (!["deposit", "withdrawal"].includes(transaction.type)) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        error: `Invalid transaction type for approval: ${transaction.type}`,
-      });
-    }
+  const { amount, charges, netAmount, balanceDelta } =
+    calculateTransactionAmounts(
+      transaction.type,
+      transaction.amount,
+      transaction.charges,
+    );
 
-    const customerUpdateQuery = getCustomerUpdateQuery(customer);
+  transaction.amount = amount;
+  transaction.charges = charges;
+  transaction.netAmount = netAmount;
 
-    if (transaction.type === "deposit") {
-      const netDeposit = netAmount;
+  let updatedCustomer;
+  let newBalance;
+  let actualBalanceDelta = balanceDelta;
+  let overdraftResult = null;
+  let notification = null;
 
-      if (customer.hasActiveOverdraft && customer.activeLoanId) {
-        const loan = await Loan.findOne({ id: customer.activeLoanId }).session(
-          session,
-        );
+  if (transaction.type === "deposit") {
+    const overdraftProcessing = await processDepositWithActiveOverdraft({
+      transaction,
+      customer,
+      amount,
+      charges,
+      netAmount,
+      approverName,
+      session,
+    });
 
-        if (loan && loan.status === "active" && loan.type === "overdraft") {
-          const outstanding = toNumber(
-            loan.outstandingBalance ?? loan.totalPayable,
-          );
-
-          if (outstanding > 0) {
-            const repaymentAmount = Math.min(netDeposit, outstanding);
-            const remainingForCustomer = netDeposit - repaymentAmount;
-
-            const remainingPrincipal = Math.max(
-              0,
-              toNumber(loan.amount) - toNumber(loan.principalRepaidToDate),
-            );
-
-            const principalPortion = Math.min(
-              repaymentAmount,
-              remainingPrincipal,
-            );
-
-            const chargesPortion = repaymentAmount - principalPortion;
-
-            loan.amountRepaid = toNumber(loan.amountRepaid) + repaymentAmount;
-            loan.outstandingBalance = Math.max(
-              0,
-              outstanding - repaymentAmount,
-            );
-
-            loan.principalRepaidToDate =
-              toNumber(loan.principalRepaidToDate) + principalPortion;
-
-            loan.chargesPaidToDate =
-              toNumber(loan.chargesPaidToDate) + chargesPortion;
-
-            if (!Array.isArray(loan.repayments)) {
-              loan.repayments = [];
-            }
-
-            if (!loan.repayments[0]) {
-              loan.repayments.push({});
-            }
-
-            loan.repayments[0].paidAmount =
-              toNumber(loan.repayments[0].paidAmount) + repaymentAmount;
-
-            loan.repayments[0].principalPortion =
-              toNumber(loan.repayments[0].principalPortion) + principalPortion;
-
-            loan.repayments[0].chargesPortion =
-              toNumber(loan.repayments[0].chargesPortion) + chargesPortion;
-
-            loan.repayments[0].paidDate = new Date();
-            loan.repayments[0].paidBy = approverName;
-
-            let isFullyPaid = false;
-
-            if (
-              loan.outstandingBalance <= 0 ||
-              toNumber(loan.amountRepaid) >= toNumber(loan.totalPayable)
-            ) {
-              loan.status = "completed";
-              loan.completedAt = new Date();
-              loan.outstandingBalance = 0;
-              loan.outstandingPrincipal = 0;
-              loan.outstandingCharges = 0;
-              loan.repayments[0].status = "paid";
-              isFullyPaid = true;
-            } else {
-              loan.outstandingPrincipal = Math.max(
-                0,
-                toNumber(loan.amount) - toNumber(loan.principalRepaidToDate),
-              );
-
-              loan.outstandingCharges = Math.max(
-                0,
-                toNumber(loan.processingCharges) -
-                  toNumber(loan.chargesPaidToDate),
-              );
-            }
-
-            loan.markModified("repayments");
-            await loan.save({ session });
-
-            const oldBalance = getBalance(customer);
-
-            const balanceDelta =
-              oldBalance < 0 ? netDeposit : remainingForCustomer;
-
-            const customerUpdate = {
-              $inc: {
-                cashBalance: balanceDelta,
-                balance: balanceDelta,
-                totalTransactions: 1,
-                totalDeposits: netAmount,
-                totalWithdrawals: 0,
-                totalChargesPaid: charges,
-              },
-            };
-
-            if (isFullyPaid) {
-              customerUpdate.$set = {
-                hasActiveOverdraft: false,
-                activeLoanId: null,
-                hasActiveLoan: false,
-              };
-            }
-
-            const updatedCustomer = await Customer.findOneAndUpdate(
-              customerUpdateQuery,
-              customerUpdate,
-              { new: true, session },
-            ).lean();
-
-            if (!updatedCustomer) {
-              await session.abortTransaction();
-              return res.status(400).json({ error: "Customer update failed" });
-            }
-
-            newBalance = getBalance(updatedCustomer);
-
-            const now = Date.now();
-
-            const overdraftTxn = new Transaction({
-              id: `TXN${now}${Math.random().toString(36).substring(2, 6)}`,
-              customerId: transaction.customerId,
-              customerName: customer.name,
-              customerPhone: customer.phone || null,
-              type: "overdraft_repayment",
-              amount: repaymentAmount,
-              principalPortion,
-              chargesPortion,
-              netAmount: -repaymentAmount,
-              description: `Auto-debit from deposit: Overdraft repayment (Principal: ₦${principalPortion.toLocaleString()}, Charges: ₦${chargesPortion.toLocaleString()})${
-                isFullyPaid ? " - FULLY CLEARED" : ""
-              }`,
-              status: "approved",
-              approvedBy: approverName,
-              approvedAt: new Date(),
-              date: new Date(),
-              loanId: loan.id,
-              isAutoDebit: true,
-              finalBalance: newBalance,
-            });
-
-            await overdraftTxn.save({ session });
-
-            if (chargesPortion > 0) {
-              const alreadyRecorded = toNumber(loan.chargesRevenueRecorded);
-              const newRevenue = chargesPortion - alreadyRecorded;
-
-              if (newRevenue > 0) {
-                const revenueTxn = new Transaction({
-                  id: `REV${now}${Math.random().toString(36).substring(2, 6)}`,
-                  customerId: transaction.customerId,
-                  customerName: customer.name,
-                  type: "overdraft_charges_revenue",
-                  amount: newRevenue,
-                  charges: 0,
-                  netAmount: newRevenue,
-                  description: `Overdraft charges revenue from auto-debit - ${loan.id}`,
-                  status: "approved",
-                  approvedBy: "System",
-                  approvedAt: new Date(),
-                  date: new Date(),
-                  loanId: loan.id,
-                  isRevenue: true,
-                  revenueType: "overdraft_charges",
-                });
-
-                await revenueTxn.save({ session });
-
-                loan.chargesRevenueRecorded = alreadyRecorded + newRevenue;
-                await loan.save({ session });
-              }
-            }
-
-            if (charges > 0) {
-              const depositChargesRevenue = new Transaction({
-                id: `REV${now}${Math.random().toString(36).substring(2, 6)}`,
-                customerId: transaction.customerId,
-                customerName: customer.name,
-                type: "overdraft_charges_revenue",
-                amount: charges,
-                charges: 0,
-                netAmount: charges,
-                description: `Transaction charges from deposit - ${transaction.id}`,
-                status: "approved",
-                approvedBy: "System",
-                approvedAt: new Date(),
-                date: new Date(),
-                isRevenue: true,
-                revenueType: "transaction_charges",
-              });
-
-              await depositChargesRevenue.save({ session });
-            }
-
-            overdraftResult = {
-              autoDebit: repaymentAmount,
-              remainingForCustomer,
-              overdraftCleared: isFullyPaid,
-              principalPortion,
-              chargesPortion,
-            };
-
-            transaction.autoDebitAmount = repaymentAmount;
-            transaction.overdraftCleared = isFullyPaid;
-            transaction.remainingAfterAutoDebit = remainingForCustomer;
-            transaction.principalPortion = principalPortion;
-            transaction.chargesPortion = chargesPortion;
-
-            if (customer.phone) {
-              smsService
-                .sendSMS({
-                  to: customer.phone,
-                  message: `VaultFlow: Dear ${customer.name}, ₦${repaymentAmount.toLocaleString()} auto-debited from your ₦${amount.toLocaleString()} deposit for overdraft repayment. ${
-                    isFullyPaid ? "Overdraft FULLY CLEARED! " : ""
-                  }Outstanding: ₦${toNumber(
-                    loan.outstandingBalance,
-                  ).toLocaleString()}. Available: ₦${remainingForCustomer.toLocaleString()}.`,
-                })
-                .catch((e) => console.error("SMS failed:", e.message));
-            }
-          }
-        }
-      }
-
-      if (!overdraftResult) {
-        const updatedCustomer = await Customer.findOneAndUpdate(
-          customerUpdateQuery,
-          {
-            $inc: {
-              cashBalance: netAmount,
-              balance: netAmount,
-              totalTransactions: 1,
-              totalDeposits: netAmount,
-              totalWithdrawals: 0,
-              totalChargesPaid: charges,
-            },
-          },
-          { new: true, session },
-        ).lean();
-
-        if (!updatedCustomer) {
-          await session.abortTransaction();
-          return res.status(400).json({ error: "Customer update failed" });
-        }
-
-        newBalance = getBalance(updatedCustomer);
-      }
-    }
-
-    if (transaction.type === "withdrawal") {
-      const currentBalance = getBalance(customer);
-
-      if (netAmount > currentBalance && !customer.hasActiveOverdraft) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          error: "Insufficient funds",
-          currentBalance,
-          requestedAmount: netAmount,
-        });
-      }
-
-      const withdrawalFilter = getCustomerUpdateQuery(customer);
-
-      if (!customer.hasActiveOverdraft) {
-        withdrawalFilter.$or = [
-          { cashBalance: { $gte: netAmount } },
-          {
-            cashBalance: { $exists: false },
-            balance: { $gte: netAmount },
-          },
-        ];
-      }
-
-      const updatedCustomer = await Customer.findOneAndUpdate(
-        withdrawalFilter,
+    if (overdraftProcessing) {
+      ({
+        updatedCustomer,
+        newBalance,
+        balanceDelta: actualBalanceDelta,
+        overdraftResult,
+        notification,
+      } = overdraftProcessing);
+    } else {
+      updatedCustomer = await Customer.findOneAndUpdate(
+        getCustomerUpdateQuery(customer),
         {
           $inc: {
-            cashBalance: -netAmount,
-            balance: -netAmount,
-            totalTransactions: 1,
-            totalDeposits: 0,
-            totalWithdrawals: netAmount,
-            totalChargesPaid: charges,
+            cashBalance: balanceDelta,
+            balance: balanceDelta,
+            ...buildCustomerStatsIncrement("deposit", netAmount, charges),
           },
         },
         { new: true, session },
       ).lean();
 
       if (!updatedCustomer) {
-        await session.abortTransaction();
-        return res.status(400).json({
-          error: "Insufficient funds or customer update failed",
-          currentBalance,
-          requestedAmount: netAmount,
-        });
+        throw new TransactionError("Customer update failed", 400);
       }
 
       newBalance = getBalance(updatedCustomer);
+      notification = customer.phone
+        ? {
+            kind: "deposit",
+            phone: customer.phone,
+            amount,
+            charges,
+            newBalance,
+            transactionId: transaction.id,
+          }
+        : null;
+    }
+  } else {
+    const requiredAmount = Math.abs(balanceDelta);
+    const withdrawalFilter = {
+      ...getCustomerUpdateQuery(customer),
+      $or: [
+        { cashBalance: { $gte: requiredAmount } },
+        {
+          cashBalance: { $exists: false },
+          balance: { $gte: requiredAmount },
+        },
+      ],
+    };
+
+    updatedCustomer = await Customer.findOneAndUpdate(
+      withdrawalFilter,
+      {
+        $inc: {
+          cashBalance: balanceDelta,
+          balance: balanceDelta,
+          ...buildCustomerStatsIncrement("withdrawal", netAmount, charges),
+        },
+      },
+      { new: true, session },
+    ).lean();
+
+    if (!updatedCustomer) {
+      throw new TransactionError("Insufficient funds", 400, {
+        currentBalance: getBalance(customer),
+        requestedAmount: requiredAmount,
+      });
     }
 
-    transaction.status = "approved";
-    transaction.approvedBy = approverName;
-    transaction.approvedAt = new Date();
-    transaction.finalBalance = newBalance;
+    newBalance = getBalance(updatedCustomer);
+    notification = customer.phone
+      ? {
+          kind: "withdrawal",
+          phone: customer.phone,
+          amount,
+          charges,
+          newBalance,
+          transactionId: transaction.id,
+        }
+      : null;
+  }
 
-    await transaction.save({ session });
+  transaction.balanceDelta = actualBalanceDelta;
+  transaction.status = "approved";
+  transaction.approvedBy = approverName;
+  transaction.approvedAt = new Date();
+  transaction.finalBalance = newBalance;
 
-    await session.commitTransaction();
+  await transaction.save({ session });
+
+  let message =
+    transaction.type === "deposit"
+      ? "Deposit approved!"
+      : "Withdrawal approved!";
+
+  if (overdraftResult) {
+    message = `Deposit approved! ₦${overdraftResult.autoDebit.toLocaleString()} auto-debited for overdraft. ${
+      overdraftResult.overdraftCleared ? "Overdraft FULLY CLEARED! " : ""
+    }Customer received ₦${overdraftResult.remainingForCustomer.toLocaleString()}.`;
+  }
+
+  return {
+    transaction,
+    customer: updatedCustomer,
+    newBalance,
+    overdraftResult,
+    notification,
+    message,
+  };
+}
+
+async function sendPostCommitNotification(notification) {
+  if (!notification) return;
+
+  try {
+    if (notification.kind === "deposit") {
+      await smsService.sendCreditAlert(
+        notification.phone,
+        notification.amount,
+        notification.newBalance,
+        notification.transactionId,
+        notification.charges,
+      );
+      return;
+    }
+
+    if (notification.kind === "withdrawal") {
+      await smsService.sendDebitAlert(
+        notification.phone,
+        notification.amount,
+        notification.newBalance,
+        notification.transactionId,
+        notification.charges,
+      );
+      return;
+    }
+
+    if (notification.kind === "overdraftDeposit") {
+      await smsService.sendSMS({
+        to: notification.phone,
+        message: `VaultFlow: Dear ${notification.customerName}, ₦${notification.repaymentAmount.toLocaleString()} auto-debited from your ₦${notification.amount.toLocaleString()} deposit for overdraft repayment. ${
+          notification.isFullyPaid ? "Overdraft FULLY CLEARED! " : ""
+        }Outstanding: ₦${notification.outstandingBalance.toLocaleString()}. Available: ₦${notification.remainingForCustomer.toLocaleString()}.`,
+      });
+    }
+  } catch (error) {
+    console.error("SMS failed:", error.message);
+  }
+}
+
+exports.createTransaction = async (req, res) => {
+  const session = await mongoose.startSession();
+  const actor = getRequestActor(req, "System");
+  let result = null;
+  let transaction = null;
+  let customer = null;
+
+  try {
+    await session.withTransaction(async () => {
+      const {
+        customerId,
+        customerName,
+        customerPhone,
+        type,
+        amount,
+        charges = 0,
+        description,
+        isQuickTransaction,
+      } = req.body;
+
+      if (!customerId) {
+        throw new TransactionError("Missing customerId", 400);
+      }
+
+      if (!["deposit", "withdrawal"].includes(type)) {
+        throw new TransactionError("Unsupported transaction type", 400);
+      }
+
+      const calculated = calculateTransactionAmounts(type, amount, charges);
+
+      customer = await findCustomerRobustly(customerId, {
+        session,
+        useCache: false,
+      });
+
+      if (!customer) {
+        throw new TransactionError("Customer not found", 404);
+      }
+
+      transaction = new Transaction({
+        id: generateTransactionId("TXN"),
+        customerId: customer.id || customer._id?.toString(),
+        customerName: customerName || customer.name,
+        customerPhone: customerPhone || customer.phone || "",
+        type,
+        amount: calculated.amount,
+        charges: calculated.charges,
+        netAmount: calculated.netAmount,
+        balanceDelta: 0,
+        description: description || "",
+        status: "pending",
+        requestedBy: actor.name,
+        requestedById: actor.id,
+        staffName: actor.name,
+        staffId: actor.id,
+        requestedAt: new Date(),
+        date: new Date(),
+      });
+
+      await transaction.save({ session });
+
+      const canApproveQuickTransaction =
+        isQuickTransaction === true && QUICK_TRANSACTION_ROLES.has(actor.role);
+
+      if (canApproveQuickTransaction) {
+        result = await approveTransactionService({
+          transaction,
+          approverName: actor.name,
+          session,
+        });
+      }
+    });
 
     clearCustomerCache();
 
-    if (customer.phone && !overdraftResult) {
-      const smsPromise =
-        transaction.type === "deposit"
-          ? smsService.sendCreditAlert(
-              customer.phone,
-              amount,
-              newBalance,
-              transaction.id,
-              charges,
-            )
-          : smsService.sendDebitAlert(
-              customer.phone,
-              amount,
-              newBalance,
-              transaction.id,
-              charges,
-            );
-
-      smsPromise.catch((e) => console.error("SMS failed:", e.message));
+    if (result?.notification) {
+      void sendPostCommitNotification(result.notification);
     }
 
-    let message =
-      transaction.type === "deposit"
-        ? "Deposit approved!"
-        : "Withdrawal approved!";
+    return res.status(201).json({
+      success: true,
+      message: result?.message || "Transaction request submitted",
+      transaction: result?.transaction || transaction,
+      customer: {
+        id: customer.id,
+        name: customer.name,
+        newBalance: result?.newBalance ?? getBalance(customer),
+      },
+    });
+  } catch (error) {
+    console.error("CREATE TRANSACTION ERROR:", error);
+    const { statusCode, payload } = buildHttpErrorResponse(error);
+    return res.status(statusCode).json(payload);
+  } finally {
+    await session.endSession();
+  }
+};
 
-    if (overdraftResult) {
-      message = `Deposit approved! ₦${overdraftResult.autoDebit.toLocaleString()} auto-debited for overdraft. ${
-        overdraftResult.overdraftCleared ? "Overdraft FULLY CLEARED! " : ""
-      }Customer received ₦${overdraftResult.remainingForCustomer.toLocaleString()}.`;
+exports.approveTransaction = async (req, res) => {
+  if (DEBUG) console.log("=== APPROVE TRANSACTION ===", req.params);
+
+  const session = await mongoose.startSession();
+  const actor = getRequestActor(req, "Admin");
+  let result;
+
+  try {
+    await session.withTransaction(async () => {
+      const transaction = await Transaction.findOne({
+        id: req.params.transactionId,
+        status: "pending",
+      }).session(session);
+
+      if (!transaction) {
+        throw new TransactionError(
+          "Transaction not found or already processed",
+          404,
+        );
+      }
+
+      result = await approveTransactionService({
+        transaction,
+        approverName: actor.name,
+        session,
+      });
+    });
+
+    clearCustomerCache();
+
+    if (result.notification) {
+      void sendPostCommitNotification(result.notification);
     }
 
     return res.json({
       success: true,
-      message,
+      message: result.message,
       transaction: {
-        id: transaction.id,
-        type: transaction.type,
-        amount: transaction.amount,
-        charges: transaction.charges,
-        netAmount: transaction.netAmount,
-        status: transaction.status,
-        newBalance,
-        approvedBy: transaction.approvedBy,
-        autoDebitAmount: overdraftResult?.autoDebit || 0,
-        overdraftCleared: overdraftResult?.overdraftCleared || false,
+        id: result.transaction.id,
+        type: result.transaction.type,
+        amount: result.transaction.amount,
+        charges: result.transaction.charges,
+        netAmount: result.transaction.netAmount,
+        balanceDelta: result.transaction.balanceDelta,
+        status: result.transaction.status,
+        newBalance: result.newBalance,
+        approvedBy: result.transaction.approvedBy,
+        autoDebitAmount: result.overdraftResult?.autoDebit || 0,
+        overdraftCleared: result.overdraftResult?.overdraftCleared || false,
       },
-      customer: {
-        id: customer.id,
-        name: customer.name,
-        newBalance,
-        hasActiveOverdraft: overdraftResult
-          ? !overdraftResult.overdraftCleared
-          : customer.hasActiveOverdraft,
-      },
+      customer: result.customer
+        ? {
+            id: result.customer.id,
+            name: result.customer.name,
+            newBalance: result.newBalance,
+            hasActiveOverdraft: Boolean(result.customer.hasActiveOverdraft),
+          }
+        : null,
     });
   } catch (error) {
-    await session.abortTransaction();
     console.error("Approve transaction error:", error);
-    return res.status(500).json({ error: error.message });
+    const { statusCode, payload } = buildHttpErrorResponse(error);
+    return res.status(statusCode).json(payload);
   } finally {
-    session.endSession();
+    await session.endSession();
   }
 };
 
@@ -845,6 +957,7 @@ exports.rejectTransaction = async (req, res) => {
   try {
     const { transactionId } = req.params;
     const { rejectedBy, reason } = req.body;
+    const actor = getRequestActor(req, "Admin");
 
     const transaction = await Transaction.findOne({ id: transactionId });
 
@@ -857,7 +970,7 @@ exports.rejectTransaction = async (req, res) => {
     }
 
     transaction.status = "rejected";
-    transaction.rejectedBy = getPersonName(rejectedBy, "Admin");
+    transaction.rejectedBy = actor.name || getPersonName(rejectedBy, "Admin");
     transaction.rejectedAt = new Date();
     transaction.rejectionReason = reason || "";
 
@@ -1008,9 +1121,16 @@ exports.getTransactionStats = async (req, res) => {
         overdraft_repayments: { count: 0, totalAmount: 0, totalCharges: 0 },
       };
 
+      const keyMap = {
+        deposit: "deposits",
+        withdrawal: "withdrawals",
+        overdraft_repayment: "overdraft_repayments",
+      };
+
       stats.forEach((stat) => {
-        if (result[stat._id]) {
-          result[stat._id] = {
+        const responseKey = keyMap[stat._id];
+        if (responseKey) {
+          result[responseKey] = {
             count: stat.count,
             totalAmount: stat.totalAmount,
             totalCharges: stat.totalCharges,
@@ -1087,75 +1207,98 @@ exports.getTransactionsByStaff = async (req, res) => {
   }
 };
 // New Bulk Approval Endpoint
+
 exports.bulkApproveTransactions = async (req, res) => {
   const session = await mongoose.startSession();
-  session.startTransaction();
+  const actor = getRequestActor(req, "Admin");
+  const results = [];
+  const notifications = [];
 
   try {
-    const { transactionIds, approvedBy } = req.body;
-    const approverName =
-      typeof approvedBy === "string" ? approvedBy : approvedBy.name;
+    const rawTransactionIds = req.body?.transactionIds;
 
-    if (!Array.isArray(transactionIds) || transactionIds.length === 0) {
-      await session.abortTransaction();
-      return res.status(400).json({ error: "No transaction IDs provided" });
+    if (!Array.isArray(rawTransactionIds) || rawTransactionIds.length === 0) {
+      throw new TransactionError("No transaction IDs provided", 400);
     }
 
-    const results = {
-      approved: 0,
-      failed: 0,
-      errors: [],
-    };
+    const transactionIds = [...new Set(rawTransactionIds.map(String))];
 
-    // 1. Fetch all transactions in one go
-    const transactions = await Transaction.find({
-      id: { $in: transactionIds },
-      status: "pending",
-    }).session(session);
+    await session.withTransaction(async () => {
+      // withTransaction may retry the callback after transient MongoDB errors.
+      // Reset callback-owned arrays so retries cannot duplicate the response.
+      results.length = 0;
+      notifications.length = 0;
 
-    for (const transaction of transactions) {
-      try {
-        // --- REUSE YOUR EXISTING LOGIC ---
-        // Note: In a real production app, you should move the logic
-        // inside your existing 'approveTransaction' into a reusable service function.
+      const transactions = await Transaction.find({
+        id: { $in: transactionIds },
+        status: "pending",
+      }).session(session);
 
-        // For this example, we simulate the logic required for each txn:
-        const customer = await findCustomerRobustly(transaction.customerId, {
+      if (transactions.length !== transactionIds.length) {
+        const foundIds = new Set(transactions.map((item) => item.id));
+        const missingOrProcessed = transactionIds.filter(
+          (id) => !foundIds.has(id),
+        );
+
+        throw new TransactionError(
+          "One or more transactions were not found or already processed",
+          409,
+          { transactionIds: missingOrProcessed },
+        );
+      }
+
+      const transactionById = new Map(
+        transactions.map((transaction) => [transaction.id, transaction]),
+      );
+
+      // Preserve the order supplied by the frontend.
+      for (const transactionId of transactionIds) {
+        const transaction = transactionById.get(transactionId);
+        const result = await approveTransactionService({
+          transaction,
+          approverName: actor.name,
           session,
         });
-        if (!customer)
-          throw new Error(`Customer ${transaction.customerName} not found`);
 
-        // ... (Insert the core logic from your current approveTransaction here)
-        // e.g., updating customer balance, handling overdraft repayments, etc.
+        results.push({
+          id: result.transaction.id,
+          type: result.transaction.type,
+          customerId: result.customer?.id || null,
+          newBalance: result.newBalance,
+          status: result.transaction.status,
+        });
 
-        transaction.status = "approved";
-        transaction.approvedBy = approverName;
-        transaction.approvedAt = new Date();
-        await transaction.save({ session });
-
-        results.approved++;
-      } catch (err) {
-        results.failed++;
-        results.errors.push({ id: transaction.id, error: err.message });
+        if (result.notification) notifications.push(result.notification);
       }
-    }
+    });
 
-    await session.commitTransaction();
     clearCustomerCache();
+
+    for (const notification of notifications) {
+      void sendPostCommitNotification(notification);
+    }
 
     return res.json({
       success: true,
-      results,
+      message: `${results.length} transaction${
+        results.length === 1 ? "" : "s"
+      } approved successfully`,
+      results: {
+        approved: results.length,
+        failed: 0,
+        transactions: results,
+        errors: [],
+      },
     });
   } catch (error) {
-    await session.abortTransaction();
     console.error("Bulk Approval Error:", error);
-    return res.status(500).json({ error: error.message });
+    const { statusCode, payload } = buildHttpErrorResponse(error);
+    return res.status(statusCode).json(payload);
   } finally {
-    session.endSession();
+    await session.endSession();
   }
 };
+
 exports.getTransactionById = async (req, res) => {
   try {
     const transaction = await Transaction.findOne({
@@ -1175,13 +1318,22 @@ exports.getTransactionById = async (req, res) => {
 
 exports.deleteTransaction = async (req, res) => {
   try {
-    const transaction = await Transaction.findOneAndDelete({
+    const transaction = await Transaction.findOne({
       id: req.params.transactionId,
     });
 
     if (!transaction) {
       return res.status(404).json({ error: "Transaction not found" });
     }
+
+    if (!["pending", "rejected"].includes(transaction.status)) {
+      return res.status(409).json({
+        error:
+          "Approved or voided transactions cannot be deleted. Void the transaction instead.",
+      });
+    }
+
+    await transaction.deleteOne();
 
     return res.json({
       success: true,
@@ -1281,144 +1433,285 @@ exports.getRevenueStats = async (req, res) => {
   }
 };
 
+async function reverseOverdraftAutoDebit({
+  transaction,
+  voidedByName,
+  voidedAt,
+  session,
+}) {
+  const repaymentAmount = toNumber(transaction.autoDebitAmount);
+  if (repaymentAmount <= 0) {
+    return { restoreOverdraftFlags: false, loan: null };
+  }
+
+  if (!transaction.loanId) {
+    throw new TransactionError(
+      "This auto-debit transaction has no loan reference and cannot be reversed safely",
+      409,
+    );
+  }
+
+  const loan = await Loan.findOne({ id: transaction.loanId }).session(session);
+  if (!loan) {
+    throw new TransactionError(
+      "The overdraft linked to this transaction could not be found",
+      404,
+    );
+  }
+
+  const principalPortion = toNumber(transaction.principalPortion);
+  const chargesPortion = toNumber(transaction.chargesPortion);
+
+  loan.amountRepaid = Math.max(
+    0,
+    toNumber(loan.amountRepaid) - repaymentAmount,
+  );
+  loan.outstandingBalance = Math.min(
+    toNumber(loan.totalPayable),
+    toNumber(loan.outstandingBalance) + repaymentAmount,
+  );
+  loan.principalRepaidToDate = Math.max(
+    0,
+    toNumber(loan.principalRepaidToDate) - principalPortion,
+  );
+  loan.chargesPaidToDate = Math.max(
+    0,
+    toNumber(loan.chargesPaidToDate) - chargesPortion,
+  );
+  loan.chargesRevenueRecorded = Math.max(
+    0,
+    toNumber(loan.chargesRevenueRecorded) - chargesPortion,
+  );
+  loan.outstandingPrincipal = Math.max(
+    0,
+    toNumber(loan.amount) - toNumber(loan.principalRepaidToDate),
+  );
+  loan.outstandingCharges = Math.max(
+    0,
+    toNumber(loan.processingCharges) - toNumber(loan.chargesPaidToDate),
+  );
+  loan.status = "active";
+  loan.completedAt = undefined;
+
+  if (Array.isArray(loan.repayments) && loan.repayments[0]) {
+    const repayment = loan.repayments[0];
+    repayment.paidAmount = Math.max(
+      0,
+      toNumber(repayment.paidAmount) - repaymentAmount,
+    );
+    repayment.principalPortion = Math.max(
+      0,
+      toNumber(repayment.principalPortion) - principalPortion,
+    );
+    repayment.chargesPortion = Math.max(
+      0,
+      toNumber(repayment.chargesPortion) - chargesPortion,
+    );
+    repayment.status = "pending";
+
+    if (repayment.paidAmount <= 0) {
+      repayment.paidDate = undefined;
+      repayment.paidBy = undefined;
+    }
+
+    loan.markModified("repayments");
+  }
+
+  await loan.save({ session });
+
+  await Transaction.updateMany(
+    {
+      originalTransactionId: transaction.id,
+      status: "approved",
+      type: {
+        $in: ["overdraft_repayment", "overdraft_charges_revenue"],
+      },
+    },
+    {
+      $set: {
+        status: "voided",
+        voidedBy: voidedByName,
+        voidedAt,
+        voidReason: `Automatically voided with original transaction ${transaction.id}`,
+      },
+    },
+    { session },
+  );
+
+  return { restoreOverdraftFlags: true, loan };
+}
+
 exports.voidTransaction = async (req, res) => {
   const session = await mongoose.startSession();
-  session.startTransaction();
+  const actor = getRequestActor(req, "Admin");
+  let responseData;
 
   try {
-    const { transactionId } = req.params;
-    const { voidedBy, reason } = req.body;
-    const voidedByName = getPersonName(voidedBy, "Admin");
+    await session.withTransaction(async () => {
+      const transaction = await Transaction.findOne({
+        id: req.params.transactionId,
+        status: "approved",
+      }).session(session);
 
-    const transaction = await Transaction.findOne({
-      id: transactionId,
-    }).session(session);
+      if (!transaction) {
+        throw new TransactionError(
+          "Transaction not found or it is not approved",
+          404,
+        );
+      }
 
-    if (!transaction) {
-      await session.abortTransaction();
-      return res.status(404).json({ error: "Transaction not found" });
-    }
+      if (!["deposit", "withdrawal"].includes(transaction.type)) {
+        throw new TransactionError(
+          `Cannot void transaction type: ${transaction.type}`,
+          400,
+        );
+      }
 
-    if (transaction.status !== "approved") {
-      await session.abortTransaction();
-      return res.status(400).json({
-        error: "Only approved transactions can be voided",
-        currentStatus: transaction.status,
+      const customer = await findCustomerRobustly(transaction.customerId, {
+        session,
+        useCache: false,
       });
-    }
 
-    if (!["deposit", "withdrawal"].includes(transaction.type)) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        error: `Cannot void type: ${transaction.type}`,
+      if (!customer) {
+        throw new TransactionError("Customer not found", 404);
+      }
+
+      const calculated = calculateTransactionAmounts(
+        transaction.type,
+        transaction.amount,
+        transaction.charges,
+      );
+
+      const hasStoredBalanceDelta =
+        transaction.balanceDelta !== undefined &&
+        transaction.balanceDelta !== null &&
+        Number.isFinite(Number(transaction.balanceDelta));
+
+      if (toNumber(transaction.autoDebitAmount) > 0 && !hasStoredBalanceDelta) {
+        throw new TransactionError(
+          "This legacy auto-debit transaction has no stored balance effect and cannot be reversed safely",
+          409,
+        );
+      }
+
+      const originalBalanceDelta = hasStoredBalanceDelta
+        ? Number(transaction.balanceDelta)
+        : calculated.balanceDelta;
+      const reversalDelta = -originalBalanceDelta;
+      const voidedAt = new Date();
+
+      const overdraftReversal = await reverseOverdraftAutoDebit({
+        transaction,
+        voidedByName: actor.name,
+        voidedAt,
+        session,
       });
-    }
 
-    const customer = await findCustomerRobustly(transaction.customerId, {
-      session,
-      useCache: false,
-    });
-
-    if (!customer) {
-      await session.abortTransaction();
-      return res.status(404).json({ error: "Customer not found" });
-    }
-
-    const amount = toNumber(transaction.amount);
-    const charges = toNumber(transaction.charges);
-    const netAmount = amount - charges;
-
-    if (netAmount < 0) {
-      await session.abortTransaction();
-      return res.status(400).json({
-        error: "Cannot void transaction because its amount/charges are invalid",
-      });
-    }
-
-    const balanceDelta =
-      transaction.type === "deposit" ? -netAmount : netAmount;
-
-    const updatedCustomer = await Customer.findOneAndUpdate(
-      getCustomerUpdateQuery(customer),
-      {
+      const customerUpdate = {
         $inc: {
-          cashBalance: balanceDelta,
-          balance: balanceDelta,
-          totalTransactions: -1,
-          totalDeposits: transaction.type === "deposit" ? -netAmount : 0,
-          totalWithdrawals: transaction.type === "withdrawal" ? -netAmount : 0,
-          totalChargesPaid: -charges,
+          cashBalance: reversalDelta,
+          balance: reversalDelta,
+          ...buildCustomerStatsIncrement(
+            transaction.type,
+            calculated.netAmount,
+            calculated.charges,
+            -1,
+          ),
         },
-      },
-      { new: true, session },
-    ).lean();
+      };
 
-    if (!updatedCustomer) {
-      await session.abortTransaction();
-      return res.status(400).json({ error: "Customer update failed" });
-    }
+      if (overdraftReversal.restoreOverdraftFlags) {
+        customerUpdate.$set = {
+          hasActiveOverdraft: true,
+          hasActiveLoan: true,
+          activeLoanId: transaction.loanId,
+        };
+      }
 
-    const reversalBalance = getBalance(updatedCustomer);
+      const updatedCustomer = await Customer.findOneAndUpdate(
+        getCustomerUpdateQuery(customer),
+        customerUpdate,
+        { new: true, session },
+      ).lean();
 
-    transaction.status = "voided";
-    transaction.voidedBy = voidedByName;
-    transaction.voidedAt = new Date();
-    transaction.voidReason = reason || "";
-    transaction.reversalBalance = reversalBalance;
+      if (!updatedCustomer) {
+        throw new TransactionError("Customer update failed", 400);
+      }
 
-    await transaction.save({ session });
+      const reversalBalance = getBalance(updatedCustomer);
 
-    const reversalTxn = new Transaction({
-      id: generateTransactionId("TXN"),
-      customerId: transaction.customerId,
-      customerName: transaction.customerName,
-      customerPhone: transaction.customerPhone,
-      type: "reversal",
-      amount,
-      charges: 0,
-      netAmount: balanceDelta,
-      description: `Reversal of ${transaction.type} ${transaction.id}. Reason: ${
-        reason || "No reason provided"
-      }`,
-      status: "approved",
-      approvedBy: voidedByName,
-      approvedAt: new Date(),
-      originalTransactionId: transaction.id,
-      date: new Date(),
-      finalBalance: reversalBalance,
+      const reversalTransaction = new Transaction({
+        id: generateTransactionId("REV"),
+        customerId: transaction.customerId,
+        customerName: transaction.customerName,
+        customerPhone: transaction.customerPhone || "",
+        type: "reversal",
+        amount: calculated.amount,
+        charges: 0,
+        netAmount: Math.abs(reversalDelta),
+        balanceDelta: reversalDelta,
+        description: `Reversal of ${transaction.type} ${transaction.id}. Reason: ${
+          req.body?.reason || "No reason provided"
+        }`,
+        status: "approved",
+        requestedBy: actor.name,
+        requestedById: actor.id,
+        staffName: actor.name,
+        staffId: actor.id,
+        approvedBy: actor.name,
+        approvedAt: voidedAt,
+        originalTransactionId: transaction.id,
+        loanId: transaction.loanId || null,
+        date: voidedAt,
+        finalBalance: reversalBalance,
+      });
+
+      await reversalTransaction.save({ session });
+
+      transaction.status = "voided";
+      transaction.voidedBy = actor.name;
+      transaction.voidedAt = voidedAt;
+      transaction.voidReason = req.body?.reason || "";
+      transaction.reversalBalance = reversalBalance;
+      transaction.reversalTransactionId = reversalTransaction.id;
+      await transaction.save({ session });
+
+      responseData = {
+        transaction,
+        reversalTransaction,
+        customer: updatedCustomer,
+        reversalBalance,
+      };
     });
-
-    await reversalTxn.save({ session });
-
-    await session.commitTransaction();
 
     clearCustomerCache();
 
     return res.json({
       success: true,
-      message: `Transaction ${transaction.id} voided`,
+      message: `Transaction ${responseData.transaction.id} voided`,
       transaction: {
-        id: transaction.id,
-        status: "voided",
-        originalType: transaction.type,
-        reversalBalance,
+        id: responseData.transaction.id,
+        status: responseData.transaction.status,
+        originalType: responseData.transaction.type,
+        reversalBalance: responseData.reversalBalance,
       },
       reversalTransaction: {
-        id: reversalTxn.id,
-        amount: reversalTxn.amount,
+        id: responseData.reversalTransaction.id,
+        amount: responseData.reversalTransaction.amount,
+        balanceDelta: responseData.reversalTransaction.balanceDelta,
       },
       customer: {
-        id: customer.id,
-        name: customer.name,
-        newBalance: reversalBalance,
+        id: responseData.customer.id,
+        name: responseData.customer.name,
+        newBalance: responseData.reversalBalance,
       },
     });
   } catch (error) {
-    await session.abortTransaction();
     console.error("Void transaction error:", error);
-    return res.status(500).json({ error: error.message });
+    const { statusCode, payload } = buildHttpErrorResponse(error);
+    return res.status(statusCode).json(payload);
   } finally {
-    session.endSession();
+    await session.endSession();
   }
 };
 

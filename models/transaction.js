@@ -1,70 +1,50 @@
 const mongoose = require("mongoose");
 
-/**
- * Generates a unique transaction ID
- * Format: TXN + Timestamp + 6 random alphanumeric characters
- */
-function generateTransactionId() {
-  return `TXN${Date.now()}${Math.random()
-    .toString(36)
-    .substring(2, 8)
-    .toUpperCase()}`;
-}
-
 const transactionSchema = new mongoose.Schema(
   {
     id: {
       type: String,
+      required: true,
       unique: true,
-      required: true,
-      default: generateTransactionId,
-      index: true,
+      immutable: true,
+      trim: true,
     },
 
-    customerId: {
-      type: String,
-      required: true,
-      index: true,
-    },
+    customerId: { type: String, default: null, index: true },
+    customerName: { type: String, default: "", trim: true },
+    customerPhone: { type: String, default: "", trim: true },
 
-    customerName: String,
-    customerPhone: String,
+    amount: { type: Number, required: true, min: 0 },
+    charges: { type: Number, default: 0, min: 0 },
 
-    amount: {
-      type: Number,
-      required: true,
-      min: [0, "Amount cannot be negative"],
-      default: 0,
-    },
+    // Displayed transaction value:
+    // deposit = amount - charges
+    // withdrawal = amount + charges
+    netAmount: { type: Number, required: true, default: 0 },
 
-    charges: {
-      type: Number,
-      min: [0, "Charges cannot be negative"],
-      default: 0,
-    },
+    // The exact value applied to the customer's cash balance.
+    // A reversal always applies the negative of this value.
+    balanceDelta: { type: Number, default: 0 },
 
-    netAmount: {
-      type: Number,
-      default: 0,
-    },
+    principalPortion: { type: Number, default: 0, min: 0 },
+    interestPortion: { type: Number, default: 0, min: 0 },
+    interestRevenue: { type: Number, default: 0, min: 0 },
+    chargesPortion: { type: Number, default: 0, min: 0 },
 
-    // Loan & Repayment Tracking
-    principalPortion: { type: Number, default: 0 },
-    interestPortion: { type: Number, default: 0 },
-    interestRevenue: { type: Number, default: 0 },
-    chargesPortion: { type: Number, default: 0 },
-
-    loanId: { type: String, default: null },
+    loanId: { type: String, default: null, index: true },
     repaymentId: { type: String, default: null },
 
-    // Overdraft & Automated Recovery
+    autoDebitAmount: { type: Number, default: 0, min: 0 },
+    remainingAfterAutoDebit: { type: Number, default: 0 },
+    overdraftCleared: { type: Boolean, default: false },
+    isAutoDebit: { type: Boolean, default: false },
     isOverdraftSettlement: { type: Boolean, default: false },
+
     isRevenue: { type: Boolean, default: false },
     revenueType: { type: String, default: null },
-    isAutoDebit: { type: Boolean, default: false },
-    autoDebitAmount: { type: Number, default: 0 },
-    overdraftCleared: { type: Boolean, default: false },
-    remainingAfterAutoDebit: { type: Number, default: 0 },
+
+    originalTransactionId: { type: String, default: null, index: true },
+    reversalTransactionId: { type: String, default: null },
 
     status: {
       type: String,
@@ -91,71 +71,37 @@ const transactionSchema = new mongoose.Schema(
       index: true,
     },
 
-    date: {
-      type: Date,
-      default: Date.now,
-      index: true,
-    },
+    date: { type: Date, default: Date.now, index: true },
 
-    // Approval/Rejection Audit Trail
-    approvedBy: String,
-    approvedAt: Date,
-    rejectedBy: String,
-    rejectedAt: Date,
-    rejectionReason: String,
-
-    description: String,
-
-    // Staff Attribution
     requestedBy: { type: String, default: "System" },
-    requestedById: { type: String, default: null, index: true },
+    requestedById: { type: String, default: null },
     staffName: { type: String, default: "System" },
-    staffId: { type: String, default: null, index: true },
+    staffId: { type: String, default: null },
+    requestedAt: { type: Date, default: Date.now },
 
-    requestedAt: Date,
-    finalBalance: Number,
+    approvedBy: { type: String, default: null },
+    approvedAt: { type: Date, default: null },
 
-    // Reversal/Void Tracking
+    rejectedBy: { type: String, default: null },
+    rejectedAt: { type: Date, default: null },
+    rejectionReason: { type: String, default: "" },
+
     voidedBy: { type: String, default: null },
-    voidedAt: Date,
+    voidedAt: { type: Date, default: null },
     voidReason: { type: String, default: "" },
-    reversalBalance: Number,
-    originalTransactionId: { type: String, default: null },
+    reversalBalance: { type: Number, default: null },
+
+    description: { type: String, default: "", trim: true },
+    finalBalance: { type: Number, default: null },
   },
-  {
-    timestamps: true,
-  },
+  { timestamps: true },
 );
 
-/**
- * MIDDLEWARE: Pre-validation
- * Ensures data integrity before the document is saved to MongoDB.
- */
-transactionSchema.pre("validate", async function () {
-  // 1. Net Amount Integrity
-  // We only calculate if netAmount is missing to allow manual overrides if necessary.
-  // Using Number() with fallback to 0 prevents 'NaN' from breaking the database.
-  if (this.netAmount === undefined || this.netAmount === null) {
-    const amount = Number(this.amount) || 0;
-    const charges = Number(this.charges) || 0;
-    this.netAmount = amount - charges;
-  }
-});
-
-// ==================== INDEXES ====================
-// Optimized for common queries: history, staff lookups, and reporting
-transactionSchema.index({ createdAt: -1 });
-transactionSchema.index({ date: -1 });
 transactionSchema.index({ status: 1, requestedById: 1 });
 transactionSchema.index({ customerId: 1, date: -1 });
 transactionSchema.index({ type: 1, status: 1 });
-transactionSchema.index({ requestedAt: -1 });
-transactionSchema.index({ loanId: 1 });
-transactionSchema.index({ isAutoDebit: 1, type: 1 });
-transactionSchema.index({ isRevenue: 1, revenueType: 1 });
+transactionSchema.index({ originalTransactionId: 1, status: 1 });
 
-module.exports = mongoose.model(
-  "Transaction",
-  transactionSchema,
-  "transactions",
-);
+module.exports =
+  mongoose.models.Transaction ||
+  mongoose.model("Transaction", transactionSchema, "transactions");
